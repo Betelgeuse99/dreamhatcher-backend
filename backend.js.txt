@@ -1,46 +1,81 @@
-// backend.js
 const express = require('express');
+const { RouterOSClient } = require('routeros-client');
+
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Use environment variables for sensitive info
-const MIKROTIK_HOST = process.env.MIKROTIK_HOST || 'http://192.168.88.1'; // Hotspot login page
-const MIKROTIK_PORT = process.env.MIKROTIK_PORT || '80'; // Usually 80 for HTTP login
-// const MIKROTIK_USER = process.env.MIKROTIK_USER; // For API calls if needed
-// const MIKROTIK_PASS = process.env.MIKROTIK_PASS;
+// Load sensitive info from environment variables
+const MIKROTIK_HOST = process.env.MIKROTIK_HOST;
+const MIKROTIK_USER = process.env.MIKROTIK_USER;
+const MIKROTIK_PASS = process.env.MIKROTIK_PASS;
 
-const plans = {
-    daily: 350,
-    weekly: 2400,
-    monthly: 7500
+// Plan profiles (must match MikroTik profiles)
+const planProfiles = {
+    daily: 'daily-profile',
+    weekly: 'weekly-profile',
+    monthly: 'monthly-profile'
 };
 
-// Endpoint Monnify redirects to after successful payment
-app.get('/payment-success', (req, res) => {
+// Utility: generate a unique username
+function generateUsername(name) {
+    const clean = name.replace(/\s+/g, '').toLowerCase();
+    const random = Math.floor(1000 + Math.random() * 9000);
+    return `${clean}${random}`;
+}
+
+// Create a hotspot user on MikroTik
+async function addHotspotUser(username, profile) {
+    const client = new RouterOSClient({
+        host: MIKROTIK_HOST,
+        user: MIKROTIK_USER,
+        password: MIKROTIK_PASS
+    });
+
+    await client.connect();
+    const api = client.menu('/ip/hotspot/user');
+
+    await api.add({
+        name: username,
+        password: username,
+        profile: profile
+    });
+
+    await client.close();
+}
+
+// Webhook / Redirect handler
+app.get('/payment-success', async (req, res) => {
     try {
-        const { plan, username } = req.query;
+        const { plan, customerName } = req.query;
 
-        if (!plan || !username) return res.status(400).send('Missing plan or username');
-        if (!plans[plan]) return res.status(400).send('Invalid plan');
+        if (!plan || !planProfiles[plan]) {
+            return res.status(400).send('Invalid plan specified');
+        }
 
-        // Construct the auto-login URL
-        const autoLoginUrl = `${MIKROTIK_HOST}/login?username=${encodeURIComponent(username)}&plan=${plan}`;
+        // Generate a unique username
+        const username = generateUsername(customerName || 'guest');
 
-        // Redirect user to hotspot login page (auto-login)
-        return res.redirect(autoLoginUrl);
+        // Create user on MikroTik
+        await addHotspotUser(username, planProfiles[plan]);
+
+        // Now redirect user to hotspot login via client browser
+        // Example local hotspot login URL
+        const hotspotLoginUrl = `http://dreamhatcher.login/
+username=${encodeURIComponent(username)}&password=${encodeURIComponent(username)}`;
+
+        return res.redirect(hotspotLoginUrl);
 
     } catch (err) {
-        console.error(err);
-        return res.status(500).send('Server error');
+        console.error('Error in payment-success:', err);
+        return res.status(500).send('Internal server error');
     }
 });
 
-// Root test endpoint
+// Health check
 app.get('/', (req, res) => {
-    res.send('Dream Hatcher Backend Running ✅');
+    res.send('Dream Hatcher Backend with MikroTik API ready 🚀');
 });
 
-// Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
