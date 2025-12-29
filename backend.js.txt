@@ -1,0 +1,46 @@
+// backend.js
+const express = require('express');
+const app = express();
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Use environment variables for sensitive info
+const MIKROTIK_HOST = process.env.MIKROTIK_HOST || 'http://192.168.88.1'; // Hotspot login page
+const MIKROTIK_PORT = process.env.MIKROTIK_PORT || '80'; // Usually 80 for HTTP login
+// const MIKROTIK_USER = process.env.MIKROTIK_USER; // For API calls if needed
+// const MIKROTIK_PASS = process.env.MIKROTIK_PASS;
+
+const plans = {
+    daily: 350,
+    weekly: 2400,
+    monthly: 7500
+};
+
+// Endpoint Monnify redirects to after successful payment
+app.get('/payment-success', (req, res) => {
+    try {
+        const { plan, username } = req.query;
+
+        if (!plan || !username) return res.status(400).send('Missing plan or username');
+        if (!plans[plan]) return res.status(400).send('Invalid plan');
+
+        // Construct the auto-login URL
+        const autoLoginUrl = `${MIKROTIK_HOST}/login?username=${encodeURIComponent(username)}&plan=${plan}`;
+
+        // Redirect user to hotspot login page (auto-login)
+        return res.redirect(autoLoginUrl);
+
+    } catch (err) {
+        console.error(err);
+        return res.status(500).send('Server error');
+    }
+});
+
+// Root test endpoint
+app.get('/', (req, res) => {
+    res.send('Dream Hatcher Backend Running ✅');
+});
+
+// Start server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
