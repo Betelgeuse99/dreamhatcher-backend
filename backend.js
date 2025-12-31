@@ -46,11 +46,21 @@ app.get('/payment-success', (req, res) => {
     }
 });
 
+// Monnify webhook endpoint (transaction completion)
+app.post('/monnify-webhook', express.json(), (req, res) => {
+    console.log('Monnify Webhook Received:', req.body);
+
+    // Always respond 200 OK
+    res.status(200).json({ received: true });
+});
+
 // Health check
 app.get('/', (req, res) => {
     res.send('Dream Hatcher Backend ✅ Monnify ready');
 });
 
+
 // Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
