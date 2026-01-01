@@ -40,11 +40,11 @@ app.post('/api/monnify-webhook', async (req, res) => {
       // VALIDATE AMOUNT AND ASSIGN PLAN
       let plan = '';
       if (amount >= 7500) {
-        plan = '1month';
+        plan = '30d';
       } else if (amount >= 2400) {
-        plan = '1week';
+        plan = '7d';
       } else if (amount >= 350) {
-        plan = '1day';
+        plan = '24hr';
       } else {
         // Amount too low - reject
         console.error(`❌ Amount ${amount} too low for any plan`);
@@ -162,4 +162,5 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
 });
+
 
