@@ -120,6 +120,44 @@ app.get('/api/mikrotik-queue', async (req, res) => {
   }
 });
 
+// 2b. MIKROTIK QUEUE (PLAIN TEXT - ROS SAFE)
+app.get('/api/mikrotik-queue-text', async (req, res) => {
+  const apiKey = req.headers['x-api-key'] || req.query.api_key;
+
+  if (apiKey !== process.env.MIKROTIK_API_KEY) {
+    console.log('❌ Invalid API key (text endpoint)');
+    return res.status(403).send('FORBIDDEN');
+  }
+
+  try {
+    const result = await pool.query(`
+      SELECT id, mikrotik_username, mikrotik_password, plan
+      FROM payment_queue
+      WHERE status = 'pending'
+      ORDER BY created_at ASC
+      LIMIT 5
+    `);
+
+    console.log(`📤 Sending ${result.rows.length} users to MikroTik (TEXT)`);
+
+    if (result.rows.length === 0) {
+      return res.send('');
+    }
+
+    // Build plain-text response
+    const lines = result.rows.map(row =>
+      `${row.mikrotik_username}|${row.mikrotik_password}|${row.plan}|${row.id}`
+    );
+
+    res.set('Content-Type', 'text/plain');
+    res.send(lines.join('\n'));
+
+  } catch (error) {
+    console.error('❌ Text queue error:', error.message);
+    res.status(500).send('ERROR');
+  }
+});
+
 // 3. MARK AS PROCESSED
 app.post('/api/mark-processed/:id', async (req, res) => {
   try {
@@ -162,5 +200,3 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
 });
-
-
