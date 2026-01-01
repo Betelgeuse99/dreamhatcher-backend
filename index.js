@@ -1,4 +1,4 @@
-// File: index.js (your main file on Render)
+// File: index.js
 require('dotenv').config();
 const express = require('express');
 const { Pool } = require('pg');
@@ -16,7 +16,7 @@ const pool = new Pool({
 // Test database connection
 pool.query('SELECT NOW()', (err, res) => {
   if (err) console.error('❌ Database connection failed:', err);
-  else console.log('✅ Connected to Supabase:', res.rows[0].now);
+  else console.log('✅ Connected to Supabase');
 });
 
 // Generate random password
@@ -26,26 +26,23 @@ function generatePassword(length = 8) {
 
 // 1. MONNIFY WEBHOOK ENDPOINT
 app.post('/api/monnify-webhook', async (req, res) => {
-  console.log('📥 Monnify webhook received:', req.body);
+  console.log('📥 Monnify webhook received');
   
   try {
     const { eventType, eventData } = req.body;
     
     if (eventType === 'SUCCESSFUL_TRANSACTION') {
       const customer = eventData.customer;
-      const product = eventData.product;
       
       // Generate credentials
       const username = customer.email || `user_${Date.now()}`;
       const password = generatePassword();
       
-      // Determine plan from payment amount
-      let plan = '1day'; // default
-      const amount = eventData.amountPaid;
-      if (amount >= 350) plan = '1day';    // Example: ₦350 = daily
+      // Determine plan
+      let plan = '1day';
+       if (amount >= 350) plan = '1day';    // Example: ₦350 = daily
       if (amount >= 2400) plan = '1week';    // Example: ₦2400 = weekly
       if (amount >= 7500) plan = '1month';   // Example: ₦7500 = monthly
-      
       // Insert into payment queue
       const result = await pool.query(
         `INSERT INTO payment_queue 
@@ -62,18 +59,17 @@ app.post('/api/monnify-webhook', async (req, res) => {
         ]
       );
       
-      console.log(`✅ Payment queued: ID=${result.rows[0].id}, Username=${username}`);
+      console.log(`✅ Payment queued: ID=${result.rows[0].id}`);
       
       return res.status(200).json({ 
         success: true, 
-        message: 'Payment queued for activation',
-        queueId: result.rows[0].id
+        message: 'Payment queued for activation'
       });
     }
     
     res.status(200).json({ received: true });
   } catch (error) {
-    console.error('❌ Webhook error:', error);
+    console.error('❌ Webhook error:', error.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -83,6 +79,7 @@ app.get('/api/mikrotik-queue', async (req, res) => {
   // Verify API key
   const apiKey = req.headers['x-api-key'] || req.query.api_key;
   if (apiKey !== process.env.MIKROTIK_API_KEY) {
+    console.log('❌ Invalid API key');
     return res.status(403).json({ error: 'Forbidden' });
   }
   
@@ -98,12 +95,12 @@ app.get('/api/mikrotik-queue', async (req, res) => {
     console.log(`📤 Sending ${result.rows.length} pending users to Mikrotik`);
     res.json(result.rows);
   } catch (error) {
-    console.error('❌ Queue error:', error);
+    console.error('❌ Queue error:', error.message);
     res.status(500).json({ error: 'Database error' });
   }
 });
 
-// 3. MARK AS PROCESSED (Mikrotik calls this after creating user)
+// 3. MARK AS PROCESSED
 app.post('/api/mark-processed/:id', async (req, res) => {
   try {
     await pool.query(
@@ -114,12 +111,12 @@ app.post('/api/mark-processed/:id', async (req, res) => {
     console.log(`✅ Marked ${req.params.id} as processed`);
     res.json({ success: true });
   } catch (error) {
-    console.error('❌ Update error:', error);
+    console.error('❌ Update error:', error.message);
     res.status(500).json({ error: 'Update failed' });
   }
 });
 
-// 4. STATUS CHECK (for testing)
+// 4. STATUS CHECK
 app.get('/api/queue-status', async (req, res) => {
   const result = await pool.query(`
     SELECT 
@@ -144,5 +141,4 @@ app.get('/test', (req, res) => {
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
-  console.log(`🌐 Your URL: https://dreamhatcher-backend.onrender.com`);
 });
