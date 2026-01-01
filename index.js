@@ -24,25 +24,42 @@ function generatePassword(length = 8) {
   return crypto.randomBytes(length).toString('hex').slice(0, length);
 }
 
-// 1. MONNIFY WEBHOOK ENDPOINT
+// MONNIFY WEBHOOK ENDPOINT - WITH CORRECT PLAN LOGIC
 app.post('/api/monnify-webhook', async (req, res) => {
-  console.log('📥 Monnify webhook received');
+  console.log('📥 Monnify webhook received:', JSON.stringify(req.body, null, 2));
   
   try {
     const { eventType, eventData } = req.body;
     
     if (eventType === 'SUCCESSFUL_TRANSACTION') {
       const customer = eventData.customer;
+      const amount = parseFloat(eventData.amountPaid || eventData.amount);
+      
+      console.log(`💰 Payment amount: ${amount} for ${customer.email || customer.customerEmail}`);
+      
+      // VALIDATE AMOUNT AND ASSIGN PLAN
+      let plan = '';
+      if (amount >= 7500) {
+        plan = '1month';
+      } else if (amount >= 2400) {
+        plan = '1week';
+      } else if (amount >= 350) {
+        plan = '1day';
+      } else {
+        // Amount too low - reject
+        console.error(`❌ Amount ${amount} too low for any plan`);
+        return res.status(400).json({ 
+          error: 'Insufficient payment',
+          message: `Payment of ₦${amount} is below minimum plan price (₦350)`
+        });
+      }
+      
+      console.log(`📝 Assigned plan: ${plan} for ₦${amount}`);
       
       // Generate credentials
-      const username = customer.email || `user_${Date.now()}`;
+      const username = customer.email || customer.customerEmail || `user_${Date.now()}`;
       const password = generatePassword();
       
-      // Determine plan
-      let plan = '1day';
-       if (amount >= 350) plan = '1day';    // Example: ₦350 = daily
-      if (amount >= 2400) plan = '1week';    // Example: ₦2400 = weekly
-      if (amount >= 7500) plan = '1month';   // Example: ₦7500 = monthly
       // Insert into payment queue
       const result = await pool.query(
         `INSERT INTO payment_queue 
@@ -59,14 +76,17 @@ app.post('/api/monnify-webhook', async (req, res) => {
         ]
       );
       
-      console.log(`✅ Payment queued: ID=${result.rows[0].id}`);
+      console.log(`✅ Payment queued: ID=${result.rows[0].id}, Plan=${plan}, Amount=₦${amount}`);
       
       return res.status(200).json({ 
         success: true, 
-        message: 'Payment queued for activation'
+        message: `Payment queued for ${plan} plan`,
+        plan: plan,
+        amount: amount
       });
     }
     
+    // For other event types
     res.status(200).json({ received: true });
   } catch (error) {
     console.error('❌ Webhook error:', error.message);
@@ -142,3 +162,4 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
 });
+
