@@ -24,7 +24,7 @@ function generatePassword(length = 8) {
   return crypto.randomBytes(length).toString('hex').slice(0, length);
 }
 
-// MONNIFY WEBHOOK ENDPOINT - WITH CORRECT PLAN LOGIC
+// MONNIFY WEBHOOK ENDPOINT - WITH PLAN LOGIC + TOKEN GENERATION
 app.post('/api/monnify-webhook', async (req, res) => {
   console.log('📥 Monnify webhook received:', JSON.stringify(req.body, null, 2));
   
@@ -39,14 +39,10 @@ app.post('/api/monnify-webhook', async (req, res) => {
       
       // VALIDATE AMOUNT AND ASSIGN PLAN
       let plan = '';
-      if (amount >= 7500) {
-        plan = '30d';
-      } else if (amount >= 2400) {
-        plan = '7d';
-      } else if (amount >= 350) {
-        plan = '24hr';
-      } else {
-        // Amount too low - reject
+      if (amount >= 7500) plan = '30d';
+      else if (amount >= 2400) plan = '7d';
+      else if (amount >= 350) plan = '24hr';
+      else {
         console.error(`❌ Amount ${amount} too low for any plan`);
         return res.status(400).json({ 
           error: 'Insufficient payment',
@@ -59,7 +55,7 @@ app.post('/api/monnify-webhook', async (req, res) => {
       // Generate credentials
       const username = customer.email || customer.customerEmail || `user_${Date.now()}`;
       const password = generatePassword();
-      
+
       // Insert into payment queue
       const result = await pool.query(
         `INSERT INTO payment_queue 
@@ -75,6 +71,15 @@ app.post('/api/monnify-webhook', async (req, res) => {
           password
         ]
       );
+
+      // ✅ Generate one-time token for auto-login
+      const token = crypto.randomBytes(32).toString('hex'); // 64 char hex
+      await pool.query(
+        `UPDATE payment_queue SET one_time_token=$1 WHERE id=$2`,
+        [token, result.rows[0].id]
+      );
+
+      console.log(`🔑 One-time token generated: ${token}`);
       
       console.log(`✅ Payment queued: ID=${result.rows[0].id}, Plan=${plan}, Amount=₦${amount}`);
       
@@ -82,11 +87,11 @@ app.post('/api/monnify-webhook', async (req, res) => {
         success: true, 
         message: `Payment queued for ${plan} plan`,
         plan: plan,
-        amount: amount
+        amount: amount,
+        autoLoginToken: token // return token so frontend can use
       });
     }
     
-    // For other event types
     res.status(200).json({ received: true });
   } catch (error) {
     console.error('❌ Webhook error:', error.message);
@@ -94,24 +99,22 @@ app.post('/api/monnify-webhook', async (req, res) => {
   }
 });
 
-// 2. MIKROTIK QUEUE ENDPOINT (Mikrotik polls this)
+// 2. MIKROTIK QUEUE ENDPOINT (JSON)
 app.get('/api/mikrotik-queue', async (req, res) => {
-  // Verify API key
   const apiKey = req.headers['x-api-key'] || req.query.api_key;
   if (apiKey !== process.env.MIKROTIK_API_KEY) {
     console.log('❌ Invalid API key');
     return res.status(403).json({ error: 'Forbidden' });
   }
-  
+
   try {
-    // Get pending payments
     const result = await pool.query(`
       SELECT * FROM payment_queue 
       WHERE status = 'pending' 
       ORDER BY created_at ASC 
       LIMIT 5
     `);
-    
+
     console.log(`📤 Sending ${result.rows.length} pending users to Mikrotik`);
     res.json(result.rows);
   } catch (error) {
@@ -120,10 +123,9 @@ app.get('/api/mikrotik-queue', async (req, res) => {
   }
 });
 
-// 2b. MIKROTIK QUEUE (PLAIN TEXT - ROS SAFE)
+// 2b. MIKROTIK QUEUE (PLAIN TEXT)
 app.get('/api/mikrotik-queue-text', async (req, res) => {
   const apiKey = req.headers['x-api-key'] || req.query.api_key;
-
   if (apiKey !== process.env.MIKROTIK_API_KEY) {
     console.log('❌ Invalid API key (text endpoint)');
     return res.status(403).send('FORBIDDEN');
@@ -140,18 +142,14 @@ app.get('/api/mikrotik-queue-text', async (req, res) => {
 
     console.log(`📤 Sending ${result.rows.length} users to MikroTik (TEXT)`);
 
-    if (result.rows.length === 0) {
-      return res.send('');
-    }
+    if (result.rows.length === 0) return res.send('');
 
-    // Build plain-text response
     const lines = result.rows.map(row =>
       `${row.mikrotik_username}|${row.mikrotik_password}|${row.plan}|${row.id}`
     );
 
     res.set('Content-Type', 'text/plain');
     res.send(lines.join('\n'));
-
   } catch (error) {
     console.error('❌ Text queue error:', error.message);
     res.status(500).send('ERROR');
@@ -165,7 +163,6 @@ app.post('/api/mark-processed/:id', async (req, res) => {
       `UPDATE payment_queue SET status = 'processed' WHERE id = $1`,
       [req.params.id]
     );
-    
     console.log(`✅ Marked ${req.params.id} as processed`);
     res.json({ success: true });
   } catch (error) {
@@ -183,11 +180,42 @@ app.get('/api/queue-status', async (req, res) => {
       SUM(CASE WHEN status = 'processed' THEN 1 ELSE 0 END) as processed
     FROM payment_queue
   `);
-  
   res.json(result.rows[0]);
 });
 
-// 5. TEST ENDPOINT
+// 5. TOKEN VALIDATION ENDPOINT
+app.get('/api/validate-token/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+
+    const result = await pool.query(
+      `SELECT mikrotik_username, plan 
+       FROM payment_queue 
+       WHERE one_time_token=$1 AND status='processed'`,
+      [token]
+    );
+
+    if (result.rows.length === 0)
+      return res.status(400).json({ success: false, message: 'Invalid or expired token' });
+
+    // Invalidate token after first use
+    await pool.query(
+      `UPDATE payment_queue SET one_time_token=NULL WHERE one_time_token=$1`,
+      [token]
+    );
+
+    res.json({
+      success: true,
+      username: result.rows[0].mikrotik_username,
+      plan: result.rows[0].plan
+    });
+  } catch (err) {
+    console.error('❌ Token validation error:', err.message);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// 6. TEST ENDPOINT
 app.get('/test', (req, res) => {
   res.json({ 
     status: 'OK', 
