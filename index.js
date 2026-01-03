@@ -80,8 +80,8 @@ app.post('/api/monnify-webhook', async (req, res) => {
       console.log(`📝 Assigned plan: ${plan} for ₦${amount}`);
       
       // Generate credentials
-      const username = customer.email || customer.customerEmail || `user_${Date.now()}`;
-      const password = generatePassword();
+     const base = customer.email || `user`;
+     const username = `${base}_${crypto.randomBytes(3).toString('hex')}`;
 
       // Insert into payment queue
       const result = await pool.query(
@@ -423,6 +423,7 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
 });
+
 
 
 
