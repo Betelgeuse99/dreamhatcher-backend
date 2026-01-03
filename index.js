@@ -83,14 +83,15 @@ app.post('/api/monnify-webhook', async (req, res) => {
       
       console.log(`✅ Payment queued: ID=${result.rows[0].id}, Plan=${plan}, Amount=₦${amount}`);
       
-      return res.status(200).json({ 
-        success: true, 
-        message: `Payment queued for ${plan} plan`,
-        plan: plan,
-        amount: amount,
-        autoLoginToken: token // return token so frontend can use
-      });
-    }
+     const backendUrl = process.env.BACKEND_URL || 'https://https://dreamhatcher-backend.onrender.com';
+
+return res.status(200).json({ 
+  success: true, 
+  message: `Payment queued for ${plan} plan`,
+  plan: plan,
+  amount: amount,
+  redirectUrl: `${backendUrl}/success?token=${token}`
+});
     
     res.status(200).json({ received: true });
   } catch (error) {
@@ -215,6 +216,173 @@ app.get('/api/validate-token/:token', async (req, res) => {
   }
 });
 
+// ========== ✅ ADD THIS EXACT CODE HERE ==========
+// 6. SUCCESS PAGE (SHOWS CREDENTIALS)
+app.get('/success', async (req, res) => {
+  const { token } = req.query;
+  
+  if (!token) {
+    return res.status(400).send(`
+      <h2>Missing Token</h2>
+      <p>Invalid access. Please contact support.</p>
+    `);
+  }
+  
+  try {
+    // Verify token and get credentials
+    const result = await pool.query(
+      `SELECT mikrotik_username, mikrotik_password, plan 
+       FROM payment_queue 
+       WHERE one_time_token=$1 AND status='processed'`,
+      [token]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(400).send(`
+        <h2>Invalid Token</h2>
+        <p>Token expired or already used. Please contact support.</p>
+      `);
+    }
+    
+    const { mikrotik_username, mikrotik_password } = result.rows[0];
+    
+    // Generate HTML success page
+    const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Payment Successful - Dream Hatcher Tech</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <style>
+        body {
+          font-family: 'Segoe UI', Arial, sans-serif;
+          background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+          min-height: 100vh;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          padding: 20px;
+          margin: 0;
+        }
+        .success-box {
+          background: linear-gradient(135deg, #e6f7ff, #f0f8ff);
+          padding: 40px;
+          border-radius: 20px;
+          box-shadow: 0 15px 35px rgba(0,0,0,0.25);
+          max-width: 500px;
+          width: 100%;
+          text-align: center;
+          border-top: 5px solid #00c6ff;
+        }
+        h2 { 
+          color: #0072ff; 
+          margin-bottom: 20px;
+          font-size: 1.8rem;
+        }
+        .logo {
+          color: #0072ff;
+          font-size: 1.5rem;
+          font-weight: bold;
+          margin-bottom: 20px;
+        }
+        .credentials {
+          background: white;
+          padding: 20px;
+          border-radius: 10px;
+          margin: 25px 0;
+          text-align: left;
+          border: 2px solid #e6e6e6;
+        }
+        .cred-row {
+          margin: 15px 0;
+          padding: 12px;
+          background: #f8f9fa;
+          border-radius: 8px;
+          font-size: 1rem;
+        }
+        .cred-label {
+          font-weight: bold;
+          color: #0072ff;
+          display: inline-block;
+          width: 100px;
+        }
+        .btn {
+          background: linear-gradient(90deg, #00c6ff, #0072ff);
+          color: white;
+          border: none;
+          padding: 18px 40px;
+          border-radius: 10px;
+          font-size: 1.2rem;
+          font-weight: 700;
+          cursor: pointer;
+          text-decoration: none;
+          display: inline-block;
+          margin-top: 20px;
+          box-shadow: 0 5px 15px rgba(0, 114, 255, 0.3);
+          transition: all 0.3s;
+        }
+        .btn:hover {
+          transform: translateY(-3px);
+          box-shadow: 0 8px 20px rgba(0, 114, 255, 0.4);
+        }
+        .note {
+          margin-top: 25px;
+          color: #666;
+          font-size: 14px;
+          padding: 15px;
+          background: #f0f8ff;
+          border-radius: 8px;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="success-box">
+        <div class="logo">Dream Hatcher Tech</div>
+        <h2>✅ Payment Successful!</h2>
+        <p>Your WiFi access has been activated for 30 days</p>
+        
+        <div class="credentials">
+          <div class="cred-row">
+            <span class="cred-label">Username:</span> ${mikrotik_username}
+          </div>
+          <div class="cred-row">
+            <span class="cred-label">Password:</span> ${mikrotik_password}
+          </div>
+        </div>
+        
+        <p>Click below to go to the WiFi login page:</p>
+        <a href="http://dreamhatcher.login?username=${encodeURIComponent(mikrotik_username)}&password=${encodeURIComponent(mikrotik_password)}" class="btn">
+          Go to WiFi Login
+        </a>
+        
+        <div class="note">
+          <strong>Note:</strong> Your credentials will be auto-filled on the login page.
+          Just click "Connect to WiFi" after going to the login page.
+        </div>
+      </div>
+    </body>
+    </html>
+    `;
+    
+    // Invalidate token after use (prevent reuse)
+    await pool.query(
+      `UPDATE payment_queue SET one_time_token=NULL WHERE one_time_token=$1`,
+      [token]
+    );
+    
+    console.log(`✅ Success page shown for user: ${mikrotik_username}`);
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+    
+  } catch (error) {
+    console.error('❌ Success page error:', error.message);
+    res.status(500).send(`
+      <h2>Server Error</h2>
+      <p>Please contact support with your transaction ID.</p>
+    `);
+  }
+});
+
 // 6. TEST ENDPOINT
 app.get('/test', (req, res) => {
   res.json({ 
@@ -228,3 +396,4 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
 });
+
