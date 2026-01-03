@@ -51,87 +51,79 @@ function verifyMonnifySignature(req) {
 // MONNIFY WEBHOOK ENDPOINT - WITH PLAN LOGIC + TOKEN GENERATION
 app.post('/api/monnify-webhook', async (req, res) => {
 
-   // 🔐 SECURITY CHECK (ADD THIS)
   if (!verifyMonnifySignature(req)) {
     console.log('❌ Invalid Monnify signature');
     return res.status(401).json({ error: 'Unauthorized webhook' });
   }
+
   console.log('📥 Monnify webhook received:', JSON.stringify(req.body, null, 2));
-  
+
   try {
     const { eventType, eventData } = req.body;
-    
-    if (eventType === 'SUCCESSFUL_TRANSACTION') {
-      const customer = eventData.customer;
-      const amount = parseFloat(eventData.amountPaid || eventData.amount);
-      
-      console.log(`💰 Payment amount: ${amount} for ${customer.email || customer.customerEmail}`);
-      
-      // VALIDATE AMOUNT AND ASSIGN PLAN
-     switch (amount) {
-  case 350:
-    plan = '24hr';
-    break;
-  case 2400:
-    plan = '7d';
-    break;
-  case 7500:
-    plan = '30d';
-    break;
-  default:
-    console.error(`❌ Invalid payment amount: ₦${amount}`);
-    return res.status(400).json({
-      error: 'Invalid payment amount',
-      message: 'Amount does not match any plan'
+
+    // ✅ ONLY handle successful payments
+    if (eventType !== 'SUCCESSFUL_TRANSACTION') {
+      return res.status(200).json({ received: true });
+    }
+
+    const customer = eventData.customer;
+    const amount = parseFloat(eventData.amountPaid || eventData.amount);
+
+    console.log(`💰 Payment amount: ${amount} for ${customer.email || customer.customerEmail}`);
+
+    // ✅ STRICT AMOUNT VALIDATION
+    let plan;
+    switch (amount) {
+      case 350: plan = '24hr'; break;
+      case 2400: plan = '7d'; break;
+      case 7500: plan = '30d'; break;
+      default:
+        console.error(`❌ Invalid amount ₦${amount}`);
+        return res.status(400).json({ error: 'Invalid amount' });
+    }
+
+    // ✅ Generate credentials
+    const base = customer.email || 'user';
+    const username = `${base}_${crypto.randomBytes(3).toString('hex')}`;
+    const password = generatePassword();
+
+    // ✅ Insert queue record
+    const result = await pool.query(
+      `INSERT INTO payment_queue 
+       (transaction_id, customer_email, customer_phone, plan, mikrotik_username, mikrotik_password) 
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id`,
+      [
+        eventData.transactionReference,
+        customer.email || customer.customerEmail,
+        customer.phoneNumber || customer.phone,
+        plan,
+        username,
+        password
+      ]
+    );
+
+    // ✅ Generate token
+    const token = crypto.randomBytes(32).toString('hex');
+    await pool.query(
+      `UPDATE payment_queue SET one_time_token=$1 WHERE id=$2`,
+      [token, result.rows[0].id]
+    );
+
+    console.log(`🔑 One-time token generated: ${token}`);
+
+    const backendUrl = process.env.BACKEND_URL || 'https://dreamhatcher-backend.onrender.com';
+
+    return res.status(200).json({
+      success: true,
+      plan,
+      amount,
+      redirectUrl: `${backendUrl}/success?token=${token}`
     });
-}     
-      console.log(`📝 Assigned plan: ${plan} for ₦${amount}`);
-      
-      // Generate credentials
-     const base = customer.email || `user`;
-     const username = `${base}_${crypto.randomBytes(3).toString('hex')}`;
 
-      // Insert into payment queue
-      const result = await pool.query(
-        `INSERT INTO payment_queue 
-         (transaction_id, customer_email, customer_phone, plan, mikrotik_username, mikrotik_password) 
-         VALUES ($1, $2, $3, $4, $5, $6) 
-         RETURNING id`,
-        [
-          eventData.transactionReference,
-          customer.email || customer.customerEmail,
-          customer.phoneNumber || customer.phone,
-          plan,
-          username,
-          password
-        ]
-      );
-
-      // ✅ Generate one-time token for auto-login
-      const token = crypto.randomBytes(32).toString('hex'); // 64 char hex
-      await pool.query(
-        `UPDATE payment_queue SET one_time_token=$1 WHERE id=$2`,
-        [token, result.rows[0].id]
-      );
-
-      console.log(`🔑 One-time token generated: ${token}`);
-      
-      console.log(`✅ Payment queued: ID=${result.rows[0].id}, Plan=${plan}, Amount=₦${amount}`);
-      
-     const backendUrl = process.env.BACKEND_URL || 'https://dreamhatcher-backend.onrender.com';
-
-return res.status(200).json({ 
-  success: true, 
-  message: `Payment queued for ${plan} plan`,
-  plan: plan,
-  amount: amount,
-  redirectUrl: `${backendUrl}/success?token=${token}`
-});
-    
-    res.status(200).json({ received: true });
   } catch (error) {
-    console.error('❌ Webhook error:', error.message);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('❌ Webhook error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -431,6 +423,7 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
 });
+
 
 
 
