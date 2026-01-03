@@ -23,7 +23,15 @@ pool.query('SELECT NOW()', (err, res) => {
 function generatePassword(length = 8) {
   return crypto.randomBytes(length).toString('hex').slice(0, length);
 }
-
+// Helper function for plan colors
+function getPlanColor(planCode) {
+  switch(planCode) {
+    case '24hr': return '#ff6600';
+    case '7d': return '#00aa00';
+    case '30d': return '#0072ff';
+    default: return '#666';
+  }
+}
 // MONNIFY WEBHOOK ENDPOINT - WITH PLAN LOGIC + TOKEN GENERATION
 app.post('/api/monnify-webhook', async (req, res) => {
   console.log('📥 Monnify webhook received:', JSON.stringify(req.body, null, 2));
@@ -83,7 +91,7 @@ app.post('/api/monnify-webhook', async (req, res) => {
       
       console.log(`✅ Payment queued: ID=${result.rows[0].id}, Plan=${plan}, Amount=₦${amount}`);
       
-     const backendUrl = process.env.BACKEND_URL || 'https://https://dreamhatcher-backend.onrender.com';
+     const backendUrl = process.env.BACKEND_URL || 'https://dreamhatcher-backend.onrender.com';
 
 return res.status(200).json({ 
   success: true, 
@@ -396,4 +404,5 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
 });
+
 
