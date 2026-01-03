@@ -216,12 +216,13 @@ app.get('/api/validate-token/:token', async (req, res) => {
   try {
     const { token } = req.params;
 
-    const result = await pool.query(
-      `SELECT mikrotik_username, plan 
-       FROM payment_queue 
-       WHERE one_time_token=$1 AND status IN ('pending', 'processed')
-      [token]
-    );
+   const result = await pool.query(
+  `SELECT mikrotik_username, plan
+   FROM payment_queue
+   WHERE one_time_token = $1
+     AND status IN ('pending', 'processed')`,
+  [token]
+);
 
     if (result.rows.length === 0)
       return res.status(400).json({ success: false, message: 'Invalid or expired token' });
