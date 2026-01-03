@@ -219,7 +219,7 @@ app.get('/api/validate-token/:token', async (req, res) => {
     const result = await pool.query(
       `SELECT mikrotik_username, plan 
        FROM payment_queue 
-       WHERE one_time_token=$1 AND status='processed'`,
+       WHERE one_time_token=$1 AND status IN ('pending', 'processed')
       [token]
     );
 
@@ -260,7 +260,7 @@ app.get('/success', async (req, res) => {
     const result = await pool.query(
       `SELECT mikrotik_username, mikrotik_password, plan 
        FROM payment_queue 
-       WHERE one_time_token=$1 AND status='processed'`,
+       WHERE one_time_token=$1 AND status IN ('pending', 'processed')
       [token]
     );
     
@@ -423,6 +423,7 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
 });
+
 
 
 
