@@ -36,11 +36,13 @@ function verifyMonnifySignature(req) {
   const secret = process.env.MONNIFY_SECRET_KEY;
   const signature = req.headers['monnify-signature'];
 
-  if (!signature) return false;
+  if (!signature || !secret) return false;
+
+  const body = JSON.stringify(req.body);
 
   const computedHash = crypto
     .createHmac('sha512', secret)
-    .update(JSON.stringify(req.body))
+    .update(body)
     .digest('hex');
 
   return computedHash === signature;
@@ -48,6 +50,12 @@ function verifyMonnifySignature(req) {
 
 // MONNIFY WEBHOOK ENDPOINT - WITH PLAN LOGIC + TOKEN GENERATION
 app.post('/api/monnify-webhook', async (req, res) => {
+
+   // 🔐 SECURITY CHECK (ADD THIS)
+  if (!verifyMonnifySignature(req)) {
+    console.log('❌ Invalid Monnify signature');
+    return res.status(401).json({ error: 'Unauthorized webhook' });
+  }
   console.log('📥 Monnify webhook received:', JSON.stringify(req.body, null, 2));
   
   try {
@@ -423,6 +431,7 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
 });
+
 
 
 
