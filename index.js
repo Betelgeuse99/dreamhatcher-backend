@@ -32,6 +32,20 @@ function getPlanColor(planCode) {
     default: return '#666';
   }
 }
+function verifyMonnifySignature(req) {
+  const secret = process.env.MONNIFY_SECRET_KEY;
+  const signature = req.headers['monnify-signature'];
+
+  if (!signature) return false;
+
+  const computedHash = crypto
+    .createHmac('sha512', secret)
+    .update(JSON.stringify(req.body))
+    .digest('hex');
+
+  return computedHash === signature;
+}
+
 // MONNIFY WEBHOOK ENDPOINT - WITH PLAN LOGIC + TOKEN GENERATION
 app.post('/api/monnify-webhook', async (req, res) => {
   console.log('📥 Monnify webhook received:', JSON.stringify(req.body, null, 2));
@@ -46,18 +60,23 @@ app.post('/api/monnify-webhook', async (req, res) => {
       console.log(`💰 Payment amount: ${amount} for ${customer.email || customer.customerEmail}`);
       
       // VALIDATE AMOUNT AND ASSIGN PLAN
-      let plan = '';
-      if (amount >= 7500) plan = '30d';
-      else if (amount >= 2400) plan = '7d';
-      else if (amount >= 350) plan = '24hr';
-      else {
-        console.error(`❌ Amount ${amount} too low for any plan`);
-        return res.status(400).json({ 
-          error: 'Insufficient payment',
-          message: `Payment of ₦${amount} is below minimum plan price (₦350)`
-        });
-      }
-      
+     switch (amount) {
+  case 350:
+    plan = '24hr';
+    break;
+  case 2400:
+    plan = '7d';
+    break;
+  case 7500:
+    plan = '30d';
+    break;
+  default:
+    console.error(`❌ Invalid payment amount: ₦${amount}`);
+    return res.status(400).json({
+      error: 'Invalid payment amount',
+      message: 'Amount does not match any plan'
+    });
+}     
       console.log(`📝 Assigned plan: ${plan} for ₦${amount}`);
       
       // Generate credentials
@@ -404,5 +423,6 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
 });
+
 
 
