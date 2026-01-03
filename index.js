@@ -19,11 +19,20 @@ pool.query('SELECT NOW()', (err, res) => {
   else console.log('✅ Connected to Supabase');
 });
 
-// Generate random password
+// Helper functions
 function generatePassword(length = 8) {
   return crypto.randomBytes(length).toString('hex').slice(0, length);
 }
-// Helper function for plan colors
+
+function getPlanDuration(planCode) {
+  switch(planCode) {
+    case '24hr': return '24 hours';
+    case '7d': return '7 days';
+    case '30d': return '30 days';
+    default: return planCode;
+  }
+}
+
 function getPlanColor(planCode) {
   switch(planCode) {
     case '24hr': return '#ff6600';
@@ -32,6 +41,7 @@ function getPlanColor(planCode) {
     default: return '#666';
   }
 }
+
 function verifyMonnifySignature(req) {
   const secret = process.env.MONNIFY_SECRET_KEY;
   const signature = req.headers['monnify-signature'];
@@ -39,7 +49,6 @@ function verifyMonnifySignature(req) {
   if (!signature || !secret) return false;
 
   const body = JSON.stringify(req.body);
-
   const computedHash = crypto
     .createHmac('sha512', secret)
     .update(body)
@@ -48,9 +57,8 @@ function verifyMonnifySignature(req) {
   return computedHash === signature;
 }
 
-// MONNIFY WEBHOOK ENDPOINT - WITH PLAN LOGIC + TOKEN GENERATION
+// MONNIFY WEBHOOK ENDPOINT
 app.post('/api/monnify-webhook', async (req, res) => {
-
   if (!verifyMonnifySignature(req)) {
     console.log('❌ Invalid Monnify signature');
     return res.status(401).json({ error: 'Unauthorized webhook' });
@@ -61,7 +69,6 @@ app.post('/api/monnify-webhook', async (req, res) => {
   try {
     const { eventType, eventData } = req.body;
 
-    // ✅ ONLY handle successful payments
     if (eventType !== 'SUCCESSFUL_TRANSACTION') {
       return res.status(200).json({ received: true });
     }
@@ -71,23 +78,22 @@ app.post('/api/monnify-webhook', async (req, res) => {
 
     console.log(`💰 Payment amount: ${amount} for ${customer.email || customer.customerEmail}`);
 
-    // ✅ STRICT AMOUNT VALIDATION
+    // Strict amount validation
     let plan;
-    switch (amount) {
-      case 350: plan = '24hr'; break;
-      case 2400: plan = '7d'; break;
-      case 7500: plan = '30d'; break;
-      default:
-        console.error(`❌ Invalid amount ₦${amount}`);
-        return res.status(400).json({ error: 'Invalid amount' });
+    if (amount >= 7500) plan = '30d';
+    else if (amount >= 2400) plan = '7d';
+    else if (amount >= 350) plan = '24hr';
+    else {
+      console.error(`❌ Invalid amount ₦${amount}`);
+      return res.status(400).json({ error: 'Invalid amount' });
     }
 
-    // ✅ Generate credentials
+    // Generate credentials
     const base = customer.email || 'user';
     const username = `${base}_${crypto.randomBytes(3).toString('hex')}`;
     const password = generatePassword();
 
-    // ✅ Insert queue record
+    // Insert into payment queue
     const result = await pool.query(
       `INSERT INTO payment_queue 
        (transaction_id, customer_email, customer_phone, plan, mikrotik_username, mikrotik_password) 
@@ -103,7 +109,7 @@ app.post('/api/monnify-webhook', async (req, res) => {
       ]
     );
 
-    // ✅ Generate token
+    // Generate token
     const token = crypto.randomBytes(32).toString('hex');
     await pool.query(
       `UPDATE payment_queue SET one_time_token=$1 WHERE id=$2`,
@@ -127,7 +133,7 @@ app.post('/api/monnify-webhook', async (req, res) => {
   }
 });
 
-// 2. MIKROTIK QUEUE ENDPOINT (JSON)
+// MIKROTIK QUEUE ENDPOINT (JSON)
 app.get('/api/mikrotik-queue', async (req, res) => {
   const apiKey = req.headers['x-api-key'] || req.query.api_key;
   if (apiKey !== process.env.MIKROTIK_API_KEY) {
@@ -151,7 +157,7 @@ app.get('/api/mikrotik-queue', async (req, res) => {
   }
 });
 
-// 2b. MIKROTIK QUEUE (PLAIN TEXT)
+// MIKROTIK QUEUE (PLAIN TEXT)
 app.get('/api/mikrotik-queue-text', async (req, res) => {
   const apiKey = req.headers['x-api-key'] || req.query.api_key;
   if (apiKey !== process.env.MIKROTIK_API_KEY) {
@@ -184,7 +190,7 @@ app.get('/api/mikrotik-queue-text', async (req, res) => {
   }
 });
 
-// 3. MARK AS PROCESSED
+// MARK AS PROCESSED
 app.post('/api/mark-processed/:id', async (req, res) => {
   try {
     await pool.query(
@@ -199,7 +205,7 @@ app.post('/api/mark-processed/:id', async (req, res) => {
   }
 });
 
-// 4. STATUS CHECK
+// STATUS CHECK
 app.get('/api/queue-status', async (req, res) => {
   const result = await pool.query(`
     SELECT 
@@ -211,18 +217,18 @@ app.get('/api/queue-status', async (req, res) => {
   res.json(result.rows[0]);
 });
 
-// 5. TOKEN VALIDATION ENDPOINT
+// TOKEN VALIDATION ENDPOINT
 app.get('/api/validate-token/:token', async (req, res) => {
   try {
     const { token } = req.params;
 
-   const result = await pool.query(
-  `SELECT mikrotik_username, plan
-   FROM payment_queue
-   WHERE one_time_token = $1
-     AND status IN ('pending', 'processed')`,
-  [token]
-);
+    const result = await pool.query(
+      `SELECT mikrotik_username, plan
+       FROM payment_queue
+       WHERE one_time_token = $1
+         AND status IN ('pending', 'processed')`,
+      [token]
+    );
 
     if (result.rows.length === 0)
       return res.status(400).json({ success: false, message: 'Invalid or expired token' });
@@ -244,8 +250,7 @@ app.get('/api/validate-token/:token', async (req, res) => {
   }
 });
 
-// ========== ✅ ADD THIS EXACT CODE HERE ==========
-// 6. SUCCESS PAGE (SHOWS CREDENTIALS)
+// ✅ SUCCESS PAGE (SHOWS CREDENTIALS) - FIXED VERSION
 app.get('/success', async (req, res) => {
   const { token } = req.query;
   
@@ -257,11 +262,11 @@ app.get('/success', async (req, res) => {
   }
   
   try {
-    // Verify token and get credentials
+    // ✅ FIXED: Proper SQL query with parameter
     const result = await pool.query(
       `SELECT mikrotik_username, mikrotik_password, plan 
        FROM payment_queue 
-       WHERE one_time_token=$1 AND status IN ('pending', 'processed')
+       WHERE one_time_token=$1 AND status IN ('pending', 'processed')`,
       [token]
     );
     
@@ -272,7 +277,8 @@ app.get('/success', async (req, res) => {
       `);
     }
     
-    const { mikrotik_username, mikrotik_password } = result.rows[0];
+    const { mikrotik_username, mikrotik_password, plan } = result.rows[0];
+    const planDuration = getPlanDuration(plan);
     
     // Generate HTML success page
     const html = `
@@ -306,6 +312,15 @@ app.get('/success', async (req, res) => {
           color: #0072ff; 
           margin-bottom: 20px;
           font-size: 1.8rem;
+        }
+        .plan-badge {
+          background: ${getPlanColor(plan)};
+          color: white;
+          padding: 8px 20px;
+          border-radius: 20px;
+          font-weight: bold;
+          display: inline-block;
+          margin: 10px 0;
         }
         .logo {
           color: #0072ff;
@@ -367,7 +382,8 @@ app.get('/success', async (req, res) => {
       <div class="success-box">
         <div class="logo">Dream Hatcher Tech</div>
         <h2>✅ Payment Successful!</h2>
-        <p>Your WiFi access has been activated for 30 days</p>
+        <div class="plan-badge">${planDuration.toUpperCase()} PLAN</div>
+        <p>Your WiFi access has been activated for ${planDuration}</p>
         
         <div class="credentials">
           <div class="cred-row">
@@ -375,6 +391,9 @@ app.get('/success', async (req, res) => {
           </div>
           <div class="cred-row">
             <span class="cred-label">Password:</span> ${mikrotik_password}
+          </div>
+          <div class="cred-row">
+            <span class="cred-label">Plan:</span> ${planDuration}
           </div>
         </div>
         
@@ -392,13 +411,13 @@ app.get('/success', async (req, res) => {
     </html>
     `;
     
-    // Invalidate token after use (prevent reuse)
+    // Invalidate token after use
     await pool.query(
       `UPDATE payment_queue SET one_time_token=NULL WHERE one_time_token=$1`,
       [token]
     );
     
-    console.log(`✅ Success page shown for user: ${mikrotik_username}`);
+    console.log(`✅ Success page shown for user: ${mikrotik_username} (${planDuration})`);
     res.setHeader('Content-Type', 'text/html');
     res.send(html);
     
@@ -411,7 +430,7 @@ app.get('/success', async (req, res) => {
   }
 });
 
-// 6. TEST ENDPOINT
+// TEST ENDPOINT
 app.get('/test', (req, res) => {
   res.json({ 
     status: 'OK', 
@@ -424,10 +443,3 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
 });
-
-
-
-
-
-
-
