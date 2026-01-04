@@ -468,6 +468,7 @@ app.get('/paystack-callback', (req, res) => {
   } catch (error) {
     console.error('Callback error:', error);
     res.send(`
+    }
       <html>
       <body>
         <h2>Payment Successful</h2>
@@ -650,6 +651,7 @@ const server = app.listen(PORT, () => {
 
 server.setTimeout(30000);
 server.keepAliveTimeout = 30000;
+
 
 
 
