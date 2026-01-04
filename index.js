@@ -109,18 +109,112 @@ app.post('/api/paystack-webhook', async (req, res) => {
   }
 });
 
-// ========== PAYSTACK CALLBACK - REDIRECT TO SUCCESS ==========
+// ========== PAYSTACK CALLBACK - WITH DELAY ==========
 app.get('/paystack-callback', (req, res) => {
   const { reference, trxref, transaction_id } = req.query;
   const ref = reference || trxref || transaction_id;
   
   console.log('🔗 Paystack callback:', ref);
   
-  // Simply redirect to the success page on the SAME domain (HTTPS to HTTPS)
-  res.redirect('/success?reference=' + encodeURIComponent(ref || ''));
+  // Show a delay page before redirecting to success
+  const html = `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Processing Payment...</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        font-family: Arial, sans-serif;
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        color: white;
+      }
+      .container {
+        background: rgba(255,255,255,0.05);
+        padding: 40px;
+        border-radius: 20px;
+        max-width: 400px;
+        width: 100%;
+        text-align: center;
+        border: 1px solid rgba(255,255,255,0.1);
+      }
+      .spinner {
+        border: 4px solid rgba(255,255,255,0.1);
+        border-top: 4px solid #00c9ff;
+        border-radius: 50%;
+        width: 60px;
+        height: 60px;
+        animation: spin 1s linear infinite;
+        margin: 30px auto;
+      }
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+      .progress-bar {
+        background: rgba(255,255,255,0.1);
+        border-radius: 10px;
+        height: 8px;
+        margin: 20px 0;
+        overflow: hidden;
+      }
+      .progress-fill {
+        background: linear-gradient(90deg, #00c9ff, #92fe9d);
+        height: 100%;
+        width: 0%;
+        animation: fill 8s linear forwards;
+      }
+      @keyframes fill {
+        0% { width: 0%; }
+        100% { width: 100%; }
+      }
+      h2 { color: #00c9ff; margin-bottom: 10px; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h2>✅ Payment Received!</h2>
+      <div class="spinner"></div>
+      <p>Processing your WiFi credentials...</p>
+      <div class="progress-bar">
+        <div class="progress-fill"></div>
+      </div>
+      <p id="countdown">Preparing your account: <strong>8</strong> seconds</p>
+      <p style="margin-top: 20px; font-size: 12px; color: #888;">
+        Reference: ${ref || 'N/A'}
+      </p>
+    </div>
+    
+    <script>
+      let seconds = 8;
+      const countdown = document.getElementById('countdown');
+      
+      const timer = setInterval(function() {
+        seconds--;
+        countdown.innerHTML = 'Preparing your account: <strong>' + seconds + '</strong> seconds';
+        
+        if (seconds <= 0) {
+          clearInterval(timer);
+          countdown.innerHTML = '<strong>Redirecting...</strong>';
+          window.location.href = '/success?reference=${encodeURIComponent(ref || '')}';
+        }
+      }, 1000);
+    </script>
+  </body>
+  </html>
+  `;
+  
+  res.send(html);
 });
-
-// ========== SUCCESS PAGE - NO HTTP REDIRECT ==========
+    
+   // ========== SUCCESS PAGE - PATIENT POLLING ==========
 app.get('/success', async (req, res) => {
   try {
     const { reference, trxref } = req.query;
@@ -251,11 +345,9 @@ app.get('/success', async (req, res) => {
           transition: transform 0.3s, box-shadow 0.3s;
         }
         .btn:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(0,201,255,0.4); }
-        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .hidden { display: none; }
-        .error-text { color: #ff6b6b; }
-        .success-text { color: #92fe9d; }
         .support { margin-top: 20px; font-size: 14px; color: #aaa; }
+        .attempt-info { font-size: 12px; color: #888; margin-top: 10px; }
       </style>
     </head>
     <body>
@@ -267,7 +359,8 @@ app.get('/success', async (req, res) => {
           <h2>Payment Successful!</h2>
           <div class="status-box">
             <div class="spinner"></div>
-            <p id="status-text">Fetching your WiFi credentials...</p>
+            <p id="status-text">Creating your WiFi account...</p>
+            <p class="attempt-info" id="attempt-info">This usually takes 30-60 seconds</p>
             <p style="font-size: 12px; margin-top: 10px;">Reference: ${ref}</p>
           </div>
         </div>
@@ -302,10 +395,14 @@ app.get('/success', async (req, res) => {
         
         <div id="error-state" class="hidden">
           <div class="success-icon">⏳</div>
-          <h2>Processing Payment...</h2>
+          <h2>Still Processing...</h2>
           <div class="status-box">
-            <p id="error-text">Your payment is being processed. This may take up to 2 minutes.</p>
+            <p id="error-text">Your account is being created. This may take a bit longer.</p>
             <button class="btn" onclick="checkStatus()" style="margin-top: 15px;">🔄 Check Again</button>
+            <p style="margin-top: 15px; font-size: 12px;">
+              Reference: <strong>${ref}</strong><br>
+              Save this reference and contact support if needed.
+            </p>
           </div>
         </div>
         
@@ -317,6 +414,7 @@ app.get('/success', async (req, res) => {
       <script>
         const ref = '${ref}';
         let checkCount = 0;
+        const maxChecks = 20; // 20 attempts x 5 seconds = 100 seconds max
         let credentials = { username: '', password: '', plan: '' };
         
         function showState(state) {
@@ -338,23 +436,33 @@ app.get('/success', async (req, res) => {
         function copyCredentials() {
           const text = 'Username: ' + credentials.username + '\\nPassword: ' + credentials.password + '\\nPlan: ' + credentials.plan;
           navigator.clipboard.writeText(text).then(function() {
-            const btn = document.querySelector('.btn');
-            btn.textContent = '✓ Copied!';
-            setTimeout(function() { btn.textContent = '📋 Copy Credentials'; }, 2000);
+            const btns = document.querySelectorAll('.btn');
+            btns.forEach(function(btn) {
+              if (btn.textContent.includes('Copy')) {
+                btn.textContent = '✓ Copied!';
+                setTimeout(function() { btn.textContent = '📋 Copy Credentials'; }, 2000);
+              }
+            });
           });
         }
         
         async function checkStatus() {
           checkCount++;
-          document.getElementById('status-text').textContent = 'Checking status (attempt ' + checkCount + ')...';
+          
+          const statusText = document.getElementById('status-text');
+          const attemptInfo = document.getElementById('attempt-info');
+          
+          statusText.textContent = 'Checking for your credentials...';
+          attemptInfo.textContent = 'Attempt ' + checkCount + ' of ' + maxChecks + ' (checking every 5 seconds)';
           
           try {
             const response = await fetch('/api/check-status?ref=' + encodeURIComponent(ref));
             const data = await response.json();
             
-            console.log('Status check:', data);
+            console.log('Status check #' + checkCount + ':', data);
             
             if (data.ready && data.username && data.password) {
+              // SUCCESS! Credentials are ready
               credentials = {
                 username: data.username,
                 password: data.password,
@@ -366,30 +474,48 @@ app.get('/success', async (req, res) => {
               document.getElementById('plan-display').textContent = credentials.plan;
               
               showState('credentials');
+              
+            } else if (checkCount >= maxChecks) {
+              // Max attempts reached
+              document.getElementById('error-text').textContent = 
+                'Your payment was received but account creation is taking longer than expected. ' +
+                'Please wait a few minutes and try the "Check Again" button, or contact support.';
+              showState('error');
+              
             } else {
-              if (checkCount >= 6) {
-                document.getElementById('error-text').textContent = 
-                  'Still processing. Status: ' + (data.status || 'pending') + '. Please wait or contact support.';
-                showState('error');
+              // Still processing, update status and retry
+              if (data.status === 'pending') {
+                statusText.textContent = 'Account queued, waiting for MikroTik to create user...';
+              } else if (data.status === 'processed') {
+                statusText.textContent = 'Account created! Loading credentials...';
               } else {
-                document.getElementById('status-text').textContent = 
-                  'Processing... (' + (data.message || 'Please wait') + ')';
-                setTimeout(checkStatus, 5000);
+                statusText.textContent = data.message || 'Processing your payment...';
               }
+              
+              // Retry after 5 seconds
+              setTimeout(checkStatus, 5000);
             }
+            
           } catch (error) {
             console.error('Check error:', error);
-            if (checkCount >= 3) {
+            
+            if (checkCount >= 5) {
+              statusText.textContent = 'Connection issue, retrying...';
+            }
+            
+            if (checkCount >= maxChecks) {
               document.getElementById('error-text').textContent = 
-                'Connection issue. Please wait a moment and try again.';
+                'Connection issues detected. Please check your internet and try again.';
               showState('error');
             } else {
-              setTimeout(checkStatus, 3000);
+              // Retry after 5 seconds
+              setTimeout(checkStatus, 5000);
             }
           }
         }
         
-        setTimeout(checkStatus, 2000);
+        // Start checking after 3 seconds (give webhook time to arrive)
+        setTimeout(checkStatus, 3000);
       </script>
     </body>
     </html>
@@ -580,4 +706,5 @@ const server = app.listen(PORT, () => {
 
 server.setTimeout(30000);
 server.keepAliveTimeout = 30000;
+
 
