@@ -427,8 +427,6 @@ await pool.query(`
         password,
         token
       ]
-    )
-    
     console.log(`✅ Test ${plan} created: ${username}`);
     
     res.json({
@@ -591,6 +589,7 @@ const server = app.listen(PORT, () => {
 // Set server timeout to prevent hanging
 server.setTimeout(30000);
 server.keepAliveTimeout = 30000;
+
 
 
 
