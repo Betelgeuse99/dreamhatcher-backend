@@ -95,6 +95,11 @@ app.post('/api/paystack-webhook', async (req, res) => {
     );
 
     console.log(`✅ Queued Paystack user ${username}`);
+    // Redirect user to hotspot processing page
+return res.status(200).json({ 
+  received: true,
+  redirect_url: `http://dreamhatcher.login/payment-processing.html?ref=${reference}`
+});
 
     return res.status(200).json({ received: true });
 
@@ -589,6 +594,7 @@ const server = app.listen(PORT, () => {
 // Set server timeout to prevent hanging
 server.setTimeout(30000);
 server.keepAliveTimeout = 30000;
+
 
 
 
