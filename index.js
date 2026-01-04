@@ -197,327 +197,139 @@ app.get('/paystack-callback', async (req, res) => {
   }
 });
 
-// ========== UPDATED SUCCESS ROUTE ==========
-app.get('/success', async (req, res) => {
-  const { token, reference, trxref } = req.query;
+// ========== SIMPLE SUCCESS PAGE ==========
+app.get('/success', (req, res) => {
+  const { reference, trxref } = req.query;
   const ref = reference || trxref;
   
-  console.log('🔍 Success page accessed with:', { token, ref });
+  console.log('📄 Success page loaded with reference:', ref);
   
-  // If we have a reference but no token
-  if (ref && !token) {
-    console.log(`🔗 Processing payment reference: ${ref}`);
+  // IMMEDIATE response - no database queries
+  const html = `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+        min-height: 100vh;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 20px;
+        margin: 0;
+        color: white;
+      }
+      .container {
+        background: rgba(255, 255, 255, 0.1);
+        padding: 40px;
+        border-radius: 20px;
+        backdrop-filter: blur(10px);
+        max-width: 500px;
+        width: 100%;
+        text-align: center;
+      }
+      h1 { color: #00c6ff; margin-bottom: 20px; }
+      .spinner {
+        border: 5px solid rgba(255,255,255,0.3);
+        border-top: 5px solid #00c6ff;
+        border-radius: 50%;
+        width: 50px;
+        height: 50px;
+        animation: spin 1s linear infinite;
+        margin: 20px auto;
+      }
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>🎉 Payment Successful!</h1>
+      <p>Your payment reference: <strong>${ref || 'N/A'}</strong></p>
+      <p>We're activating your WiFi access now...</p>
+      <div class="spinner"></div>
+      <p>Please wait 10-30 seconds for activation.</p>
+      <p>If this page doesn't update, refresh or contact: 07037412314</p>
+    </div>
     
-    try {
-      // Check database for this reference
-      const result = await pool.query(
-        `SELECT mikrotik_username, mikrotik_password, plan, status 
-         FROM payment_queue 
-         WHERE transaction_id = $1`,
-        [ref]
-      );
+    <script>
+      // Simple JavaScript to check status
+      const ref = '${ref}';
+      let checkCount = 0;
       
-      if (result.rows.length === 0) {
-        console.log(`⏳ Payment ${ref} not in database yet`);
+      function checkStatus() {
+        checkCount++;
+        console.log('Checking status, attempt:', checkCount);
         
-        // Show waiting page
-        const waitingHtml = `
-        <!DOCTYPE html>
-        <html>
-        <body style="text-align:center; padding:50px; font-family:Arial;">
-          <h2>⏳ Payment Processing</h2>
-          <p>Your payment is being confirmed...</p>
-          <div style="border:5px solid #f3f3f3; border-top:5px solid #0072ff; 
-                      border-radius:50%; width:50px; height:50px; 
-                      animation:spin 1s linear infinite; margin:20px auto;"></div>
-          <p>This page will refresh in 5 seconds.</p>
-          <script>
-            setTimeout(() => location.reload(), 5000);
-            const style = document.createElement('style');
-            style.textContent = '@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
-            document.head.appendChild(style);
-          </script>
-        </body>
-        </html>
-        `;
-        return res.send(waitingHtml);
+        // After 5 seconds, try to redirect to hotspot page
+        if (checkCount >= 5) {
+          window.location.href = 'http://dreamhatcher.login';
+          return;
+        }
+        
+        // Simple check without complex queries
+        fetch('/api/simple-check?ref=' + ref)
+          .then(res => res.json())
+          .then(data => {
+            if (data.ready) {
+              window.location.href = 'http://dreamhatcher.login?username=' + 
+                encodeURIComponent(data.username) + '&password=' + 
+                encodeURIComponent(data.password);
+            } else {
+              setTimeout(checkStatus, 3000);
+            }
+          })
+          .catch(() => {
+            setTimeout(checkStatus, 3000);
+          });
       }
       
-      const { mikrotik_username, mikrotik_password, plan, status } = result.rows[0];
-      
-      if (status === 'processed') {
-        console.log(`✅ Payment ${ref} is processed, showing credentials`);
-        
-        // Show success page directly
-        const planDuration = getPlanDuration(plan);
-        const successHtml = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <title>Payment Successful</title>
-          <style>/* Your existing success page styles */</style>
-        </head>
-        <body>
-          <div class="success-box">
-            <div class="logo">Dream Hatcher Tech</div>
-            <h2>✅ Payment Successful!</h2>
-            <p>Your WiFi access has been activated</p>
-            
-            <div class="credentials">
-              <div class="cred-row">
-                <span class="cred-label">Username:</span> ${mikrotik_username}
-              </div>
-              <div class="cred-row">
-                <span class="cred-label">Password:</span> ${mikrotik_password}
-              </div>
-              <div class="cred-row">
-                <span class="cred-label">Plan:</span> ${planDuration}
-              </div>
-            </div>
-            
-            <p>Click below to go to the WiFi login page:</p>
-            <a href="http://dreamhatcher.login?username=${encodeURIComponent(mikrotik_username)}&password=${encodeURIComponent(mikrotik_password)}" class="btn">
-              Go to WiFi Login
-            </a>
-          </div>
-        </body>
-        </html>
-        `;
-        
-        return res.send(successHtml);
-        
-      } else {
-        console.log(`⏳ Payment ${ref} status: ${status}`);
-        
-        // Show waiting page
-        const waitingHtml = `
-        <!DOCTYPE html>
-        <html>
-        <body style="text-align:center; padding:50px; font-family:Arial;">
-          <h2>⏳ Payment ${status.toUpperCase()}</h2>
-          <p>Your payment is ${status}. Waiting for activation...</p>
-          <div style="border:5px solid #f3f3f3; border-top:5px solid #${status === 'pending' ? 'ff9900' : '0072ff'}; 
-                      border-radius:50%; width:50px; height:50px; 
-                      animation:spin 1s linear infinite; margin:20px auto;"></div>
-          <p>This page will auto-refresh.</p>
-          <script>
-            setTimeout(() => location.reload(), 3000);
-            const style = document.createElement('style');
-            style.textContent = '@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
-            document.head.appendChild(style);
-          </script>
-        </body>
-        </html>
-        `;
-        
-        return res.send(waitingHtml);
-      }
-      
-    } catch (error) {
-      console.error('Error processing reference:', error.message);
-      // Fall through to token-based success page
-    }
-  }
+      // Start checking after 3 seconds
+      setTimeout(checkStatus, 3000);
+    </script>
+  </body>
+  </html>
+  `;
   
-  // Handle token-based success page
-  if (!token) {
-    const missingTokenHtml = `
-    <!DOCTYPE html>
-    <html>
-    <body style="text-align:center; padding:50px; font-family:Arial;">
-      <h2>🔑 Missing Token</h2>
-      <p>Invalid access. Please complete your payment first.</p>
-      <button onclick="window.location.href='/test-payment'" 
-              style="padding:10px 20px; background:#0072ff; color:white; border:none; border-radius:5px;">
-        Test Payment
-      </button>
-    </body>
-    </html>
-    `;
-    return res.status(400).send(missingTokenHtml);
+  res.setHeader('Content-Type', 'text/html');
+  res.send(html);
+});
+
+// SIMPLE CHECK ENDPOINT - No database queries
+app.get('/api/simple-check', async (req, res) => {
+  const { ref } = req.query;
+  
+  if (!ref) {
+    return res.json({ ready: false });
   }
   
   try {
-    // Verify token and get credentials
+    // SIMPLE query only
     const result = await pool.query(
-      `SELECT mikrotik_username, mikrotik_password, plan 
+      `SELECT mikrotik_username, mikrotik_password 
        FROM payment_queue 
-       WHERE one_time_token = $1 AND status = 'processed'`,
-      [token]
+       WHERE transaction_id = $1 AND status = 'processed' 
+       LIMIT 1`,
+      [ref]
     );
     
-    if (result.rows.length === 0) {
-      console.log(`❌ Invalid or expired token: ${token}`);
-      return res.status(400).send(`
-        <h2>Invalid Token</h2>
-        <p>Token expired or already used. Please contact support.</p>
-      `);
+    if (result.rows.length > 0) {
+      res.json({
+        ready: true,
+        username: result.rows[0].mikrotik_username,
+        password: result.rows[0].mikrotik_password
+      });
+    } else {
+      res.json({ ready: false });
     }
-    
-    const { mikrotik_username, mikrotik_password, plan } = result.rows[0];
-    const planDuration = getPlanDuration(plan);
-    
-    // Generate HTML success page
-    const html = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>Payment Successful - Dream Hatcher Tech</title>
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <style>
-        body {
-          font-family: 'Segoe UI', Arial, sans-serif;
-          background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
-          min-height: 100vh;
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          padding: 20px;
-          margin: 0;
-        }
-        .success-box {
-          background: linear-gradient(135deg, #e6f7ff, #f0f8ff);
-          padding: 40px;
-          border-radius: 20px;
-          box-shadow: 0 15px 35px rgba(0,0,0,0.25);
-          max-width: 500px;
-          width: 100%;
-          text-align: center;
-          border-top: 5px solid #00c6ff;
-        }
-        h2 { 
-          color: #0072ff; 
-          margin-bottom: 20px;
-          font-size: 1.8rem;
-        }
-        .plan-badge {
-          background: ${getPlanColor(plan)};
-          color: white;
-          padding: 8px 20px;
-          border-radius: 20px;
-          font-weight: bold;
-          display: inline-block;
-          margin: 10px 0;
-        }
-        .logo {
-          color: #0072ff;
-          font-size: 1.5rem;
-          font-weight: bold;
-          margin-bottom: 20px;
-        }
-        .credentials {
-          background: white;
-          padding: 20px;
-          border-radius: 10px;
-          margin: 25px 0;
-          text-align: left;
-          border: 2px solid #e6e6e6;
-        }
-        .cred-row {
-          margin: 15px 0;
-          padding: 12px;
-          background: #f8f9fa;
-          border-radius: 8px;
-          font-size: 1rem;
-        }
-        .cred-label {
-          font-weight: bold;
-          color: #0072ff;
-          display: inline-block;
-          width: 100px;
-        }
-        .btn {
-          background: linear-gradient(90deg, #00c6ff, #0072ff);
-          color: white;
-          border: none;
-          padding: 18px 40px;
-          border-radius: 10px;
-          font-size: 1.2rem;
-          font-weight: 700;
-          cursor: pointer;
-          text-decoration: none;
-          display: inline-block;
-          margin-top: 20px;
-          box-shadow: 0 5px 15px rgba(0, 114, 255, 0.3);
-          transition: all 0.3s;
-        }
-        .btn:hover {
-          transform: translateY(-3px);
-          box-shadow: 0 8px 20px rgba(0, 114, 255, 0.4);
-        }
-        .note {
-          margin-top: 25px;
-          color: #666;
-          font-size: 14px;
-          padding: 15px;
-          background: #f0f8ff;
-          border-radius: 8px;
-        }
-        .copy-btn {
-          background: #666;
-          color: white;
-          border: none;
-          padding: 5px 10px;
-          border-radius: 5px;
-          margin-left: 10px;
-          cursor: pointer;
-          font-size: 0.8rem;
-        }
-      </style>
-    </head>
-    <body>
-      <div class="success-box">
-        <div class="logo">Dream Hatcher Tech</div>
-        <h2>✅ Payment Successful!</h2>
-        <div class="plan-badge">${planDuration.toUpperCase()} PLAN</div>
-        <p>Your WiFi access has been activated for ${planDuration}</p>
-        
-        <div class="credentials">
-          <div class="cred-row">
-            <span class="cred-label">Username:</span> 
-            <span id="username">${mikrotik_username}</span>
-            <button class="copy-btn" onclick="copyToClipboard('username')">Copy</button>
-          </div>
-          <div class="cred-row">
-            <span class="cred-label">Password:</span> 
-            <span id="password">${mikrotik_password}</span>
-            <button class="copy-btn" onclick="copyToClipboard('password')">Copy</button>
-          </div>
-        </div>
-        
-        <p>Click below to go to the WiFi login page:</p>
-        <a href="http://dreamhatcher.login?username=${encodeURIComponent(mikrotik_username)}&password=${encodeURIComponent(mikrotik_password)}" class="btn">
-          Go to WiFi Login
-        </a>
-        
-        <div class="note">
-          <strong>Note:</strong> Your credentials will be auto-filled on the login page.
-          Just click "Connect to WiFi" after going to the login page.
-        </div>
-      </div>
-      
-      <script>
-        function copyToClipboard(elementId) {
-          const text = document.getElementById(elementId).innerText;
-          navigator.clipboard.writeText(text).then(() => {
-            alert('Copied to clipboard!');
-          });
-        }
-      </script>
-    </body>
-    </html>
-    `;
-    
-    console.log(`✅ Success page shown for user: ${mikrotik_username} (${planDuration})`);
-    res.setHeader('Content-Type', 'text/html');
-    res.send(html);
-    
   } catch (error) {
-    console.error('❌ Success page error:', error.message);
-    res.status(500).send(`
-      <h2>Server Error</h2>
-      <p>Please contact support with your transaction ID.</p>
-    `);
+    console.log('Simple check error:', error.message);
+    res.json({ ready: false });
   }
 });
 
@@ -700,5 +512,6 @@ app.listen(PORT, () => {
   console.log(`✅ Health check: http://localhost:${PORT}/health`);
   console.log(`✅ Test payment: http://localhost:${PORT}/test-payment`);
 });
+
 
 
