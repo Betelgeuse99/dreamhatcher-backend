@@ -240,9 +240,9 @@ app.get('/success', (req, res) => {
               
               if (data.ready && data.username && data.password) {
                 // Redirect to login page with credentials
-                window.location.href = 'http://dreamhatcher.login?username=' + 
-                  encodeURIComponent(data.username) + '&password=' + 
-                  encodeURIComponent(data.password);
+                window.location.href = 'https://dreamhatcher.login?username=' +
+                encodeURIComponent(data.username) + '&password=' +
+                encodeURIComponent(data.password);
               } else {
                 alert('Still processing... Try again in 30 seconds.');
               }
@@ -587,4 +587,5 @@ const server = app.listen(PORT, () => {
 // Set server timeout to prevent hanging
 server.setTimeout(30000);
 server.keepAliveTimeout = 30000;
+
 
