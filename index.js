@@ -104,7 +104,7 @@ app.post('/api/paystack-webhook', async (req, res) => {
   }
 });
 
-// ========== SUCCESS PAGE WITH PROCESSING UI ==========
+// ========== SUCCESS PAGE - FIXED FOR PAYSTACK REDIRECT ==========
 app.get('/success', (req, res) => {
   try {
     const { reference, trxref } = req.query;
@@ -112,19 +112,51 @@ app.get('/success', (req, res) => {
     
     console.log('📄 Success page accessed, ref:', ref);
     
+    // If no reference, show error
+    if (!ref) {
+      return res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Payment Error</title>
+          <style>
+            body { font-family: Arial; padding: 20px; text-align: center; }
+            .error { color: red; background: #ffe6e6; padding: 20px; border-radius: 10px; }
+          </style>
+        </head>
+        <body>
+          <h1>⚠️ Payment Reference Missing</h1>
+          <div class="error">
+            <p>No payment reference found. This usually happens when:</p>
+            <ol style="text-align: left; max-width: 500px; margin: 20px auto;">
+              <li>Paystack didn't pass the reference properly</li>
+              <li>You refreshed the page</li>
+              <li>Browser blocked the redirect</li>
+            </ol>
+            <p><strong>Solution:</strong> Please return to the payment page and try again.</p>
+            <p>Support: 07037412314</p>
+          </div>
+        </body>
+        </html>
+      `);
+    }
+    
+    // SIMPLE HTML - MINIMAL JAVASCRIPT
     const html = `
     <!DOCTYPE html>
     <html>
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Payment Successful - Dream Hatcher Tech</title>
+      <title>Payment Processing - Dream Hatcher</title>
       <style>
         body {
           font-family: Arial, sans-serif;
           margin: 0;
           padding: 20px;
-          background: #f0f8ff;
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
           min-height: 100vh;
           display: flex;
           align-items: center;
@@ -132,35 +164,28 @@ app.get('/success', (req, res) => {
         }
         .container {
           background: white;
-          padding: 40px;
-          border-radius: 15px;
-          box-shadow: 0 5px 20px rgba(0,0,0,0.1);
-          max-width: 500px;
+          padding: 30px;
+          border-radius: 20px;
+          box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+          max-width: 400px;
           width: 100%;
           text-align: center;
         }
         h1 {
-          color: #0072ff;
-          margin-bottom: 20px;
-        }
-        .status {
-          background: #e6f7ff;
-          padding: 15px;
-          border-radius: 10px;
-          margin: 20px 0;
-          border-left: 5px solid #0072ff;
+          color: #333;
+          margin-bottom: 10px;
         }
         .ref {
-          font-family: monospace;
-          background: #f8f9fa;
+          background: #f7f7f7;
           padding: 10px;
           border-radius: 5px;
-          margin: 10px 0;
+          margin: 15px 0;
+          font-family: monospace;
           word-break: break-all;
         }
         .spinner {
           border: 4px solid #f3f3f3;
-          border-top: 4px solid #0072ff;
+          border-top: 4px solid #667eea;
           border-radius: 50%;
           width: 40px;
           height: 40px;
@@ -172,154 +197,81 @@ app.get('/success', (req, res) => {
           100% { transform: rotate(360deg); }
         }
         .btn {
-          background: #0072ff;
+          background: #667eea;
           color: white;
           border: none;
-          padding: 15px 30px;
+          padding: 12px 24px;
           border-radius: 10px;
           font-size: 16px;
           cursor: pointer;
-          margin-top: 20px;
+          margin: 10px;
           text-decoration: none;
           display: inline-block;
         }
         .btn:hover {
-          background: #0056cc;
-        }
-        .btn-green {
-          background: #00cc66;
-        }
-        .error {
-          color: red;
-          background: #ffe6e6;
-          padding: 10px;
-          border-radius: 5px;
-          margin: 20px 0;
-          display: none;
+          background: #5a67d8;
         }
       </style>
     </head>
     <body>
       <div class="container">
         <h1>✅ Payment Successful!</h1>
-        <div class="status">
-          <p><strong>Status:</strong> Processing your WiFi access</p>
-          <p><strong>Reference:</strong> <span class="ref" id="reference">${ref || 'N/A'}</span></p>
-        </div>
+        <p>Your payment reference:</p>
+        <div class="ref">${ref}</div>
         
-        <div class="spinner" id="spinner"></div>
+        <div class="spinner"></div>
         
-        <p id="message">Your WiFi credentials are being generated...</p>
+        <p>Processing your WiFi credentials...</p>
+        <p><small>This may take 30-60 seconds</small></p>
         
-        <div id="credentials" style="display: none; margin: 20px 0; padding: 15px; background: #f0f8ff; border-radius: 10px;">
-          <h3>✅ Your WiFi Credentials:</h3>
-          <p><strong>Username:</strong> <span id="username"></span></p>
-          <p><strong>Password:</strong> <span id="password"></span></p>
-        </div>
-        
-        <div id="actions" style="margin: 20px 0; display: none;">
+        <div style="margin-top: 20px;">
+          <button class="btn" onclick="checkStatus()">Check Status</button>
           <button class="btn" onclick="goToLogin()">Go to WiFi Login</button>
-          <button class="btn btn-green" onclick="copyCredentials()">Copy Credentials</button>
         </div>
         
-        <div id="error" class="error"></div>
-        
-        <p style="color: #666; font-size: 14px; margin-top: 30px;">
-          <strong>Note:</strong> This may take 30-60 seconds. Do not close this page.<br>
-          Support: 07037412314
+        <p style="margin-top: 30px; color: #666; font-size: 14px;">
+          If this takes more than 2 minutes, please contact:<br>
+          <strong>07037412314</strong>
         </p>
       </div>
       
       <script>
         const ref = '${ref}';
-        let attempts = 0;
+        let checkCount = 0;
         
         function checkStatus() {
-          attempts++;
-          document.getElementById('message').textContent = 'Checking status... (Attempt ' + attempts + ')';
+          checkCount++;
           
-          fetch('/api/check-status?ref=' + encodeURIComponent(ref))
-            .then(response => {
-              if (!response.ok) throw new Error('Network error');
-              return response.json();
+          // Simple fetch with error handling
+          fetch('https://dreamhatcher-backend.onrender.com/api/check-status?ref=' + encodeURIComponent(ref))
+            .then(res => {
+              if (!res.ok) throw new Error('Network error');
+              return res.json();
             })
             .then(data => {
-              console.log('Status check result:', data);
+              console.log('Check result:', data);
               
               if (data.ready && data.username && data.password) {
-                // Credentials are ready!
-                document.getElementById('spinner').style.display = 'none';
-                document.getElementById('message').textContent = '✅ Credentials ready!';
-                
-                // Show credentials
-                document.getElementById('username').textContent = data.username;
-                document.getElementById('password').textContent = data.password;
-                document.getElementById('credentials').style.display = 'block';
-                document.getElementById('actions').style.display = 'block';
-                
-                // Auto-redirect to WiFi login after 3 seconds
-                setTimeout(() => {
-                  goToLogin(data.username, data.password);
-                }, 3000);
-                
+                // Redirect to WiFi login with credentials
+                window.location.href = 'http://dreamhatcher.login/login?username=' + 
+                  encodeURIComponent(data.username) + '&password=' + 
+                  encodeURIComponent(data.password);
               } else {
-                // Still processing
-                document.getElementById('message').textContent = data.message || 'Still processing...';
-                
-                if (attempts < 30) { // Try for 2.5 minutes (30 * 5 seconds)
-                  setTimeout(checkStatus, 5000);
-                } else {
-                  showError('Timeout: Payment processing is taking too long. Please contact support: 07037412314');
-                }
+                alert('Still processing... Try again in 30 seconds.');
               }
             })
-            .catch(error => {
-              console.error('Check error:', error);
-              document.getElementById('message').textContent = 'Connection error, retrying...';
-              
-              if (attempts < 30) {
-                setTimeout(checkStatus, 5000);
-              } else {
-                showError('Failed to check status. Please refresh the page or contact support.');
-              }
+            .catch(err => {
+              console.error(err);
+              alert('Failed to check status. Please try again later.');
             });
         }
         
-        function goToLogin(username, password) {
-          // Get credentials from page if not provided
-          if (!username) username = document.getElementById('username').textContent;
-          if (!password) password = document.getElementById('password').textContent;
-          
-          // Redirect to hotspot login with credentials
-          const loginUrl = 'http://dreamhatcher.login/login?username=' + 
-            encodeURIComponent(username) + '&password=' + encodeURIComponent(password);
-          
-          console.log('Redirecting to:', loginUrl);
-          window.location.href = loginUrl;
+        function goToLogin() {
+          window.location.href = 'http://dreamhatcher.login';
         }
         
-        function copyCredentials() {
-          const username = document.getElementById('username').textContent;
-          const password = document.getElementById('password').textContent;
-          const text = 'Username: ' + username + '\\nPassword: ' + password;
-          
-          navigator.clipboard.writeText(text).then(() => {
-            alert('Credentials copied to clipboard!');
-          });
-        }
-        
-        function showError(message) {
-          document.getElementById('error').textContent = message;
-          document.getElementById('error').style.display = 'block';
-          document.getElementById('spinner').style.display = 'none';
-        }
-        
-        // Start checking status
-        if (ref && ref !== 'N/A') {
-          setTimeout(checkStatus, 3000); // Start after 3 seconds
-        } else {
-          showError('No payment reference found. Please contact support.');
-        }
+        // Auto-check after 5 seconds
+        setTimeout(checkStatus, 5000);
       </script>
     </body>
     </html>
@@ -330,13 +282,35 @@ app.get('/success', (req, res) => {
     
   } catch (error) {
     console.error('Success page error:', error.message);
-    // Fallback simple page
     res.send(`
-      <h2>Payment Successful</h2>
-      <p>Your payment was successful. Please go to <a href="http://dreamhatcher.login">dreamhatcher.login</a> to access WiFi.</p>
-      <p>Support: 07037412314</p>
+      <!DOCTYPE html>
+      <html>
+      <head><title>Payment Processed</title></head>
+      <body>
+        <h2>Payment Successful</h2>
+        <p>Your payment was processed successfully.</p>
+        <p>Please go to: <strong>http://dreamhatcher.login</strong></p>
+        <p>Support: 07037412314</p>
+      </body>
+      </html>
     `);
   }
+});
+
+// ADD THIS ENDPOINT FOR PAYSTACK POST REDIRECT
+app.post('/success', (req, res) => {
+  // Paystack sometimes sends POST data
+  const { reference, trxref } = req.body;
+  const ref = reference || trxref;
+  
+  console.log('📄 POST Success page, ref:', ref);
+  
+  // Redirect to GET with the reference
+  if (ref) {
+    return res.redirect(`/success?reference=${ref}`);
+  }
+  
+  res.redirect('/success');
 });
 
 // ========== SIMPLE STATUS CHECK ==========
@@ -510,3 +484,4 @@ const server = app.listen(PORT, () => {
 
 server.setTimeout(30000);
 server.keepAliveTimeout = 30000;
+
