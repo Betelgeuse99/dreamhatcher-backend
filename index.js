@@ -13,6 +13,19 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
+// ========== KEEP ALIVE (prevents Render sleep) ==========
+const https = require('https');
+
+function keepAlive() {
+  https.get('https://dreamhatcher-backend.onrender.com/health', (res) => {
+    console.log('🏓 Keep-alive ping, status:', res.statusCode);
+  }).on('error', (err) => {
+    console.log('🏓 Keep-alive error:', err.message);
+  });
+}
+
+// Ping every 14 minutes
+setInterval(keepAlive, 14 * 60 * 1000);
 // Test database connection
 pool.query('SELECT NOW()', (err, res) => {
   if (err) console.error('❌ Database connection failed:', err);
@@ -567,3 +580,4 @@ const server = app.listen(PORT, () => {
 
 server.setTimeout(30000);
 server.keepAliveTimeout = 30000;
+
