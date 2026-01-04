@@ -52,58 +52,55 @@ app.use((err, req, res, next) => {
 // ========== PAYSTACK WEBHOOK ==========
 app.post('/api/paystack-webhook', async (req, res) => {
   console.log('📥 Paystack webhook received');
-  
+
   try {
     const { event, data } = req.body;
-    
+
     if (event !== 'charge.success') {
       return res.status(200).json({ received: true });
     }
-    
+
     const { reference, amount, customer } = data;
     const amountNaira = amount / 100;
-    
-    console.log(`💰 Payment: ₦${amountNaira} for ${customer?.email}`);
-    
-    // Determine plan
-    let plan = '24hr';
-    if (amountNaira >= 7500) plan = '30d';
-    else if (amountNaira >= 2400) plan = '7d';
-    
-    // Generate credentials
+
+    console.log(`💰 Paystack payment ₦${amountNaira} ref=${reference}`);
+
+    // Determine plan STRICTLY by amount
+    let plan;
+    if (amountNaira === 350) plan = '24hr';
+    else if (amountNaira === 2400) plan = '7d';
+    else if (amountNaira === 7500) plan = '30d';
+    else {
+      console.error('❌ Invalid amount:', amountNaira);
+      return res.status(400).json({ error: 'Invalid amount' });
+    }
+
     const username = `user_${Date.now().toString().slice(-6)}`;
     const password = generatePassword();
-    const token = crypto.randomBytes(32).toString('hex');
-    
-    // Insert into database
-    const result = await pool.query(
-      `INSERT INTO payment_queue 
-       (transaction_id, customer_email, customer_phone, plan, 
-        mikrotik_username, mikrotik_password, status, one_time_token) 
-       VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)
-       RETURNING id`,
+
+    await pool.query(
+      `INSERT INTO payment_queue
+       (transaction_id, customer_email, customer_phone, plan,
+        mikrotik_username, mikrotik_password, status)
+       VALUES ($1, $2, $3, $4, $5, $6, 'pending')
+       ON CONFLICT (transaction_id) DO NOTHING`,
       [
         reference,
         customer?.email || 'unknown@example.com',
         customer?.phone || '',
         plan,
         username,
-        password,
-        token
+        password
       ]
     );
-    
-    console.log(`✅ Payment queued: ${username} / ${password}`);
-    console.log(`🔑 Token: ${token}`);
-    
-    res.status(200).json({ 
-      success: true,
-      message: 'Payment processed'
-    });
-    
+
+    console.log(`✅ Queued Paystack user ${username}`);
+
+    return res.status(200).json({ received: true });
+
   } catch (error) {
-    console.error('❌ Webhook error:', error.message);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('❌ Paystack webhook error:', error.message);
+    return res.status(500).json({ error: 'Webhook error' });
   }
 });
 
@@ -590,3 +587,4 @@ const server = app.listen(PORT, () => {
 // Set server timeout to prevent hanging
 server.setTimeout(30000);
 server.keepAliveTimeout = 30000;
+
