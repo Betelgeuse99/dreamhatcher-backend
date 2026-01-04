@@ -50,6 +50,15 @@ app.use((err, req, res, next) => {
 });
 
 // ========== PAYSTACK WEBHOOK ==========
+// At the top of your /api/paystack-webhook handler
+const hash = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
+                   .update(JSON.stringify(req.body))
+                   .digest('hex');
+
+if (hash !== req.headers['x-paystack-signature']) {
+  console.log('❌ Invalid webhook signature');
+  return res.status(401).json({ error: 'Invalid signature' });
+}
 app.post('/api/paystack-webhook', async (req, res) => {
   console.log('📥 Paystack webhook received');
 
@@ -651,6 +660,7 @@ const server = app.listen(PORT, () => {
 
 server.setTimeout(30000);
 server.keepAliveTimeout = 30000;
+
 
 
 
