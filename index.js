@@ -297,20 +297,75 @@ app.get('/success', (req, res) => {
   }
 });
 
-// ADD THIS ENDPOINT FOR PAYSTACK POST REDIRECT
-app.post('/success', (req, res) => {
-  // Paystack sometimes sends POST data
-  const { reference, trxref } = req.body;
-  const ref = reference || trxref;
-  
-  console.log('📄 POST Success page, ref:', ref);
-  
-  // Redirect to GET with the reference
-  if (ref) {
-    return res.redirect(`/success?reference=${ref}`);
+// ========== PAYSTACK CALLBACK ENDPOINT ==========
+app.get('/paystack-callback', (req, res) => {
+  try {
+    // Log everything for debugging
+    console.log('🔗 Paystack callback hit:', req.query);
+    
+    const { reference, trxref, status, transaction_id } = req.query;
+    const ref = reference || trxref || transaction_id;
+    
+    if (!ref) {
+      return res.send(`
+        <html>
+        <body style="font-family: Arial; padding: 20px;">
+          <h2>Payment Verification</h2>
+          <p>No payment reference received from Paystack.</p>
+          <p>Please contact support with your transaction details.</p>
+          <p><strong>Support: 07037412314</strong></p>
+        </body>
+        </html>
+      `);
+    }
+    
+    // IMMEDIATE redirect to processing with minimal logic
+    const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Redirecting...</title>
+      <meta http-equiv="refresh" content="2; url=http://dreamhatcher.login/payment-processing.html?ref=${ref}" />
+      <style>
+        body { font-family: Arial; padding: 20px; text-align: center; }
+        .spinner { 
+          border: 4px solid #f3f3f3; 
+          border-top: 4px solid #0072ff; 
+          border-radius: 50%; 
+          width: 40px; height: 40px; 
+          animation: spin 1s linear infinite; 
+          margin: 40px auto; 
+        }
+        @keyframes spin { 
+          0% { transform: rotate(0deg);} 
+          100% { transform: rotate(360deg);} 
+        }
+      </style>
+    </head>
+    <body>
+      <h2>Payment Verified!</h2>
+      <p>Reference: <strong>${ref}</strong></p>
+      <div class="spinner"></div>
+      <p>Redirecting to WiFi login...</p>
+      <p><small>If not redirected in 5 seconds, <a href="http://dreamhatcher.login/payment-processing.html?ref=${ref}">click here</a></small></p>
+    </body>
+    </html>
+    `;
+    
+    res.send(html);
+    
+  } catch (error) {
+    console.error('Callback error:', error);
+    res.send(`
+      <html>
+      <body>
+        <h2>Payment Successful</h2>
+        <p>Please go to: <a href="http://dreamhatcher.login">dreamhatcher.login</a></p>
+        <p>Support: 07037412314</p>
+      </body>
+      </html>
+    `);
   }
-  
-  res.redirect('/success');
 });
 
 // ========== SIMPLE STATUS CHECK ==========
@@ -484,4 +539,5 @@ const server = app.listen(PORT, () => {
 
 server.setTimeout(30000);
 server.keepAliveTimeout = 30000;
+
 
