@@ -41,24 +41,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use((err, req, res, next) => {
-  console.error('💥 Uncaught error:', err.message);
-  res.status(500).send(`
-    <h2>Server Error</h2>
-    <p>Please try again or contact support: 07037412314</p>
-  `);
-});
-
 // ========== PAYSTACK WEBHOOK ==========
-// At the top of your /api/paystack-webhook handler
-const hash = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
-                   .update(JSON.stringify(req.body))
-                   .digest('hex');
-
-if (hash !== req.headers['x-paystack-signature']) {
-  console.log('❌ Invalid webhook signature');
-  return res.status(401).json({ error: 'Invalid signature' });
-}
 app.post('/api/paystack-webhook', async (req, res) => {
   console.log('📥 Paystack webhook received');
 
@@ -111,6 +94,17 @@ app.post('/api/paystack-webhook', async (req, res) => {
     console.error('❌ Paystack webhook error:', error.message);
     return res.status(500).json({ error: 'Webhook error' });
   }
+});
+
+// ========== PAYSTACK CALLBACK - REDIRECT TO SUCCESS ==========
+app.get('/paystack-callback', (req, res) => {
+  const { reference, trxref, transaction_id } = req.query;
+  const ref = reference || trxref || transaction_id;
+  
+  console.log('🔗 Paystack callback:', ref);
+  
+  // Simply redirect to the success page on the SAME domain (HTTPS to HTTPS)
+  res.redirect('/success?reference=' + encodeURIComponent(ref || ''));
 });
 
 // ========== SUCCESS PAGE - NO HTTP REDIRECT ==========
@@ -245,17 +239,6 @@ app.get('/success', async (req, res) => {
         }
         .btn:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(0,201,255,0.4); }
         .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        .copy-btn {
-          background: #333;
-          color: white;
-          border: none;
-          padding: 8px 15px;
-          border-radius: 5px;
-          font-size: 12px;
-          cursor: pointer;
-          margin-left: 10px;
-        }
-        .copy-btn:hover { background: #555; }
         .hidden { display: none; }
         .error-text { color: #ff6b6b; }
         .success-text { color: #92fe9d; }
@@ -266,7 +249,6 @@ app.get('/success', async (req, res) => {
       <div class="container">
         <div class="logo">🌐 Dream Hatcher Tech</div>
         
-        <!-- Loading State -->
         <div id="loading-state">
           <div class="success-icon">✅</div>
           <h2>Payment Successful!</h2>
@@ -277,7 +259,6 @@ app.get('/success', async (req, res) => {
           </div>
         </div>
         
-        <!-- Credentials State (hidden initially) -->
         <div id="credentials-state" class="hidden">
           <div class="success-icon">🎉</div>
           <h2>Your WiFi Credentials</h2>
@@ -306,7 +287,6 @@ app.get('/success', async (req, res) => {
           <button class="btn" onclick="copyCredentials()">📋 Copy Credentials</button>
         </div>
         
-        <!-- Error State (hidden initially) -->
         <div id="error-state" class="hidden">
           <div class="success-icon">⏳</div>
           <h2>Processing Payment...</h2>
@@ -335,19 +315,19 @@ app.get('/success', async (req, res) => {
         
         function copyText(element) {
           const text = element.textContent;
-          navigator.clipboard.writeText(text).then(() => {
+          navigator.clipboard.writeText(text).then(function() {
             const original = element.textContent;
             element.textContent = '✓ Copied!';
-            setTimeout(() => { element.textContent = original; }, 1000);
+            setTimeout(function() { element.textContent = original; }, 1000);
           });
         }
         
         function copyCredentials() {
           const text = 'Username: ' + credentials.username + '\\nPassword: ' + credentials.password + '\\nPlan: ' + credentials.plan;
-          navigator.clipboard.writeText(text).then(() => {
-            const btn = event.target;
+          navigator.clipboard.writeText(text).then(function() {
+            const btn = document.querySelector('.btn');
             btn.textContent = '✓ Copied!';
-            setTimeout(() => { btn.textContent = '📋 Copy Credentials'; }, 2000);
+            setTimeout(function() { btn.textContent = '📋 Copy Credentials'; }, 2000);
           });
         }
         
@@ -396,7 +376,6 @@ app.get('/success', async (req, res) => {
           }
         }
         
-        // Start checking immediately
         setTimeout(checkStatus, 2000);
       </script>
     </body>
@@ -412,83 +391,6 @@ app.get('/success', async (req, res) => {
   }
 });
 
-// ========== PAYSTACK CALLBACK - REDIRECT TO SUCCESS ==========
-app.get('/paystack-callback', (req, res) => {
-  const { reference, trxref, transaction_id } = req.query;
-  const ref = reference || trxref || transaction_id;
-  
-  console.log('🔗 Paystack callback:', ref);
-  
-  // Simply redirect to the success page on the SAME domain (HTTPS to HTTPS)
-  res.redirect('/success?reference=' + encodeURIComponent(ref || ''));
-});
-    
-    const { reference, trxref, status, transaction_id } = req.query;
-    const ref = reference || trxref || transaction_id;
-    
-    if (!ref) {
-      return res.send(`
-        <html>
-        <body style="font-family: Arial; padding: 20px;">
-          <h2>Payment Verification</h2>
-          <p>No payment reference received from Paystack.</p>
-          <p>Please contact support with your transaction details.</p>
-          <p><strong>Support: 07037412314</strong></p>
-        </body>
-        </html>
-      `);
-    }
-    
-    // IMMEDIATE redirect to processing with minimal logic
-    const html = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>Redirecting...</title>
-      <meta http-equiv="refresh" content="2; url=http://dreamhatcher.login/payment-processing.html?ref=${ref}" />
-      <style>
-        body { font-family: Arial; padding: 20px; text-align: center; }
-        .spinner { 
-          border: 4px solid #f3f3f3; 
-          border-top: 4px solid #0072ff; 
-          border-radius: 50%; 
-          width: 40px; height: 40px; 
-          animation: spin 1s linear infinite; 
-          margin: 40px auto; 
-        }
-        @keyframes spin { 
-          0% { transform: rotate(0deg);} 
-          100% { transform: rotate(360deg);} 
-        }
-      </style>
-    </head>
-    <body>
-      <h2>Payment Verified!</h2>
-      <p>Reference: <strong>${ref}</strong></p>
-      <div class="spinner"></div>
-      <p>Redirecting to WiFi login...</p>
-      <p><small>If not redirected in 5 seconds, <a href="http://dreamhatcher.login/payment-processing.html?ref=${ref}">click here</a></small></p>
-    </body>
-    </html>
-    `;
-    
-    res.send(html);
-    
-  } catch (error) {
-    console.error('Callback error:', error);
-    res.send(`
-    }
-      <html>
-      <body>
-        <h2>Payment Successful</h2>
-        <p>Please go to: <a href="http://dreamhatcher.login">dreamhatcher.login</a></p>
-        <p>Support: 07037412314</p>
-      </body>
-      </html>
-    `);
-  }
-});
-
 // ========== SIMPLE STATUS CHECK ==========
 app.get('/api/check-status', async (req, res) => {
   try {
@@ -498,12 +400,11 @@ app.get('/api/check-status', async (req, res) => {
       return res.json({ ready: false, message: 'No reference provided' });
     }
     
-    // Simple query
-    const result = await pool.query(`
-      SELECT mikrotik_username, mikrotik_password, plan, status
-      FROM payment_queue 
-      WHERE transaction_id = $1 
-      LIMIT 1`,
+    const result = await pool.query(
+      `SELECT mikrotik_username, mikrotik_password, plan, status
+       FROM payment_queue 
+       WHERE transaction_id = $1 
+       LIMIT 1`,
       [ref]
     );
     
@@ -649,6 +550,12 @@ app.get('/', (req, res) => {
   `);
 });
 
+// ========== ERROR HANDLER ==========
+app.use((err, req, res, next) => {
+  console.error('💥 Uncaught error:', err.message);
+  res.status(500).send('Server Error. Please contact support: 07037412314');
+});
+
 // ========== START SERVER ==========
 const PORT = process.env.PORT || 10000;
 const server = app.listen(PORT, () => {
@@ -660,9 +567,3 @@ const server = app.listen(PORT, () => {
 
 server.setTimeout(30000);
 server.keepAliveTimeout = 30000;
-
-
-
-
-
-
