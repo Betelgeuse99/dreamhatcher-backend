@@ -104,15 +104,14 @@ app.post('/api/paystack-webhook', async (req, res) => {
   }
 });
 
-// ========== SUCCESS PAGE - FIXED FOR PAYSTACK REDIRECT ==========
-app.get('/success', (req, res) => {
+// ========== SUCCESS PAGE - NO HTTP REDIRECT ==========
+app.get('/success', async (req, res) => {
   try {
     const { reference, trxref } = req.query;
     const ref = reference || trxref;
     
     console.log('📄 Success page accessed, ref:', ref);
     
-    // If no reference, show error
     if (!ref) {
       return res.send(`
         <!DOCTYPE html>
@@ -122,156 +121,274 @@ app.get('/success', (req, res) => {
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <title>Payment Error</title>
           <style>
-            body { font-family: Arial; padding: 20px; text-align: center; }
-            .error { color: red; background: #ffe6e6; padding: 20px; border-radius: 10px; }
+            body { font-family: Arial; padding: 20px; text-align: center; background: #1a1a2e; color: white; min-height: 100vh; }
+            .error { color: #ff6b6b; background: rgba(255,0,0,0.1); padding: 20px; border-radius: 10px; max-width: 400px; margin: 50px auto; }
           </style>
         </head>
         <body>
           <h1>⚠️ Payment Reference Missing</h1>
           <div class="error">
-            <p>No payment reference found. This usually happens when:</p>
-            <ol style="text-align: left; max-width: 500px; margin: 20px auto;">
-              <li>Paystack didn't pass the reference properly</li>
-              <li>You refreshed the page</li>
-              <li>Browser blocked the redirect</li>
-            </ol>
-            <p><strong>Solution:</strong> Please return to the payment page and try again.</p>
-            <p>Support: 07037412314</p>
+            <p>No payment reference found.</p>
+            <p>Please return to the payment page and try again.</p>
+            <p>Support: <strong>07037412314</strong></p>
           </div>
         </body>
         </html>
       `);
     }
     
-    // SIMPLE HTML - MINIMAL JAVASCRIPT
     const html = `
     <!DOCTYPE html>
     <html>
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Payment Processing - Dream Hatcher</title>
+      <title>Payment Successful - Dream Hatcher</title>
       <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
           font-family: Arial, sans-serif;
-          margin: 0;
-          padding: 20px;
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
           min-height: 100vh;
           display: flex;
           align-items: center;
           justify-content: center;
+          padding: 20px;
+          color: white;
         }
         .container {
-          background: white;
+          background: rgba(255,255,255,0.05);
+          backdrop-filter: blur(10px);
           padding: 30px;
           border-radius: 20px;
-          box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-          max-width: 400px;
+          max-width: 420px;
           width: 100%;
           text-align: center;
+          border: 1px solid rgba(255,255,255,0.1);
+          box-shadow: 0 20px 50px rgba(0,0,0,0.5);
         }
-        h1 {
-          color: #333;
-          margin-bottom: 10px;
+        .logo { font-size: 28px; margin-bottom: 20px; }
+        .success-icon { font-size: 60px; margin: 20px 0; }
+        .credentials-box {
+          background: linear-gradient(135deg, #00c9ff 0%, #92fe9d 100%);
+          color: #000;
+          padding: 25px;
+          border-radius: 15px;
+          margin: 20px 0;
         }
-        .ref {
-          background: #f7f7f7;
-          padding: 10px;
-          border-radius: 5px;
-          margin: 15px 0;
+        .credentials-box h3 { margin-bottom: 15px; font-size: 18px; }
+        .credential {
+          background: rgba(255,255,255,0.9);
+          padding: 12px;
+          border-radius: 8px;
+          margin: 10px 0;
           font-family: monospace;
-          word-break: break-all;
+          font-size: 18px;
+          font-weight: bold;
+          user-select: all;
+          cursor: pointer;
+        }
+        .credential-label {
+          font-size: 12px;
+          color: #333;
+          margin-bottom: 5px;
+        }
+        .status-box {
+          background: rgba(0,0,0,0.3);
+          padding: 20px;
+          border-radius: 10px;
+          margin: 20px 0;
         }
         .spinner {
-          border: 4px solid #f3f3f3;
-          border-top: 4px solid #667eea;
+          border: 3px solid rgba(255,255,255,0.1);
+          border-top: 3px solid #00c9ff;
           border-radius: 50%;
           width: 40px;
           height: 40px;
           animation: spin 1s linear infinite;
-          margin: 20px auto;
+          margin: 15px auto;
         }
         @keyframes spin {
           0% { transform: rotate(0deg); }
           100% { transform: rotate(360deg); }
         }
+        .steps {
+          text-align: left;
+          background: rgba(0,0,0,0.3);
+          padding: 20px;
+          border-radius: 10px;
+          margin: 20px 0;
+        }
+        .steps h4 { margin-bottom: 15px; text-align: center; }
+        .steps ol { padding-left: 20px; }
+        .steps li { margin: 10px 0; line-height: 1.5; }
         .btn {
-          background: #667eea;
+          background: linear-gradient(135deg, #00c9ff 0%, #92fe9d 100%);
+          color: #000;
+          border: none;
+          padding: 15px 30px;
+          border-radius: 50px;
+          font-size: 16px;
+          font-weight: bold;
+          cursor: pointer;
+          margin: 10px 5px;
+          transition: transform 0.3s, box-shadow 0.3s;
+        }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(0,201,255,0.4); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .copy-btn {
+          background: #333;
           color: white;
           border: none;
-          padding: 12px 24px;
-          border-radius: 10px;
-          font-size: 16px;
+          padding: 8px 15px;
+          border-radius: 5px;
+          font-size: 12px;
           cursor: pointer;
-          margin: 10px;
-          text-decoration: none;
-          display: inline-block;
+          margin-left: 10px;
         }
-        .btn:hover {
-          background: #5a67d8;
-        }
+        .copy-btn:hover { background: #555; }
+        .hidden { display: none; }
+        .error-text { color: #ff6b6b; }
+        .success-text { color: #92fe9d; }
+        .support { margin-top: 20px; font-size: 14px; color: #aaa; }
       </style>
     </head>
     <body>
       <div class="container">
-        <h1>✅ Payment Successful!</h1>
-        <p>Your payment reference:</p>
-        <div class="ref">${ref}</div>
+        <div class="logo">🌐 Dream Hatcher Tech</div>
         
-        <div class="spinner"></div>
-        
-        <p>Processing your WiFi credentials...</p>
-        <p><small>This may take 30-60 seconds</small></p>
-        
-        <div style="margin-top: 20px;">
-          <button class="btn" onclick="checkStatus()">Check Status</button>
-          <button class="btn" onclick="goToLogin()">Go to WiFi Login</button>
+        <!-- Loading State -->
+        <div id="loading-state">
+          <div class="success-icon">✅</div>
+          <h2>Payment Successful!</h2>
+          <div class="status-box">
+            <div class="spinner"></div>
+            <p id="status-text">Fetching your WiFi credentials...</p>
+            <p style="font-size: 12px; margin-top: 10px;">Reference: ${ref}</p>
+          </div>
         </div>
         
-        <p style="margin-top: 30px; color: #666; font-size: 14px;">
-          If this takes more than 2 minutes, please contact:<br>
-          <strong>07037412314</strong>
-        </p>
+        <!-- Credentials State (hidden initially) -->
+        <div id="credentials-state" class="hidden">
+          <div class="success-icon">🎉</div>
+          <h2>Your WiFi Credentials</h2>
+          
+          <div class="credentials-box">
+            <h3>Login Details</h3>
+            <div class="credential-label">Username</div>
+            <div class="credential" id="username-display" onclick="copyText(this)">---</div>
+            <div class="credential-label">Password</div>
+            <div class="credential" id="password-display" onclick="copyText(this)">---</div>
+            <div class="credential-label">Plan</div>
+            <div class="credential" id="plan-display">---</div>
+          </div>
+          
+          <div class="steps">
+            <h4>📶 How to Connect</h4>
+            <ol>
+              <li>Connect to <strong>Dream Hatcher WiFi</strong> network</li>
+              <li>A login page will open automatically</li>
+              <li>If not, open browser and go to:<br><strong>http://192.168.88.1</strong></li>
+              <li>Enter your username and password above</li>
+              <li>Click Login and enjoy!</li>
+            </ol>
+          </div>
+          
+          <button class="btn" onclick="copyCredentials()">📋 Copy Credentials</button>
+        </div>
+        
+        <!-- Error State (hidden initially) -->
+        <div id="error-state" class="hidden">
+          <div class="success-icon">⏳</div>
+          <h2>Processing Payment...</h2>
+          <div class="status-box">
+            <p id="error-text">Your payment is being processed. This may take up to 2 minutes.</p>
+            <button class="btn" onclick="checkStatus()" style="margin-top: 15px;">🔄 Check Again</button>
+          </div>
+        </div>
+        
+        <div class="support">
+          Need help? Call: <strong>07037412314</strong>
+        </div>
       </div>
       
       <script>
         const ref = '${ref}';
         let checkCount = 0;
+        let credentials = { username: '', password: '', plan: '' };
         
-        function checkStatus() {
+        function showState(state) {
+          document.getElementById('loading-state').classList.add('hidden');
+          document.getElementById('credentials-state').classList.add('hidden');
+          document.getElementById('error-state').classList.add('hidden');
+          document.getElementById(state + '-state').classList.remove('hidden');
+        }
+        
+        function copyText(element) {
+          const text = element.textContent;
+          navigator.clipboard.writeText(text).then(() => {
+            const original = element.textContent;
+            element.textContent = '✓ Copied!';
+            setTimeout(() => { element.textContent = original; }, 1000);
+          });
+        }
+        
+        function copyCredentials() {
+          const text = 'Username: ' + credentials.username + '\\nPassword: ' + credentials.password + '\\nPlan: ' + credentials.plan;
+          navigator.clipboard.writeText(text).then(() => {
+            const btn = event.target;
+            btn.textContent = '✓ Copied!';
+            setTimeout(() => { btn.textContent = '📋 Copy Credentials'; }, 2000);
+          });
+        }
+        
+        async function checkStatus() {
           checkCount++;
+          document.getElementById('status-text').textContent = 'Checking status (attempt ' + checkCount + ')...';
           
-          // Simple fetch with error handling
-          fetch('https://dreamhatcher-backend.onrender.com/api/check-status?ref=' + encodeURIComponent(ref))
-            .then(res => {
-              if (!res.ok) throw new Error('Network error');
-              return res.json();
-            })
-            .then(data => {
-              console.log('Check result:', data);
+          try {
+            const response = await fetch('/api/check-status?ref=' + encodeURIComponent(ref));
+            const data = await response.json();
+            
+            console.log('Status check:', data);
+            
+            if (data.ready && data.username && data.password) {
+              credentials = {
+                username: data.username,
+                password: data.password,
+                plan: data.plan || 'WiFi Access'
+              };
               
-              if (data.ready && data.username && data.password) {
-                // Redirect to WiFi login with credentials
-                window.location.href = 'http://dreamhatcher.login/login?username=' + 
-                  encodeURIComponent(data.username) + '&password=' + 
-                  encodeURIComponent(data.password);
+              document.getElementById('username-display').textContent = credentials.username;
+              document.getElementById('password-display').textContent = credentials.password;
+              document.getElementById('plan-display').textContent = credentials.plan;
+              
+              showState('credentials');
+            } else {
+              if (checkCount >= 6) {
+                document.getElementById('error-text').textContent = 
+                  'Still processing. Status: ' + (data.status || 'pending') + '. Please wait or contact support.';
+                showState('error');
               } else {
-                alert('Still processing... Try again in 30 seconds.');
+                document.getElementById('status-text').textContent = 
+                  'Processing... (' + (data.message || 'Please wait') + ')';
+                setTimeout(checkStatus, 5000);
               }
-            })
-            .catch(err => {
-              console.error(err);
-              alert('Failed to check status. Please try again later.');
-            });
+            }
+          } catch (error) {
+            console.error('Check error:', error);
+            if (checkCount >= 3) {
+              document.getElementById('error-text').textContent = 
+                'Connection issue. Please wait a moment and try again.';
+              showState('error');
+            } else {
+              setTimeout(checkStatus, 3000);
+            }
+          }
         }
         
-        function goToLogin() {
-          window.location.href = 'http://dreamhatcher.login';
-        }
-        
-        // Auto-check after 5 seconds
-        setTimeout(checkStatus, 5000);
+        // Start checking immediately
+        setTimeout(checkStatus, 2000);
       </script>
     </body>
     </html>
@@ -282,18 +399,7 @@ app.get('/success', (req, res) => {
     
   } catch (error) {
     console.error('Success page error:', error.message);
-    res.send(`
-      <!DOCTYPE html>
-      <html>
-      <head><title>Payment Processed</title></head>
-      <body>
-        <h2>Payment Successful</h2>
-        <p>Your payment was processed successfully.</p>
-        <p>Please go to: <strong>http://dreamhatcher.login</strong></p>
-        <p>Support: 07037412314</p>
-      </body>
-      </html>
-    `);
+    res.status(500).send('Error loading page. Please contact support: 07037412314');
   }
 });
 
@@ -539,5 +645,6 @@ const server = app.listen(PORT, () => {
 
 server.setTimeout(30000);
 server.keepAliveTimeout = 30000;
+
 
 
