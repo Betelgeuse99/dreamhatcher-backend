@@ -403,11 +403,16 @@ app.get('/success', async (req, res) => {
   }
 });
 
-// ========== PAYSTACK CALLBACK ENDPOINT ==========
+// ========== PAYSTACK CALLBACK - REDIRECT TO SUCCESS ==========
 app.get('/paystack-callback', (req, res) => {
-  try {
-    // Log everything for debugging
-    console.log('🔗 Paystack callback hit:', req.query);
+  const { reference, trxref, transaction_id } = req.query;
+  const ref = reference || trxref || transaction_id;
+  
+  console.log('🔗 Paystack callback:', ref);
+  
+  // Simply redirect to the success page on the SAME domain (HTTPS to HTTPS)
+  res.redirect('/success?reference=' + encodeURIComponent(ref || ''));
+});
     
     const { reference, trxref, status, transaction_id } = req.query;
     const ref = reference || trxref || transaction_id;
@@ -645,6 +650,7 @@ const server = app.listen(PORT, () => {
 
 server.setTimeout(30000);
 server.keepAliveTimeout = 30000;
+
 
 
 
