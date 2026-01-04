@@ -197,92 +197,126 @@ app.get('/paystack-callback', async (req, res) => {
   }
 });
 
-// ========== SUCCESS PAGE ==========
+// ========== UPDATED SUCCESS ROUTE ==========
 app.get('/success', async (req, res) => {
-  const { token, ref, waiting, error } = req.query;
+  const { token, reference, trxref } = req.query;
+  const ref = reference || trxref;
   
-  // Show waiting page if payment is still processing
-  if (waiting === 'true' && ref) {
-    const waitingHtml = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>Processing Payment - Dream Hatcher Tech</title>
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <style>
-        body {
-          font-family: 'Segoe UI', Arial, sans-serif;
-          background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
-          min-height: 100vh;
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          padding: 20px;
-          margin: 0;
-        }
-        .waiting-box {
-          background: linear-gradient(135deg, #e6f7ff, #f0f8ff);
-          padding: 40px;
-          border-radius: 20px;
-          box-shadow: 0 15px 35px rgba(0,0,0,0.25);
-          max-width: 500px;
-          width: 100%;
-          text-align: center;
-          border-top: 5px solid #ff9900;
-        }
-        h2 { color: #ff9900; margin-bottom: 20px; }
-        .spinner {
-          border: 5px solid #f3f3f3;
-          border-top: 5px solid #0072ff;
-          border-radius: 50%;
-          width: 50px;
-          height: 50px;
-          animation: spin 1s linear infinite;
-          margin: 20px auto;
-        }
-        @keyframes spin {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
-        }
-      </style>
-    </head>
-    <body>
-      <div class="waiting-box">
-        <h2>⏳ Processing Your Payment</h2>
-        <p>Your payment is being confirmed. This usually takes 5-10 seconds.</p>
-        <div class="spinner"></div>
-        <p>Please wait while we activate your WiFi access...</p>
-        <script>
-          // Auto-refresh every 3 seconds
-          setTimeout(function() {
-            window.location.href = '/success?ref=${ref}&waiting=true';
-          }, 3000);
-        </script>
-      </div>
-    </body>
-    </html>
-    `;
-    return res.send(waitingHtml);
-  }
+  console.log('🔍 Success page accessed with:', { token, ref });
   
-  // Show error page
-  if (error) {
-    const errorHtml = `
-    <!DOCTYPE html>
-    <html>
-    <body style="text-align:center; padding:50px; font-family:Arial;">
-      <h2 style="color:#ff0000;">❌ Payment Error</h2>
-      <p>${error === 'payment_failed' ? 'Payment was not successful.' : 
-          error === 'no_reference' ? 'No payment reference found.' :
-          'An error occurred. Please contact support.'}</p>
-      <button onclick="window.history.back()" 
-              style="padding:10px 20px; background:#0072ff; color:white; border:none; border-radius:5px;">
-        Go Back
-      </button>
-    </body>
-    </html>
-    `;
-    return res.send(errorHtml);
+  // If we have a reference but no token
+  if (ref && !token) {
+    console.log(`🔗 Processing payment reference: ${ref}`);
+    
+    try {
+      // Check database for this reference
+      const result = await pool.query(
+        `SELECT mikrotik_username, mikrotik_password, plan, status 
+         FROM payment_queue 
+         WHERE transaction_id = $1`,
+        [ref]
+      );
+      
+      if (result.rows.length === 0) {
+        console.log(`⏳ Payment ${ref} not in database yet`);
+        
+        // Show waiting page
+        const waitingHtml = `
+        <!DOCTYPE html>
+        <html>
+        <body style="text-align:center; padding:50px; font-family:Arial;">
+          <h2>⏳ Payment Processing</h2>
+          <p>Your payment is being confirmed...</p>
+          <div style="border:5px solid #f3f3f3; border-top:5px solid #0072ff; 
+                      border-radius:50%; width:50px; height:50px; 
+                      animation:spin 1s linear infinite; margin:20px auto;"></div>
+          <p>This page will refresh in 5 seconds.</p>
+          <script>
+            setTimeout(() => location.reload(), 5000);
+            const style = document.createElement('style');
+            style.textContent = '@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
+            document.head.appendChild(style);
+          </script>
+        </body>
+        </html>
+        `;
+        return res.send(waitingHtml);
+      }
+      
+      const { mikrotik_username, mikrotik_password, plan, status } = result.rows[0];
+      
+      if (status === 'processed') {
+        console.log(`✅ Payment ${ref} is processed, showing credentials`);
+        
+        // Show success page directly
+        const planDuration = getPlanDuration(plan);
+        const successHtml = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Payment Successful</title>
+          <style>/* Your existing success page styles */</style>
+        </head>
+        <body>
+          <div class="success-box">
+            <div class="logo">Dream Hatcher Tech</div>
+            <h2>✅ Payment Successful!</h2>
+            <p>Your WiFi access has been activated</p>
+            
+            <div class="credentials">
+              <div class="cred-row">
+                <span class="cred-label">Username:</span> ${mikrotik_username}
+              </div>
+              <div class="cred-row">
+                <span class="cred-label">Password:</span> ${mikrotik_password}
+              </div>
+              <div class="cred-row">
+                <span class="cred-label">Plan:</span> ${planDuration}
+              </div>
+            </div>
+            
+            <p>Click below to go to the WiFi login page:</p>
+            <a href="http://dreamhatcher.login?username=${encodeURIComponent(mikrotik_username)}&password=${encodeURIComponent(mikrotik_password)}" class="btn">
+              Go to WiFi Login
+            </a>
+          </div>
+        </body>
+        </html>
+        `;
+        
+        return res.send(successHtml);
+        
+      } else {
+        console.log(`⏳ Payment ${ref} status: ${status}`);
+        
+        // Show waiting page
+        const waitingHtml = `
+        <!DOCTYPE html>
+        <html>
+        <body style="text-align:center; padding:50px; font-family:Arial;">
+          <h2>⏳ Payment ${status.toUpperCase()}</h2>
+          <p>Your payment is ${status}. Waiting for activation...</p>
+          <div style="border:5px solid #f3f3f3; border-top:5px solid #${status === 'pending' ? 'ff9900' : '0072ff'}; 
+                      border-radius:50%; width:50px; height:50px; 
+                      animation:spin 1s linear infinite; margin:20px auto;"></div>
+          <p>This page will auto-refresh.</p>
+          <script>
+            setTimeout(() => location.reload(), 3000);
+            const style = document.createElement('style');
+            style.textContent = '@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
+            document.head.appendChild(style);
+          </script>
+        </body>
+        </html>
+        `;
+        
+        return res.send(waitingHtml);
+      }
+      
+    } catch (error) {
+      console.error('Error processing reference:', error.message);
+      // Fall through to token-based success page
+    }
   }
   
   // Handle token-based success page
@@ -666,4 +700,5 @@ app.listen(PORT, () => {
   console.log(`✅ Health check: http://localhost:${PORT}/health`);
   console.log(`✅ Test payment: http://localhost:${PORT}/test-payment`);
 });
+
 
