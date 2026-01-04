@@ -110,12 +110,74 @@ return res.status(200).json({
 });
 
 // ========== SIMPLE SUCCESS PAGE - NO ERRORS ==========
+// MODIFY /success ENDPOINT
 app.get('/success', (req, res) => {
   try {
     const { reference, trxref } = req.query;
     const ref = reference || trxref;
     
-    console.log('📄 Success page accessed, ref:', ref);
+    // Generate a one-time token for the hotspot
+    const token = crypto.randomBytes(16).toString('hex');
+    
+    // Store token in database with reference
+    await pool.query(
+      `UPDATE payment_queue 
+       SET one_time_token = $1, token_expires = NOW() + INTERVAL '10 minutes'
+       WHERE transaction_id = $2`,
+      [token, ref]
+    );
+    
+    // Redirect IMMEDIATELY to hotspot with token
+    const redirectUrl = `http://dreamhatcher.login/payment-processing.html?token=${token}`;
+    res.redirect(302, redirectUrl);
+    
+  } catch (error) {
+    console.error('Success redirect error:', error);
+    // Fallback: redirect to hotspot anyway
+    res.redirect(302, 'http://dreamhatcher.login/payment-processing.html');
+  }
+});
+// NEW ENDPOINT: Token Verification
+app.get('/api/verify-token', async (req, res) => {
+  try {
+    const { token } = req.query;
+    
+    if (!token) return res.json({ ready: false });
+    
+    const result = await pool.query(`
+      SELECT mikrotik_username, mikrotik_password, status
+      FROM payment_queue 
+      WHERE one_time_token = $1 
+        AND token_expires > NOW()
+      LIMIT 1`,
+      [token]
+    );
+    
+    if (result.rows.length > 0) {
+      const user = result.rows[0];
+      
+      if (user.status === 'processed') {
+        // Clear token after use
+        await pool.query(
+          `UPDATE payment_queue SET one_time_token = NULL WHERE one_time_token = $1`,
+          [token]
+        );
+        
+        return res.json({
+          ready: true,
+          username: user.mikrotik_username,
+          password: user.mikrotik_password
+        });
+      }
+    }
+    
+    return res.json({ ready: false });
+    
+  } catch (error) {
+    console.error('Token verification error:', error);
+    return res.json({ ready: false });
+  }
+});
     
     // SIMPLE HTML - NO DATABASE QUERIES
     const html = `
@@ -594,12 +656,3 @@ const server = app.listen(PORT, () => {
 // Set server timeout to prevent hanging
 server.setTimeout(30000);
 server.keepAliveTimeout = 30000;
-
-
-
-
-
-
-
-
-
