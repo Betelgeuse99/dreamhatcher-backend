@@ -78,14 +78,11 @@ app.post('/api/paystack-webhook', async (req, res) => {
     const username = `user_${Date.now().toString().slice(-6)}`;
     const password = generatePassword();
 
-    // Generate one-time token
-    const token = crypto.randomBytes(16).toString('hex');
-
     await pool.query(
       `INSERT INTO payment_queue
        (transaction_id, customer_email, customer_phone, plan,
-        mikrotik_username, mikrotik_password, status, one_time_token, token_expires)
-       VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, NOW() + INTERVAL '10 minutes')
+        mikrotik_username, mikrotik_password, status)
+       VALUES ($1, $2, $3, $4, $5, $6, 'pending')
        ON CONFLICT (transaction_id) DO NOTHING`,
       [
         reference,
@@ -93,17 +90,13 @@ app.post('/api/paystack-webhook', async (req, res) => {
         customer?.phone || '',
         plan,
         username,
-        password,
-        token
+        password
       ]
     );
 
-    console.log(`✅ Queued Paystack user ${username}, token: ${token}`);
+    console.log(`✅ Queued Paystack user ${username}`);
 
-    return res.status(200).json({ 
-      received: true,
-      redirect_url: `http://dreamhatcher.login/payment-processing.html?token=${token}`
-    });
+    return res.status(200).json({ received: true });
 
   } catch (error) {
     console.error('❌ Paystack webhook error:', error.message);
@@ -111,100 +104,251 @@ app.post('/api/paystack-webhook', async (req, res) => {
   }
 });
 
-// ========== SUCCESS PAGE WITH TOKEN REDIRECT ==========
-app.get('/success', async (req, res) => {
+// ========== SUCCESS PAGE WITH PROCESSING UI ==========
+app.get('/success', (req, res) => {
   try {
     const { reference, trxref } = req.query;
     const ref = reference || trxref;
     
     console.log('📄 Success page accessed, ref:', ref);
     
-    // Generate a one-time token for the hotspot
-    const token = crypto.randomBytes(16).toString('hex');
-    
-    // Store token in database with reference
-    await pool.query(
-      `UPDATE payment_queue 
-       SET one_time_token = $1, token_expires = NOW() + INTERVAL '10 minutes'
-       WHERE transaction_id = $2`,
-      [token, ref]
-    );
-    
-    // Redirect IMMEDIATELY to hotspot with token
-    const redirectUrl = `http://dreamhatcher.login/payment-processing.html?token=${token}`;
-    return res.redirect(302, redirectUrl);
-    
-  } catch (error) {
-    console.error('Success redirect error:', error);
-    // Fallback: redirect to hotspot anyway
-    return res.redirect(302, 'http://dreamhatcher.login/payment-processing.html');
-  }
-});
-
-// ========== TOKEN VERIFICATION ENDPOINT ==========
-app.get('/api/verify-token', async (req, res) => {
-  try {
-    const { token } = req.query;
-    
-    if (!token) {
-      return res.json({ ready: false, message: 'No token provided' });
-    }
-    
-    // Verify token and get user data
-    const result = await pool.query(`
-      SELECT mikrotik_username, mikrotik_password, status
-      FROM payment_queue 
-      WHERE one_time_token = $1 
-        AND token_expires > NOW()
-      LIMIT 1`,
-      [token]
-    );
-    
-    if (result.rows.length > 0) {
-      const user = result.rows[0];
-      
-      if (user.status === 'processed') {
-        // Clear token after use
-        await pool.query(
-          `UPDATE payment_queue SET one_time_token = NULL WHERE one_time_token = $1`,
-          [token]
-        );
+    const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Payment Successful - Dream Hatcher Tech</title>
+      <style>
+        body {
+          font-family: Arial, sans-serif;
+          margin: 0;
+          padding: 20px;
+          background: #f0f8ff;
+          min-height: 100vh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .container {
+          background: white;
+          padding: 40px;
+          border-radius: 15px;
+          box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+          max-width: 500px;
+          width: 100%;
+          text-align: center;
+        }
+        h1 {
+          color: #0072ff;
+          margin-bottom: 20px;
+        }
+        .status {
+          background: #e6f7ff;
+          padding: 15px;
+          border-radius: 10px;
+          margin: 20px 0;
+          border-left: 5px solid #0072ff;
+        }
+        .ref {
+          font-family: monospace;
+          background: #f8f9fa;
+          padding: 10px;
+          border-radius: 5px;
+          margin: 10px 0;
+          word-break: break-all;
+        }
+        .spinner {
+          border: 4px solid #f3f3f3;
+          border-top: 4px solid #0072ff;
+          border-radius: 50%;
+          width: 40px;
+          height: 40px;
+          animation: spin 1s linear infinite;
+          margin: 20px auto;
+        }
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        .btn {
+          background: #0072ff;
+          color: white;
+          border: none;
+          padding: 15px 30px;
+          border-radius: 10px;
+          font-size: 16px;
+          cursor: pointer;
+          margin-top: 20px;
+          text-decoration: none;
+          display: inline-block;
+        }
+        .btn:hover {
+          background: #0056cc;
+        }
+        .btn-green {
+          background: #00cc66;
+        }
+        .error {
+          color: red;
+          background: #ffe6e6;
+          padding: 10px;
+          border-radius: 5px;
+          margin: 20px 0;
+          display: none;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h1>✅ Payment Successful!</h1>
+        <div class="status">
+          <p><strong>Status:</strong> Processing your WiFi access</p>
+          <p><strong>Reference:</strong> <span class="ref" id="reference">${ref || 'N/A'}</span></p>
+        </div>
         
-        return res.json({
-          ready: true,
-          username: user.mikrotik_username,
-          password: user.mikrotik_password
-        });
-      } else {
-        return res.json({ 
-          ready: false, 
-          status: user.status,
-          message: 'Account not yet processed'
-        });
-      }
-    }
+        <div class="spinner" id="spinner"></div>
+        
+        <p id="message">Your WiFi credentials are being generated...</p>
+        
+        <div id="credentials" style="display: none; margin: 20px 0; padding: 15px; background: #f0f8ff; border-radius: 10px;">
+          <h3>✅ Your WiFi Credentials:</h3>
+          <p><strong>Username:</strong> <span id="username"></span></p>
+          <p><strong>Password:</strong> <span id="password"></span></p>
+        </div>
+        
+        <div id="actions" style="margin: 20px 0; display: none;">
+          <button class="btn" onclick="goToLogin()">Go to WiFi Login</button>
+          <button class="btn btn-green" onclick="copyCredentials()">Copy Credentials</button>
+        </div>
+        
+        <div id="error" class="error"></div>
+        
+        <p style="color: #666; font-size: 14px; margin-top: 30px;">
+          <strong>Note:</strong> This may take 30-60 seconds. Do not close this page.<br>
+          Support: 07037412314
+        </p>
+      </div>
+      
+      <script>
+        const ref = '${ref}';
+        let attempts = 0;
+        
+        function checkStatus() {
+          attempts++;
+          document.getElementById('message').textContent = 'Checking status... (Attempt ' + attempts + ')';
+          
+          fetch('/api/check-status?ref=' + encodeURIComponent(ref))
+            .then(response => {
+              if (!response.ok) throw new Error('Network error');
+              return response.json();
+            })
+            .then(data => {
+              console.log('Status check result:', data);
+              
+              if (data.ready && data.username && data.password) {
+                // Credentials are ready!
+                document.getElementById('spinner').style.display = 'none';
+                document.getElementById('message').textContent = '✅ Credentials ready!';
+                
+                // Show credentials
+                document.getElementById('username').textContent = data.username;
+                document.getElementById('password').textContent = data.password;
+                document.getElementById('credentials').style.display = 'block';
+                document.getElementById('actions').style.display = 'block';
+                
+                // Auto-redirect to WiFi login after 3 seconds
+                setTimeout(() => {
+                  goToLogin(data.username, data.password);
+                }, 3000);
+                
+              } else {
+                // Still processing
+                document.getElementById('message').textContent = data.message || 'Still processing...';
+                
+                if (attempts < 30) { // Try for 2.5 minutes (30 * 5 seconds)
+                  setTimeout(checkStatus, 5000);
+                } else {
+                  showError('Timeout: Payment processing is taking too long. Please contact support: 07037412314');
+                }
+              }
+            })
+            .catch(error => {
+              console.error('Check error:', error);
+              document.getElementById('message').textContent = 'Connection error, retrying...';
+              
+              if (attempts < 30) {
+                setTimeout(checkStatus, 5000);
+              } else {
+                showError('Failed to check status. Please refresh the page or contact support.');
+              }
+            });
+        }
+        
+        function goToLogin(username, password) {
+          // Get credentials from page if not provided
+          if (!username) username = document.getElementById('username').textContent;
+          if (!password) password = document.getElementById('password').textContent;
+          
+          // Redirect to hotspot login with credentials
+          const loginUrl = 'http://dreamhatcher.login/login?username=' + 
+            encodeURIComponent(username) + '&password=' + encodeURIComponent(password);
+          
+          console.log('Redirecting to:', loginUrl);
+          window.location.href = loginUrl;
+        }
+        
+        function copyCredentials() {
+          const username = document.getElementById('username').textContent;
+          const password = document.getElementById('password').textContent;
+          const text = 'Username: ' + username + '\\nPassword: ' + password;
+          
+          navigator.clipboard.writeText(text).then(() => {
+            alert('Credentials copied to clipboard!');
+          });
+        }
+        
+        function showError(message) {
+          document.getElementById('error').textContent = message;
+          document.getElementById('error').style.display = 'block';
+          document.getElementById('spinner').style.display = 'none';
+        }
+        
+        // Start checking status
+        if (ref && ref !== 'N/A') {
+          setTimeout(checkStatus, 3000); // Start after 3 seconds
+        } else {
+          showError('No payment reference found. Please contact support.');
+        }
+      </script>
+    </body>
+    </html>
+    `;
     
-    return res.json({ 
-      ready: false, 
-      message: 'Invalid or expired token' 
-    });
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
     
   } catch (error) {
-    console.error('Token verification error:', error);
-    return res.json({ ready: false, error: 'Server error' });
+    console.error('Success page error:', error.message);
+    // Fallback simple page
+    res.send(`
+      <h2>Payment Successful</h2>
+      <p>Your payment was successful. Please go to <a href="http://dreamhatcher.login">dreamhatcher.login</a> to access WiFi.</p>
+      <p>Support: 07037412314</p>
+    `);
   }
 });
 
-// ========== SIMPLE STATUS CHECK (keep for compatibility) ==========
+// ========== SIMPLE STATUS CHECK ==========
 app.get('/api/check-status', async (req, res) => {
   try {
     const { ref } = req.query;
     
     if (!ref) {
-      return res.json({ ready: false });
+      return res.json({ ready: false, message: 'No reference provided' });
     }
     
-    // Simple query with timeout
+    // Simple query
     const result = await pool.query(`
       SELECT mikrotik_username, mikrotik_password, plan, status
       FROM payment_queue 
@@ -221,25 +365,30 @@ app.get('/api/check-status', async (req, res) => {
           ready: true,
           username: user.mikrotik_username,
           password: user.mikrotik_password,
-          plan: user.plan
+          plan: user.plan,
+          message: 'Credentials ready'
         });
       } else {
         return res.json({
           ready: false,
           status: user.status,
-          message: 'Status: ' + user.status
+          message: 'Status: ' + user.status + ' - Please wait...'
         });
       }
     } else {
       return res.json({ 
         ready: false,
-        message: 'Payment not found in system'
+        message: 'Payment not found in system. Please wait a moment...'
       });
     }
     
   } catch (error) {
     console.error('Check status error:', error.message);
-    return res.json({ ready: false, error: 'Server error' });
+    return res.json({ 
+      ready: false, 
+      error: 'Server error',
+      message: 'Temporary server issue. Please try again in 30 seconds.'
+    });
   }
 });
 
@@ -294,6 +443,28 @@ app.post('/api/mark-processed/:id', async (req, res) => {
   }
 });
 
+// ========== HEALTH CHECK ==========
+app.get('/health', async (req, res) => {
+  try {
+    const dbResult = await pool.query('SELECT NOW()');
+    const queueResult = await pool.query('SELECT COUNT(*) FROM payment_queue');
+    
+    res.json({ 
+      status: 'OK', 
+      timestamp: new Date().toISOString(),
+      database: 'connected',
+      db_time: dbResult.rows[0].now,
+      total_payments: queueResult.rows[0].count,
+      uptime: process.uptime()
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      status: 'ERROR', 
+      error: error.message 
+    });
+  }
+});
+
 // ========== ROOT PAGE ==========
 app.get('/', (req, res) => {
   res.send(`
@@ -318,10 +489,9 @@ app.get('/', (req, res) => {
         <h3>📊 Endpoints</h3>
         <ul>
           <li><strong>POST</strong> /api/paystack-webhook - Paystack webhook</li>
-          <li><strong>GET</strong> /success - Success redirect page</li>
-          <li><strong>GET</strong> /api/verify-token - Token verification</li>
+          <li><strong>GET</strong> /success - Payment success page</li>
+          <li><strong>GET</strong> /api/check-status - Check payment status</li>
           <li><strong>GET</strong> /api/mikrotik-queue-text - Mikrotik queue</li>
-          <li><strong>POST</strong> /api/mark-processed/:id - Mark as processed</li>
         </ul>
       </div>
     </body>
@@ -335,9 +505,8 @@ const server = app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
   console.log(`🌐 Local: http://localhost:${PORT}`);
   console.log(`✅ Success page: https://dreamhatcher-backend.onrender.com/success`);
-  console.log(`🔗 Token verify: https://dreamhatcher-backend.onrender.com/api/verify-token`);
+  console.log(`🔗 Paystack webhook: https://dreamhatcher-backend.onrender.com/api/paystack-webhook`);
 });
 
-// Set server timeout to prevent hanging
 server.setTimeout(30000);
 server.keepAliveTimeout = 30000;
