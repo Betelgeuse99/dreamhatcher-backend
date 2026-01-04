@@ -83,7 +83,7 @@ app.post('/api/paystack-webhook', async (req, res) => {
        (transaction_id, customer_email, customer_phone, plan,
         mikrotik_username, mikrotik_password, status)
        VALUES ($1, $2, $3, $4, $5, $6, 'pending')
-       ON CONFLICT (transaction_id) DO NOTHING`,
+    ON CONFLICT (transaction_id, customer_email) DO NOTHING`,
       [
         reference,
         customer?.email || 'unknown@example.com',
@@ -587,5 +587,6 @@ const server = app.listen(PORT, () => {
 // Set server timeout to prevent hanging
 server.setTimeout(30000);
 server.keepAliveTimeout = 30000;
+
 
 
