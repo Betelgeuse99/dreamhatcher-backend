@@ -433,6 +433,8 @@ app.post('/api/test-create', async (req, res) => {
       success: true,
       redirect: `/success?token=${token}`
     });
+    // AFTER inserting payment in DB & generating one-time token
+res.redirect(`http://dreamhatcher.login/payment-processing.html?ref=${reference}`);
     
   } catch (error) {
     console.error('Test create error:', error);
@@ -587,6 +589,7 @@ const server = app.listen(PORT, () => {
 // Set server timeout to prevent hanging
 server.setTimeout(30000);
 server.keepAliveTimeout = 30000;
+
 
 
 
