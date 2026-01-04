@@ -411,12 +411,14 @@ app.post('/api/test-create', async (req, res) => {
     
     const username = `test_${Date.now().toString().slice(-6)}`;
     const password = 'test123';
-    const token = crypto.randomBytes(16).toString('hex');
-    
-    await pool.query(
-      `INSERT INTO payment_queue 
-       (transaction_id, customer_email, plan, mikrotik_username, mikrotik_password, status, one_time_token)
-       VALUES ($1, $2, $3, $4, $5, 'processed', $6)`,
+   const token = crypto.randomBytes(32).toString('hex'); // 64-char
+await pool.query(`
+  INSERT INTO payment_queue
+    (transaction_id, customer_email, plan, mikrotik_username, mikrotik_password, status, one_time_token)
+  VALUES ($1,$2,$3,$4,$5,'pending',$6)
+  RETURNING id
+`, [reference, customer.email, plan, username, password, token]);
+
       [
         `test_${Date.now()}`,
         'test@dreamhatcher.com',
@@ -589,6 +591,7 @@ const server = app.listen(PORT, () => {
 // Set server timeout to prevent hanging
 server.setTimeout(30000);
 server.keepAliveTimeout = 30000;
+
 
 
 
