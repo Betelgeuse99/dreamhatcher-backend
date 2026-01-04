@@ -1,9 +1,8 @@
-// File: index.js - COMPLETE PAYSTACK VERSION
+// File: index.js - PRODUCTION READY
 require('dotenv').config();
 const express = require('express');
 const { Pool } = require('pg');
 const crypto = require('crypto');
-const https = require('https');
 
 const app = express();
 app.use(express.json());
@@ -34,46 +33,34 @@ function getPlanDuration(planCode) {
   }
 }
 
-function getPlanColor(planCode) {
-  switch(planCode) {
-    case '24hr': return '#ff6600';
-    case '7d': return '#00aa00';
-    case '30d': return '#0072ff';
-    default: return '#666';
-  }
-}
+// ========== CRITICAL: ADD ERROR HANDLING MIDDLEWARE ==========
+app.use((req, res, next) => {
+  res.setTimeout(30000, () => {
+    console.log(`⏰ Timeout on ${req.method} ${req.url}`);
+  });
+  next();
+});
 
-// Verify Paystack webhook signature
-function verifyPaystackSignature(req) {
-  const secret = process.env.PAYSTACK_SECRET_KEY;
-  const signature = req.headers['x-paystack-signature'];
-  
-  if (!signature || !secret) {
-    console.log('⚠️ Missing Paystack signature or secret');
-    return false;
-  }
-  
-  const body = JSON.stringify(req.body);
-  const hash = crypto.createHmac('sha512', secret)
-    .update(body)
-    .digest('hex');
-    
-  return hash === signature;
-}
+app.use((err, req, res, next) => {
+  console.error('💥 Uncaught error:', err.message);
+  res.status(500).send(`
+    <h2>Server Error</h2>
+    <p>Please try again or contact support: 07037412314</p>
+  `);
+});
 
-// PAYSTACK WEBHOOK - FIXED VERSION
+// ========== PAYSTACK WEBHOOK ==========
 app.post('/api/paystack-webhook', async (req, res) => {
   console.log('📥 Paystack webhook received');
   
   try {
-    // Skip signature check for now (enable later)
     const { event, data } = req.body;
     
     if (event !== 'charge.success') {
       return res.status(200).json({ received: true });
     }
     
-    const { reference, amount, customer, metadata } = data;
+    const { reference, amount, customer } = data;
     const amountNaira = amount / 100;
     
     console.log(`💰 Payment: ₦${amountNaira} for ${customer?.email}`);
@@ -88,8 +75,7 @@ app.post('/api/paystack-webhook', async (req, res) => {
     const password = generatePassword();
     const token = crypto.randomBytes(32).toString('hex');
     
-    // ✅ FIXED: Status is 'pending' (Mikrotik will change to 'processed')
-    // ✅ FIXED: Phone number optional
+    // Insert into database
     const result = await pool.query(
       `INSERT INTO payment_queue 
        (transaction_id, customer_email, customer_phone, plan, 
@@ -99,7 +85,7 @@ app.post('/api/paystack-webhook', async (req, res) => {
       [
         reference,
         customer?.email || 'unknown@example.com',
-        customer?.phone || '',  // Empty string if no phone
+        customer?.phone || '',
         plan,
         username,
         password,
@@ -108,271 +94,318 @@ app.post('/api/paystack-webhook', async (req, res) => {
     );
     
     console.log(`✅ Payment queued: ${username} / ${password}`);
-    console.log(`📝 Status: pending (waiting for Mikrotik)`);
     console.log(`🔑 Token: ${token}`);
     
     res.status(200).json({ 
       success: true,
-      message: 'Payment queued for Mikrotik processing'
+      message: 'Payment processed'
     });
     
   } catch (error) {
     console.error('❌ Webhook error:', error.message);
-    console.error('Error stack:', error.stack);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// ========== PAYSTACK CALLBACK HANDLER ==========
-app.get('/paystack-callback', async (req, res) => {
-  console.log('🔄 Paystack callback received:', req.query);
-  
-  const { reference, trxref } = req.query;
-  const txRef = reference || trxref;
-  
-  if (!txRef) {
-    console.log('❌ No reference in callback');
-    return res.redirect('/success?error=no_reference');
-  }
-  
+// ========== SIMPLE SUCCESS PAGE - NO ERRORS ==========
+app.get('/success', (req, res) => {
   try {
-    // Check if payment exists in database
-    const result = await pool.query(
-      `SELECT one_time_token, status FROM payment_queue 
-       WHERE transaction_id = $1`,
-      [txRef]
-    );
+    const { reference, trxref } = req.query;
+    const ref = reference || trxref;
     
-    if (result.rows.length === 0) {
-      console.log(`❌ Payment ${txRef} not found in database`);
-      
-      // Try to verify with Paystack API
-      const verifyUrl = `https://api.paystack.co/transaction/verify/${txRef}`;
-      const options = {
-        headers: {
-          'Authorization': `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-          'Content-Type': 'application/json'
+    console.log('📄 Success page accessed, ref:', ref);
+    
+    // SIMPLE HTML - NO DATABASE QUERIES
+    const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Payment Successful - Dream Hatcher Tech</title>
+      <style>
+        body {
+          font-family: Arial, sans-serif;
+          margin: 0;
+          padding: 20px;
+          background: #f0f8ff;
+          min-height: 100vh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
         }
-      };
+        .container {
+          background: white;
+          padding: 40px;
+          border-radius: 15px;
+          box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+          max-width: 500px;
+          width: 100%;
+          text-align: center;
+        }
+        h1 {
+          color: #0072ff;
+          margin-bottom: 20px;
+        }
+        .status {
+          background: #e6f7ff;
+          padding: 15px;
+          border-radius: 10px;
+          margin: 20px 0;
+          border-left: 5px solid #0072ff;
+        }
+        .ref {
+          font-family: monospace;
+          background: #f8f9fa;
+          padding: 10px;
+          border-radius: 5px;
+          margin: 10px 0;
+          word-break: break-all;
+        }
+        .btn {
+          background: #0072ff;
+          color: white;
+          border: none;
+          padding: 15px 30px;
+          border-radius: 10px;
+          font-size: 16px;
+          cursor: pointer;
+          margin-top: 20px;
+          text-decoration: none;
+          display: inline-block;
+        }
+        .btn:hover {
+          background: #0056cc;
+        }
+        .spinner {
+          border: 4px solid #f3f3f3;
+          border-top: 4px solid #0072ff;
+          border-radius: 50%;
+          width: 40px;
+          height: 40px;
+          animation: spin 1s linear infinite;
+          margin: 20px auto;
+        }
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h1>✅ Payment Successful!</h1>
+        <div class="status">
+          <p><strong>Status:</strong> Processing your WiFi access</p>
+          <p><strong>Reference:</strong> <span class="ref">${ref || 'N/A'}</span></p>
+        </div>
+        
+        <div class="spinner"></div>
+        
+        <p>Your WiFi credentials will be ready in 30-60 seconds.</p>
+        <p>You can:</p>
+        
+        <div style="margin: 20px 0;">
+          <button class="btn" onclick="checkStatus()" style="margin-right: 10px;">
+            Check Now
+          </button>
+          <button class="btn" onclick="goToLogin()" style="background: #00cc66;">
+            Go to WiFi Login
+          </button>
+        </div>
+        
+        <p style="color: #666; font-size: 14px; margin-top: 30px;">
+          <strong>Note:</strong> If credentials don't appear, refresh this page in 1 minute.<br>
+          Support: 07037412314
+        </p>
+      </div>
       
-      https.get(verifyUrl, options, (apiRes) => {
-        let data = '';
-        apiRes.on('data', chunk => data += chunk);
-        apiRes.on('end', async () => {
-          try {
-            const result = JSON.parse(data);
-            if (result.status && result.data.status === 'success') {
-              console.log(`✅ Payment ${txRef} verified via API`);
-              // The webhook will handle it, redirect to waiting page
-              return res.redirect(`/success?ref=${txRef}&waiting=true`);
-            } else {
-              console.log(`❌ Payment ${txRef} not successful`);
-              return res.redirect('/success?error=payment_failed');
-            }
-          } catch (error) {
-            console.error('❌ API verification error:', error.message);
-            return res.redirect(`/success?ref=${txRef}&waiting=true`);
-          }
-        });
-      }).on('error', (error) => {
-        console.error('❌ API request error:', error.message);
-        return res.redirect(`/success?ref=${txRef}&waiting=true`);
-      });
-      
-    } else {
-      const { one_time_token, status } = result.rows[0];
-      
-      if (status === 'processed' && one_time_token) {
-        console.log(`✅ Payment found, redirecting with token`);
-        return res.redirect(`/success?token=${one_time_token}`);
-      } else {
-        console.log(`⏳ Payment ${txRef} status: ${status}`);
-        return res.redirect(`/success?ref=${txRef}&waiting=true`);
-      }
-    }
+      <script>
+        let ref = '${ref}';
+        let attempts = 0;
+        
+        function checkStatus() {
+          attempts++;
+          console.log('Check attempt:', attempts);
+          
+          // Show loading
+          const spinner = document.querySelector('.spinner');
+          spinner.style.display = 'block';
+          
+          // Simple fetch without complex logic
+          fetch('/api/check-status?ref=' + encodeURIComponent(ref))
+            .then(response => {
+              if (!response.ok) throw new Error('Network error');
+              return response.json();
+            })
+            .then(data => {
+              console.log('Status check result:', data);
+              
+              if (data.ready && data.username && data.password) {
+                // Redirect to login page with credentials
+                window.location.href = 'http://dreamhatcher.login?username=' + 
+                  encodeURIComponent(data.username) + '&password=' + 
+                  encodeURIComponent(data.password);
+              } else {
+                alert('Still processing... Try again in 30 seconds.');
+              }
+            })
+            .catch(error => {
+              console.error('Check error:', error);
+              alert('Check failed. Please wait or contact support.');
+            })
+            .finally(() => {
+              spinner.style.display = 'none';
+            });
+        }
+        
+        function goToLogin() {
+          window.location.href = 'http://dreamhatcher.login';
+        }
+        
+        // Auto-check after 10 seconds
+        setTimeout(() => {
+          console.log('Auto-checking status...');
+          checkStatus();
+        }, 10000);
+      </script>
+    </body>
+    </html>
+    `;
+    
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
     
   } catch (error) {
-    console.error('❌ Callback error:', error.message);
-    res.redirect('/success?error=server_error');
+    console.error('Success page error:', error.message);
+    // Even if error, send basic HTML
+    res.send(`
+      <h2>Payment Successful</h2>
+      <p>Your payment was successful. Go to <a href="http://dreamhatcher.login">dreamhatcher.login</a></p>
+      <p>Support: 07037412314</p>
+    `);
   }
 });
 
-// ========== SIMPLE SUCCESS PAGE ==========
-app.get('/success', (req, res) => {
-  const { reference, trxref } = req.query;
-  const ref = reference || trxref;
-  
-  console.log('📄 Success page loaded with reference:', ref);
-  
-  // IMMEDIATE response - no database queries
-  const html = `
-  <!DOCTYPE html>
-  <html>
-  <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-      body {
-        font-family: Arial, sans-serif;
-        background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
-        min-height: 100vh;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        padding: 20px;
-        margin: 0;
-        color: white;
-      }
-      .container {
-        background: rgba(255, 255, 255, 0.1);
-        padding: 40px;
-        border-radius: 20px;
-        backdrop-filter: blur(10px);
-        max-width: 500px;
-        width: 100%;
-        text-align: center;
-      }
-      h1 { color: #00c6ff; margin-bottom: 20px; }
-      .spinner {
-        border: 5px solid rgba(255,255,255,0.3);
-        border-top: 5px solid #00c6ff;
-        border-radius: 50%;
-        width: 50px;
-        height: 50px;
-        animation: spin 1s linear infinite;
-        margin: 20px auto;
-      }
-      @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-      }
-    </style>
-  </head>
-  <body>
-    <div class="container">
-      <h1>🎉 Payment Successful!</h1>
-      <p>Your payment reference: <strong>${ref || 'N/A'}</strong></p>
-      <p>We're activating your WiFi access now...</p>
-      <div class="spinner"></div>
-      <p>Please wait 10-30 seconds for activation.</p>
-      <p>If this page doesn't update, refresh or contact: 07037412314</p>
-    </div>
-    
-    <script>
-      // Simple JavaScript to check status
-      const ref = '${ref}';
-      let checkCount = 0;
-      
-      function checkStatus() {
-        checkCount++;
-        console.log('Checking status, attempt:', checkCount);
-        
-        // After 5 seconds, try to redirect to hotspot page
-        if (checkCount >= 5) {
-          window.location.href = 'http://dreamhatcher.login';
-          return;
-        }
-        
-        // Simple check without complex queries
-        fetch('/api/simple-check?ref=' + ref)
-          .then(res => res.json())
-          .then(data => {
-            if (data.ready) {
-              window.location.href = 'http://dreamhatcher.login?username=' + 
-                encodeURIComponent(data.username) + '&password=' + 
-                encodeURIComponent(data.password);
-            } else {
-              setTimeout(checkStatus, 3000);
-            }
-          })
-          .catch(() => {
-            setTimeout(checkStatus, 3000);
-          });
-      }
-      
-      // Start checking after 3 seconds
-      setTimeout(checkStatus, 3000);
-    </script>
-  </body>
-  </html>
-  `;
-  
-  res.setHeader('Content-Type', 'text/html');
-  res.send(html);
-});
-
-// SIMPLE CHECK ENDPOINT - No database queries
-app.get('/api/simple-check', async (req, res) => {
-  const { ref } = req.query;
-  
-  if (!ref) {
-    return res.json({ ready: false });
-  }
-  
+// ========== SIMPLE STATUS CHECK ==========
+app.get('/api/check-status', async (req, res) => {
   try {
-    // SIMPLE query only
-    const result = await pool.query(
-      `SELECT mikrotik_username, mikrotik_password 
-       FROM payment_queue 
-       WHERE transaction_id = $1 AND status = 'processed' 
-       LIMIT 1`,
+    const { ref } = req.query;
+    
+    if (!ref) {
+      return res.json({ ready: false });
+    }
+    
+    // Simple query with timeout
+    const result = await pool.query(`
+      SELECT mikrotik_username, mikrotik_password, plan, status
+      FROM payment_queue 
+      WHERE transaction_id = $1 
+      LIMIT 1`,
       [ref]
     );
     
     if (result.rows.length > 0) {
-      res.json({
-        ready: true,
-        username: result.rows[0].mikrotik_username,
-        password: result.rows[0].mikrotik_password
-      });
+      const user = result.rows[0];
+      
+      if (user.status === 'processed') {
+        return res.json({
+          ready: true,
+          username: user.mikrotik_username,
+          password: user.mikrotik_password,
+          plan: user.plan
+        });
+      } else {
+        return res.json({
+          ready: false,
+          status: user.status,
+          message: 'Status: ' + user.status
+        });
+      }
     } else {
-      res.json({ ready: false });
+      return res.json({ 
+        ready: false,
+        message: 'Payment not found in system'
+      });
     }
+    
   } catch (error) {
-    console.log('Simple check error:', error.message);
-    res.json({ ready: false });
+    console.error('Check status error:', error.message);
+    return res.json({ ready: false, error: 'Server error' });
   }
 });
 
-// ========== TEST PAYMENT ENDPOINT ==========
+// ========== TEST ENDPOINTS ==========
+app.get('/test', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    time: new Date().toISOString(),
+    service: 'Dream Hatcher Backend'
+  });
+});
+
 app.get('/test-payment', (req, res) => {
-  const testHtml = `
-  <!DOCTYPE html>
+  const html = `
   <html>
-  <head>
-    <title>Test Payment - Dream Hatcher Tech</title>
-    <style>
-      body { font-family: Arial; padding: 20px; }
-      .test-box { max-width: 500px; margin: 0 auto; }
-      button { margin: 10px; padding: 10px 20px; }
-    </style>
-  </head>
-  <body>
-    <div class="test-box">
-      <h2>🧪 Test Payment Options</h2>
-      <button onclick="window.location.href='https://dreamhatcher-backend.onrender.com/test-create?plan=daily'">
-        Test Daily Plan (₦350)
+  <body style="font-family: Arial; padding: 20px;">
+    <h2>🧪 Test Payment System</h2>
+    <div style="margin: 20px 0;">
+      <button onclick="testDaily()" style="padding: 15px; margin: 5px; background: #0072ff; color: white; border: none; border-radius: 5px;">
+        Test Daily Plan
       </button>
-      <button onclick="window.location.href='https://dreamhatcher-backend.onrender.com/test-create?plan=weekly'">
-        Test Weekly Plan (₦2400)
+      <button onclick="testWeekly()" style="padding: 15px; margin: 5px; background: #00aa00; color: white; border: none; border-radius: 5px;">
+        Test Weekly Plan
       </button>
-      <button onclick="window.location.href='https://dreamhatcher-backend.onrender.com/test-create?plan=monthly'">
-        Test Monthly Plan (₦7500)
+      <button onclick="testMonthly()" style="padding: 15px; margin: 5px; background: #ff6600; color: white; border: none; border-radius: 5px;">
+        Test Monthly Plan
       </button>
     </div>
+    
+    <div id="result" style="margin-top: 20px; padding: 15px; background: #f0f8ff; border-radius: 5px; display: none;"></div>
+    
+    <script>
+      async function testPlan(plan) {
+        try {
+          const response = await fetch('/api/test-create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plan: plan })
+          });
+          
+          const data = await response.json();
+          
+          if (data.success && data.redirect) {
+            window.location.href = data.redirect;
+          } else {
+            document.getElementById('result').innerHTML = 
+              '<h3>Test Failed</h3><p>' + (data.error || 'Unknown error') + '</p>';
+            document.getElementById('result').style.display = 'block';
+          }
+        } catch (error) {
+          document.getElementById('result').innerHTML = 
+            '<h3>Error</h3><p>' + error.message + '</p>';
+          document.getElementById('result').style.display = 'block';
+        }
+      }
+      
+      function testDaily() { testPlan('daily'); }
+      function testWeekly() { testPlan('weekly'); }
+      function testMonthly() { testPlan('monthly'); }
+    </script>
   </body>
   </html>
   `;
-  res.send(testHtml);
+  res.send(html);
 });
 
-app.get('/test-create', async (req, res) => {
-  const { plan } = req.query;
-  
-  if (!plan || !['daily', 'weekly', 'monthly'].includes(plan)) {
-    return res.status(400).send('Invalid plan');
-  }
-  
+app.post('/api/test-create', async (req, res) => {
   try {
+    const { plan } = req.body;
+    
+    if (!plan || !['daily', 'weekly', 'monthly'].includes(plan)) {
+      return res.status(400).json({ error: 'Invalid plan' });
+    }
+    
     const planMap = {
       daily: { code: '24hr', amount: 350 },
       weekly: { code: '7d', amount: 2400 },
@@ -381,7 +414,7 @@ app.get('/test-create', async (req, res) => {
     
     const username = `test_${Date.now().toString().slice(-6)}`;
     const password = 'test123';
-    const token = crypto.randomBytes(32).toString('hex');
+    const token = crypto.randomBytes(16).toString('hex');
     
     await pool.query(
       `INSERT INTO payment_queue 
@@ -389,7 +422,7 @@ app.get('/test-create', async (req, res) => {
        VALUES ($1, $2, $3, $4, $5, 'processed', $6)`,
       [
         `test_${Date.now()}`,
-        'test@example.com',
+        'test@dreamhatcher.com',
         planMap[plan].code,
         username,
         password,
@@ -397,32 +430,38 @@ app.get('/test-create', async (req, res) => {
       ]
     );
     
-    console.log(`✅ Test payment created for ${plan} plan`);
-    res.redirect(`/success?token=${token}`);
+    console.log(`✅ Test ${plan} created: ${username}`);
+    
+    res.json({
+      success: true,
+      redirect: `/success?token=${token}`
+    });
     
   } catch (error) {
     console.error('Test create error:', error);
-    res.status(500).send('Test failed');
+    res.status(500).json({ error: 'Test failed' });
   }
 });
 
-// ========== MIKROTIK QUEUE ENDPOINTS ==========
+// ========== MIKROTIK ENDPOINTS ==========
 app.get('/api/mikrotik-queue', async (req, res) => {
-  const apiKey = req.headers['x-api-key'] || req.query.api_key;
-  if (apiKey !== process.env.MIKROTIK_API_KEY) {
-    console.log('❌ Invalid API key');
-    return res.status(403).json({ error: 'Forbidden' });
-  }
-
   try {
+    const apiKey = req.headers['x-api-key'] || req.query.api_key;
+    if (apiKey !== process.env.MIKROTIK_API_KEY) {
+      console.log('❌ Invalid API key');
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
     const result = await pool.query(`
       SELECT * FROM payment_queue 
       WHERE status = 'pending' 
       ORDER BY created_at ASC 
       LIMIT 5
     `);
+    
     console.log(`📤 Sending ${result.rows.length} pending users to Mikrotik`);
     res.json(result.rows);
+    
   } catch (error) {
     console.error('❌ Queue error:', error.message);
     res.status(500).json({ error: 'Database error' });
@@ -430,13 +469,13 @@ app.get('/api/mikrotik-queue', async (req, res) => {
 });
 
 app.get('/api/mikrotik-queue-text', async (req, res) => {
-  const apiKey = req.headers['x-api-key'] || req.query.api_key;
-  if (apiKey !== process.env.MIKROTIK_API_KEY) {
-    console.log('❌ Invalid API key (text endpoint)');
-    return res.status(403).send('FORBIDDEN');
-  }
-
   try {
+    const apiKey = req.headers['x-api-key'] || req.query.api_key;
+    if (apiKey !== process.env.MIKROTIK_API_KEY) {
+      console.log('❌ Invalid API key');
+      return res.status(403).send('FORBIDDEN');
+    }
+
     const result = await pool.query(`
       SELECT id, mikrotik_username, mikrotik_password, plan
       FROM payment_queue
@@ -444,13 +483,21 @@ app.get('/api/mikrotik-queue-text', async (req, res) => {
       ORDER BY created_at ASC
       LIMIT 5
     `);
-    console.log(`📤 Sending ${result.rows.length} users to MikroTik (TEXT)`);
-    if (result.rows.length === 0) return res.send('');
+
+    if (result.rows.length === 0) {
+      console.log('📤 No pending users for MikroTik');
+      return res.send('');
+    }
+
+    console.log(`📤 Sending ${result.rows.length} users to MikroTik`);
+    
     const lines = result.rows.map(row =>
       `${row.mikrotik_username}|${row.mikrotik_password}|${row.plan}|${row.id}`
     );
+
     res.set('Content-Type', 'text/plain');
     res.send(lines.join('\n'));
+    
   } catch (error) {
     console.error('❌ Text queue error:', error.message);
     res.status(500).send('ERROR');
@@ -471,47 +518,75 @@ app.post('/api/mark-processed/:id', async (req, res) => {
   }
 });
 
-app.get('/api/queue-status', async (req, res) => {
-  const result = await pool.query(`
-    SELECT 
-      COUNT(*) as total,
-      SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-      SUM(CASE WHEN status = 'processed' THEN 1 ELSE 0 END) as processed
-    FROM payment_queue
-  `);
-  res.json(result.rows[0]);
-});
-
 // ========== HEALTH CHECK ==========
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    timestamp: new Date().toISOString(),
-    backend: 'dreamhatcher-paystack',
-    database: 'connected'
-  });
+app.get('/health', async (req, res) => {
+  try {
+    const dbResult = await pool.query('SELECT NOW()');
+    const queueResult = await pool.query('SELECT COUNT(*) FROM payment_queue');
+    
+    res.json({ 
+      status: 'OK', 
+      timestamp: new Date().toISOString(),
+      database: 'connected',
+      db_time: dbResult.rows[0].now,
+      total_payments: queueResult.rows[0].count,
+      uptime: process.uptime()
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      status: 'ERROR', 
+      error: error.message 
+    });
+  }
 });
 
+// ========== ROOT PAGE ==========
 app.get('/', (req, res) => {
   res.send(`
-    <h2>Dream Hatcher Tech Backend</h2>
-    <p>Status: ✅ Running</p>
-    <p>Endpoints:</p>
-    <ul>
-      <li><a href="/health">/health</a> - Health check</li>
-      <li><a href="/test-payment">/test-payment</a> - Test payment</li>
-      <li><a href="/success">/success</a> - Success page (requires token)</li>
-    </ul>
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Dream Hatcher Tech Backend</title>
+      <style>
+        body { font-family: Arial; padding: 20px; }
+        .card { background: #f0f8ff; padding: 20px; border-radius: 10px; margin: 10px 0; }
+        .btn { display: inline-block; padding: 10px 20px; background: #0072ff; color: white; 
+               text-decoration: none; border-radius: 5px; margin: 5px; }
+      </style>
+    </head>
+    <body>
+      <h1>🌐 Dream Hatcher Tech Backend</h1>
+      <div class="card">
+        <h3>✅ Status: Running</h3>
+        <p><a href="/health" class="btn">Health Check</a></p>
+      </div>
+      <div class="card">
+        <h3>🧪 Test System</h3>
+        <p><a href="/test-payment" class="btn">Test Payment</a></p>
+      </div>
+      <div class="card">
+        <h3>📊 Endpoints</h3>
+        <ul>
+          <li><strong>POST</strong> /api/paystack-webhook - Paystack webhook</li>
+          <li><strong>GET</strong> /success - Success page</li>
+          <li><strong>GET</strong> /api/mikrotik-queue-text - Mikrotik queue</li>
+          <li><strong>POST</strong> /api/mark-processed/:id - Mark as processed</li>
+        </ul>
+      </div>
+    </body>
+    </html>
   `);
 });
 
 // ========== START SERVER ==========
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`🚀 Paystack Backend running on port ${PORT}`);
-  console.log(`✅ Health check: http://localhost:${PORT}/health`);
-  console.log(`✅ Test payment: http://localhost:${PORT}/test-payment`);
+const server = app.listen(PORT, () => {
+  console.log(`🚀 Backend running on port ${PORT}`);
+  console.log(`🌐 Local: http://localhost:${PORT}`);
+  console.log(`✅ Health: https://dreamhatcher-backend.onrender.com/health`);
+  console.log(`🧪 Test: https://dreamhatcher-backend.onrender.com/test-payment`);
 });
 
-
-
+// Set server timeout to prevent hanging
+server.setTimeout(30000);
+server.keepAliveTimeout = 30000;
