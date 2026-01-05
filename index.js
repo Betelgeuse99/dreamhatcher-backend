@@ -575,8 +575,8 @@ app.get('/success', async (req, res) => {
             <h4>📶 How to Connect</h4>
             <ol>
               <li>Connect to <strong>Dream Hatcher WiFi</strong> network</li>
-              <li>A login page will open automatically</li>
-              <li>If not, open browser and go to:<br><strong>http://192.168.88.1</strong></li>
+              <li>A login page will open automatically or a pop-up window </li>
+              <li>If not, open browser and type:<br><strong>dreamhatcher.login</strong></li>
               <li>Enter your username and password above</li>
               <li>Click Login and enjoy!</li>
             </ol>
@@ -1038,4 +1038,5 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
