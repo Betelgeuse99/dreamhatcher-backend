@@ -3,6 +3,7 @@ require('dotenv').config();
 const express = require('express');
 const { Pool } = require('pg');
 const crypto = require('crypto');
+const https = require('https');
 
 const app = express();
 app.use(express.json());
@@ -13,19 +14,6 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-// ========== KEEP ALIVE (prevents Render sleep) ==========
-const https = require('https');
-
-function keepAlive() {
-  https.get('https://dreamhatcher-backend.onrender.com/health', (res) => {
-    console.log('🏓 Keep-alive ping, status:', res.statusCode);
-  }).on('error', (err) => {
-    console.log('🏓 Keep-alive error:', err.message);
-  });
-}
-
-// Ping every 14 minutes
-setInterval(keepAlive, 14 * 60 * 1000);
 // Test database connection
 pool.query('SELECT NOW()', (err, res) => {
   if (err) console.error('❌ Database connection failed:', err);
@@ -46,6 +34,18 @@ function getPlanDuration(planCode) {
   }
 }
 
+// ========== KEEP ALIVE (prevents Render sleep) ==========
+function keepAlive() {
+  https.get('https://dreamhatcher-backend.onrender.com/health', (res) => {
+    console.log('🏓 Keep-alive ping, status:', res.statusCode);
+  }).on('error', (err) => {
+    console.log('🏓 Keep-alive error:', err.message);
+  });
+}
+
+// Ping every 14 minutes
+setInterval(keepAlive, 14 * 60 * 1000);
+
 // ========== ERROR HANDLING MIDDLEWARE ==========
 app.use((req, res, next) => {
   res.setTimeout(30000, () => {
@@ -54,7 +54,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// ========== PAYSTACK WEBHOOK ==========
+// ========== PAYSTACK WEBHOOK - FIXED ==========
 app.post('/api/paystack-webhook', async (req, res) => {
   console.log('📥 Paystack webhook received');
 
@@ -66,9 +66,9 @@ app.post('/api/paystack-webhook', async (req, res) => {
     }
 
     const { reference, amount, customer, metadata } = data;
+    const amountNaira = amount / 100; // FIXED: Added this line
     const macAddress = metadata?.mac_address || 'unknown';
-    
-    const amountNaira = amount / 100; // ADD THIS LINE
+
     console.log(`💰 Paystack payment ₦${amountNaira} ref=${reference}`);
 
     // Determine plan STRICTLY by amount
@@ -84,20 +84,20 @@ app.post('/api/paystack-webhook', async (req, res) => {
     const username = `user_${Date.now().toString().slice(-6)}`;
     const password = generatePassword();
 
+    // FIXED: Correct database query with proper parameters
     await pool.query(
-     `INSERT INTO payment_queue
-   (transaction_id, customer_email, customer_phone, plan,
-    mikrotik_username, mikrotik_password, mac_address, status)
-   VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')`,
-  [reference, customer?.email, customer?.phone, plan, username, password, macAddress]
-);
+      `INSERT INTO payment_queue
+       (transaction_id, customer_email, customer_phone, plan,
+        mikrotik_username, mikrotik_password, mac_address, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')`,
       [
         reference,
         customer?.email || 'unknown@example.com',
         customer?.phone || '',
         plan,
         username,
-        password
+        password,
+        macAddress
       ]
     );
 
@@ -361,8 +361,8 @@ app.get('/paystack-callback', (req, res) => {
   
   res.send(html);
 });
-    
-   // ========== SUCCESS PAGE - PATIENT POLLING ==========
+
+// ========== SUCCESS PAGE - PATIENT POLLING ==========
 app.get('/success', async (req, res) => {
   try {
     const { reference, trxref } = req.query;
@@ -854,7 +854,3 @@ const server = app.listen(PORT, () => {
 
 server.setTimeout(30000);
 server.keepAliveTimeout = 30000;
-
-
-
-
