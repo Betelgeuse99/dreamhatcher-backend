@@ -162,7 +162,7 @@ app.get('/paystack-callback', (req, res) => {
 
   console.log('🔗 Paystack callback:', ref);
 
-  const html = ` // ← Your existing long callback HTML (same as before)
+  const html = ` 
   <!DOCTYPE html>
   <html>
   <head>
@@ -318,7 +318,7 @@ app.get('/paystack-callback', (req, res) => {
         </div>
         <div class="step" id="step3">
           <div class="step-icon step-pending" id="icon3">3</div>
-          <span>Activating on MikroTik router...</span>
+          <span>Activating on Server...</span>
         </div>
         <div class="step" id="step4">
           <div class="step-icon step-pending" id="icon4">4</div>
@@ -356,8 +356,8 @@ app.get('/paystack-callback', (req, res) => {
         { time: 38, msg: 'Payment verified successfully!', step: 1, done: true },
         { time: 35, msg: 'Generating your unique credentials...', step: 2 },
         { time: 28, msg: 'Credentials created!', step: 2, done: true },
-        { time: 25, msg: 'Sending to MikroTik router...', step: 3 },
-        { time: 15, msg: 'Activating your account on router...', step: 3 },
+        { time: 25, msg: 'Sending to server...', step: 3 },
+        { time: 15, msg: 'Activating your account on server...', step: 3 },
         { time: 8, msg: 'Almost done! Finalizing...', step: 3, done: true },
         { time: 3, msg: 'Account ready! Redirecting...', step: 4, done: true }
       ];
@@ -1038,3 +1038,4 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
