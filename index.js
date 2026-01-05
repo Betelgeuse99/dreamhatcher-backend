@@ -35,50 +35,14 @@ function getPlanDuration(planCode) {
 }
 
 // ========== KEEP ALIVE (prevents Render sleep) ==========
-// In index.js - replace your keepAlive function with this
 function keepAlive() {
   https.get('https://dreamhatcher-backend.onrender.com/health', (res) => {
-    let data = '';
-    res.on('data', chunk => data += chunk);
-    res.on('end', () => console.log('🏓 Keep-alive ping, status:', res.statusCode));
+    console.log('🏓 Keep-alive ping, status:', res.statusCode);
   }).on('error', (err) => {
     console.log('🏓 Keep-alive error:', err.message);
   });
 }
-
-// Ping every 10-12 minutes (safe under Render limits)
-setInterval(keepAlive, 10 * 60 * 1000);
-// Optional: Ping immediately on startup
-keepAlive();
-
-// ========== NEW: INITIALIZE PAYSTACK PAYMENT (Dynamic) ==========
-app.post('/api/initialize-payment', async (req, res) => {
-  try {
-    const { email, amount, plan, mac_address } = req.body;
-
-    if (!amount || !plan) return res.status(400).json({ error: 'Missing data' });
-
-    const response = await axios.post('https://api.paystack.co/transaction/initialize', {
-      email: email || 'customer@example.com',
-      amount: amount * 100, // kobo
-      callback_url: 'https://dreamhatcher-backend.onrender.com/paystack-callback',
-      metadata: {
-        mac_address: mac_address || 'unknown',
-        plan: plan // '24hr', '7d', '30d'
-      }
-    }, {
-      headers: {
-        Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    res.json({ authorization_url: response.data.data.authorization_url });
-  } catch (error) {
-    console.error('Paystack init error:', error.response?.data || error.message);
-    res.status(500).json({ error: 'Payment init failed' });
-  }
-});
+setInterval(keepAlive, 14 * 60 * 1000);
 
 // ========== ERROR HANDLING & TIMEOUT ==========
 app.use((req, res, next) => {
@@ -689,36 +653,20 @@ app.get('/success', async (req, res) => {
             
             console.log('Status check #' + checkCount + ':', data);
             
-           if (data.ready && data.username && data.password) {
-  // SUCCESS! Credentials are ready
-  credentials = {
-    username: data.username,
-    password: data.password,
-    plan: data.plan || 'WiFi Access'
-  };
-  
-  document.getElementById('username-display').textContent = credentials.username;
-  document.getElementById('password-display').textContent = credentials.password;
-  document.getElementById('plan-display').textContent = credentials.plan;
-  
-  showState('credentials');
-  
-  // === AUTO-LOGIN: Redirect to MikroTik login with credentials ===
-  const loginUrl = 'http://192.168.88.1/login?' +
-                   'username=' + encodeURIComponent(credentials.username) +
-                   '&password=' + encodeURIComponent(credentials.password) +
-                   '&dst=' + encodeURIComponent('https://www.google.com') +  // Optional: redirect after login
-                   '&auto=1';  // Triggers auto-submit in your hotspot login.html
-
-  // Show credentials for 4 seconds, then auto-connect
-  setTimeout(() => {
-    // Optional: Show a message before redirect
-    document.querySelector('#credentials-state h2').textContent = 'Connecting you automatically...';
-    document.querySelector('#credentials-state .status-box p').textContent = 'Please wait 5-10 seconds for full internet access.';
-    
-    window.location.href = loginUrl;
-  }, 4000);  // 4 seconds delay — user can read credentials first
-}   
+            if (data.ready && data.username && data.password) {
+              // SUCCESS! Credentials are ready
+              credentials = {
+                username: data.username,
+                password: data.password,
+                plan: data.plan || 'WiFi Access'
+              };
+              
+              document.getElementById('username-display').textContent = credentials.username;
+              document.getElementById('password-display').textContent = credentials.password;
+              document.getElementById('plan-display').textContent = credentials.plan;
+              
+              showState('credentials');
+              
             } else if (checkCount >= maxChecks) {
               // Max attempts reached
               document.getElementById('error-text').textContent = 
@@ -1090,6 +1038,3 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
-
-
-
