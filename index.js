@@ -35,14 +35,21 @@ function getPlanDuration(planCode) {
 }
 
 // ========== KEEP ALIVE (prevents Render sleep) ==========
+// In index.js - replace your keepAlive function with this
 function keepAlive() {
   https.get('https://dreamhatcher-backend.onrender.com/health', (res) => {
-    console.log('🏓 Keep-alive ping, status:', res.statusCode);
+    let data = '';
+    res.on('data', chunk => data += chunk);
+    res.on('end', () => console.log('🏓 Keep-alive ping, status:', res.statusCode));
   }).on('error', (err) => {
     console.log('🏓 Keep-alive error:', err.message);
   });
 }
-setInterval(keepAlive, 14 * 60 * 1000);
+
+// Ping every 10-12 minutes (safe under Render limits)
+setInterval(keepAlive, 10 * 60 * 1000);
+// Optional: Ping immediately on startup
+keepAlive();
 
 // ========== NEW: INITIALIZE PAYSTACK PAYMENT (Dynamic) ==========
 app.post('/api/initialize-payment', async (req, res) => {
@@ -1067,4 +1074,5 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
