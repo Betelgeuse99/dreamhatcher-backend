@@ -65,8 +65,8 @@ app.post('/api/paystack-webhook', async (req, res) => {
       return res.status(200).json({ received: true });
     }
 
-    const { reference, amount, customer } = data;
-    const amountNaira = amount / 100;
+    const { reference, amount, customer, metadata } = data;
+    const macAddress = metadata?.mac_address || 'unknown';
 
     console.log(`💰 Paystack payment ₦${amountNaira} ref=${reference}`);
 
@@ -84,11 +84,12 @@ app.post('/api/paystack-webhook', async (req, res) => {
     const password = generatePassword();
 
     await pool.query(
-      `INSERT INTO payment_queue
-       (transaction_id, customer_email, customer_phone, plan,
-        mikrotik_username, mikrotik_password, status)
-       VALUES ($1, $2, $3, $4, $5, $6, 'pending')
-       ON CONFLICT (transaction_id) DO NOTHING`,
+     `INSERT INTO payment_queue
+   (transaction_id, customer_email, customer_phone, plan,
+    mikrotik_username, mikrotik_password, mac_address, status)
+   VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')`,
+  [reference, customer?.email, customer?.phone, plan, username, password, macAddress]
+);
       [
         reference,
         customer?.email || 'unknown@example.com',
@@ -852,6 +853,7 @@ const server = app.listen(PORT, () => {
 
 server.setTimeout(30000);
 server.keepAliveTimeout = 30000;
+
 
 
 
