@@ -67,7 +67,8 @@ app.post('/api/paystack-webhook', async (req, res) => {
 
     const { reference, amount, customer, metadata } = data;
     const macAddress = metadata?.mac_address || 'unknown';
-
+    
+    const amountNaira = amount / 100; // ADD THIS LINE
     console.log(`💰 Paystack payment ₦${amountNaira} ref=${reference}`);
 
     // Determine plan STRICTLY by amount
@@ -853,6 +854,7 @@ const server = app.listen(PORT, () => {
 
 server.setTimeout(30000);
 server.keepAliveTimeout = 30000;
+
 
 
 
