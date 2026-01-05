@@ -44,6 +44,35 @@ function keepAlive() {
 }
 setInterval(keepAlive, 14 * 60 * 1000);
 
+// ========== NEW: INITIALIZE PAYSTACK PAYMENT (Dynamic) ==========
+app.post('/api/initialize-payment', async (req, res) => {
+  try {
+    const { email, amount, plan, mac_address } = req.body;
+
+    if (!amount || !plan) return res.status(400).json({ error: 'Missing data' });
+
+    const response = await axios.post('https://api.paystack.co/transaction/initialize', {
+      email: email || 'customer@example.com',
+      amount: amount * 100, // kobo
+      callback_url: 'https://dreamhatcher-backend.onrender.com/paystack-callback',
+      metadata: {
+        mac_address: mac_address || 'unknown',
+        plan: plan // '24hr', '7d', '30d'
+      }
+    }, {
+      headers: {
+        Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    res.json({ authorization_url: response.data.data.authorization_url });
+  } catch (error) {
+    console.error('Paystack init error:', error.response?.data || error.message);
+    res.status(500).json({ error: 'Payment init failed' });
+  }
+});
+
 // ========== ERROR HANDLING & TIMEOUT ==========
 app.use((req, res, next) => {
   res.setTimeout(30000, () => {
@@ -1038,3 +1067,4 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
