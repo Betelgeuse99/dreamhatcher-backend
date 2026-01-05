@@ -689,20 +689,36 @@ app.get('/success', async (req, res) => {
             
             console.log('Status check #' + checkCount + ':', data);
             
-            if (data.ready && data.username && data.password) {
-              // SUCCESS! Credentials are ready
-              credentials = {
-                username: data.username,
-                password: data.password,
-                plan: data.plan || 'WiFi Access'
-              };
-              
-              document.getElementById('username-display').textContent = credentials.username;
-              document.getElementById('password-display').textContent = credentials.password;
-              document.getElementById('plan-display').textContent = credentials.plan;
-              
-              showState('credentials');
-              
+           if (data.ready && data.username && data.password) {
+  // SUCCESS! Credentials are ready
+  credentials = {
+    username: data.username,
+    password: data.password,
+    plan: data.plan || 'WiFi Access'
+  };
+  
+  document.getElementById('username-display').textContent = credentials.username;
+  document.getElementById('password-display').textContent = credentials.password;
+  document.getElementById('plan-display').textContent = credentials.plan;
+  
+  showState('credentials');
+  
+  // === AUTO-LOGIN: Redirect to MikroTik login with credentials ===
+  const loginUrl = 'http://192.168.88.1/login?' +
+                   'username=' + encodeURIComponent(credentials.username) +
+                   '&password=' + encodeURIComponent(credentials.password) +
+                   '&dst=' + encodeURIComponent('https://www.google.com') +  // Optional: redirect after login
+                   '&auto=1';  // Triggers auto-submit in your hotspot login.html
+
+  // Show credentials for 4 seconds, then auto-connect
+  setTimeout(() => {
+    // Optional: Show a message before redirect
+    document.querySelector('#credentials-state h2').textContent = 'Connecting you automatically...';
+    document.querySelector('#credentials-state .status-box p').textContent = 'Please wait 5-10 seconds for full internet access.';
+    
+    window.location.href = loginUrl;
+  }, 4000);  // 4 seconds delay — user can read credentials first
+}   
             } else if (checkCount >= maxChecks) {
               // Max attempts reached
               document.getElementById('error-text').textContent = 
@@ -1074,5 +1090,6 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
