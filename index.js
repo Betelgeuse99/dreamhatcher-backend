@@ -803,38 +803,180 @@ app.get('/health', async (req, res) => {
   }
 });
 
-// ========== ROOT PAGE ==========
+// ========== ROOT PAGE - CUSTOMER FACING ==========
 app.get('/', (req, res) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>Dream Hatcher Tech Backend</title>
-      <style>
-        body { font-family: Arial; padding: 20px; }
-        .card { background: #f0f8ff; padding: 20px; border-radius: 10px; margin: 10px 0; }
-        .btn { display: inline-block; padding: 10px 20px; background: #0072ff; color: white; 
-               text-decoration: none; border-radius: 5px; margin: 5px; }
-      </style>
-    </head>
-    <body>
-      <h1>🌐 Dream Hatcher Tech Backend</h1>
-      <div class="card">
-        <h3>✅ Status: Running</h3>
-        <p><a href="/health" class="btn">Health Check</a></p>
+  const html = `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dream Hatcher Tech - WiFi Portal</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        color: white;
+      }
+      .container {
+        background: rgba(255,255,255,0.05);
+        padding: 40px;
+        border-radius: 24px;
+        max-width: 500px;
+        width: 100%;
+        text-align: center;
+        border: 1px solid rgba(255,255,255,0.1);
+        box-shadow: 0 25px 50px rgba(0,0,0,0.5);
+      }
+      .logo {
+        font-size: 48px;
+        margin-bottom: 20px;
+        color: #00c9ff;
+      }
+      h1 {
+        font-size: 28px;
+        margin-bottom: 10px;
+        color: #00c9ff;
+      }
+      .status-badge {
+        background: linear-gradient(135deg, #00c9ff 0%, #92fe9d 100%);
+        color: #000;
+        padding: 8px 20px;
+        border-radius: 50px;
+        font-weight: 800;
+        display: inline-block;
+        margin: 15px 0;
+        font-size: 14px;
+      }
+      .option-card {
+        background: rgba(255,255,255,0.1);
+        padding: 20px;
+        border-radius: 15px;
+        margin: 20px 0;
+        text-align: left;
+        border: 1px solid rgba(255,255,255,0.1);
+      }
+      .option-card h3 {
+        color: #00c9ff;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .btn {
+        background: linear-gradient(135deg, #00c9ff 0%, #92fe9d 100%);
+        color: #000;
+        border: none;
+        padding: 14px 28px;
+        border-radius: 50px;
+        font-size: 16px;
+        font-weight: 800;
+        cursor: pointer;
+        margin: 10px 0;
+        text-decoration: none;
+        display: inline-block;
+        transition: transform 0.3s;
+      }
+      .btn:hover {
+        transform: translateY(-2px);
+      }
+      .support-box {
+        background: rgba(255,200,0,0.1);
+        border: 1px solid rgba(255,200,0,0.3);
+        padding: 20px;
+        border-radius: 15px;
+        margin: 25px 0;
+        font-size: 14px;
+      }
+      .qr-section {
+        margin: 25px 0;
+        padding: 20px;
+        background: rgba(0,0,0,0.2);
+        border-radius: 15px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="logo">🌐</div>
+      <h1>Dream Hatcher Tech</h1>
+      <p>High-Speed Business WiFi Solutions</p>
+      
+      <div class="status-badge">✅ SYSTEM OPERATIONAL</div>
+      
+      <div class="option-card">
+        <h3>📱 <span>Already on our WiFi?</span></h3>
+        <p>If you're connected to <strong>Dream Hatcher WiFi</strong> network:</p>
+        <a href="http://192.168.88.1" class="btn">Go to WiFi Login Page</a>
+        <p style="margin-top: 10px; font-size: 12px; color: #aaa;">
+          Or enter in browser: <code>192.168.88.1</code>
+        </p>
       </div>
-      <div class="card">
-        <h3>📊 Endpoints</h3>
-        <ul>
-          <li><strong>POST</strong> /api/paystack-webhook - Paystack webhook</li>
-          <li><strong>GET</strong> /success - Payment success page</li>
-          <li><strong>GET</strong> /api/check-status - Check payment status</li>
-          <li><strong>GET</strong> /api/mikrotik-queue-text - Mikrotik queue</li>
-        </ul>
+      
+      <div class="option-card">
+        <h3>💰 <span>Need WiFi Access?</span></h3>
+        <p>Purchase WiFi packages starting at ₦350/day:</p>
+        <a href="http://192.168.88.1/hotspotlogin.html" class="btn">View WiFi Plans & Pricing</a>
       </div>
-    </body>
-    </html>
-  `);
+      
+      <div class="option-card">
+        <h3>✅ <span>Already Paid?</span></h3>
+        <p>Check your payment status and get credentials:</p>
+        <a href="/success" class="btn">Check Payment Status</a>
+      </div>
+      
+      <div class="qr-section">
+        <h3>📲 Quick Connect QR</h3>
+        <p>Scan to open WiFi login:</p>
+        <div style="background: white; padding: 10px; display: inline-block; border-radius: 10px;">
+          <!-- QR will be generated by JS -->
+          <div id="qrcode"></div>
+        </div>
+        <p style="font-size: 12px; margin-top: 10px; color: #aaa;">
+          Scan with phone camera
+        </p>
+      </div>
+      
+      <div class="support-box">
+        <h3>📞 Need Help?</h3>
+        <p style="font-size: 18px; font-weight: bold; color: #00c9ff;">07037412314</p>
+        <p style="font-size: 12px; color: #aaa;">24/7 Customer Support</p>
+        <p style="margin-top: 10px; font-size: 12px;">
+          Email: support@dreamhatcher-tech1.xo.je<br>
+          Website: dreamhatcher-tech1.xo.je
+        </p>
+      </div>
+      
+      <p style="margin-top: 20px; font-size: 12px; color: #888;">
+        © 2024 Dream Hatcher Tech. All rights reserved.<br>
+        Secure Payment Processing via Paystack
+      </p>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+    <script>
+      // Generate QR code for hotspot login
+      QRCode.toCanvas(document.getElementById('qrcode'), 'http://192.168.88.1', {
+        width: 150,
+        margin: 1,
+        color: {
+          dark: '#000000',
+          light: '#ffffff'
+        }
+      });
+    </script>
+  </body>
+  </html>
+  `;
+  
+  res.setHeader('Content-Type', 'text/html');
+  res.send(html);
 });
 
 // ========== ERROR HANDLER ==========
@@ -854,3 +996,4 @@ const server = app.listen(PORT, () => {
 
 server.setTimeout(30000);
 server.keepAliveTimeout = 30000;
+
