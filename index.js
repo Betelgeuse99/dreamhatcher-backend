@@ -1,13 +1,12 @@
-// File: index.js - FIXED VERSION
 require('dotenv').config();
 const express = require('express');
 const { Pool } = require('pg');
 const crypto = require('crypto');
 const https = require('https');
-const axios = require('axios'); // Added for Paystack verification
+const axios = require('axios'); // <-- NEW: for Paystack API calls
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } })); // Needed for webhook signature
 
 // Database connection to Supabase
 const pool = new Pool({
@@ -43,11 +42,9 @@ function keepAlive() {
     console.log('🏓 Keep-alive error:', err.message);
   });
 }
-
-// Ping every 14 minutes
 setInterval(keepAlive, 14 * 60 * 1000);
 
-// ========== ERROR HANDLING MIDDLEWARE ==========
+// ========== ERROR HANDLING & TIMEOUT ==========
 app.use((req, res, next) => {
   res.setTimeout(30000, () => {
     console.log(`⏰ Timeout on ${req.method} ${req.url}`);
@@ -55,9 +52,56 @@ app.use((req, res, next) => {
   next();
 });
 
+// ========== NEW: INITIALIZE PAYSTACK PAYMENT (Dynamic Checkout) ==========
+app.post('/api/initialize-payment', async (req, res) => {
+  try {
+    const { email, amount, plan, mac_address } = req.body;
+
+    if (!amount || !plan) {
+      return res.status(400).json({ error: 'Missing amount or plan' });
+    }
+
+    const response = await axios.post(
+      'https://api.paystack.co/transaction/initialize',
+      {
+        email: email || 'customer@example.com',
+        amount: amount * 100, // Paystack uses kobo
+        callback_url: 'https://dreamhatcher-backend.onrender.com/paystack-callback',
+        metadata: {
+          mac_address: mac_address || 'unknown',
+          plan: plan
+        }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    res.json({
+      success: true,
+      authorization_url: response.data.data.authorization_url
+    });
+
+  } catch (error) {
+    console.error('❌ Paystack initialize error:', error.response?.data || error.message);
+    res.status(500).json({ error: 'Failed to initialize payment' });
+  }
+});
+
 // ========== PAYSTACK WEBHOOK ==========
 app.post('/api/paystack-webhook', async (req, res) => {
   console.log('📥 Paystack webhook received');
+
+  // Verify webhook signature (recommended)
+  const secret = process.env.PAYSTACK_SECRET_KEY;
+  const hash = crypto.createHmac('sha512', secret).update(req.rawBody).digest('hex');
+  if (hash !== req.headers['x-paystack-signature']) {
+    console.log('❌ Invalid webhook signature');
+    return res.status(400).send('Invalid signature');
+  }
 
   try {
     const { event, data } = req.body;
@@ -66,26 +110,26 @@ app.post('/api/paystack-webhook', async (req, res) => {
       return res.status(200).json({ received: true });
     }
 
-    const { reference, amount, customer, metadata } = data;
+    const { reference, amount, metadata } = data;
     const amountNaira = amount / 100;
     const macAddress = metadata?.mac_address || 'unknown';
+    const planFromMetadata = metadata?.plan;
 
-    console.log(`💰 Paystack payment ₦${amountNaira} ref=${reference}`);
-
-    // Determine plan STRICTLY by amount
-    let plan;
-    if (amountNaira === 350) plan = '24hr';
-    else if (amountNaira === 2400) plan = '7d';
-    else if (amountNaira === 7500) plan = '30d';
-    else {
-      console.error('❌ Invalid amount:', amountNaira);
-      return res.status(400).json({ error: 'Invalid amount' });
+    // Determine plan: prefer metadata, fallback to amount
+    let plan = planFromMetadata;
+    if (!plan) {
+      if (amountNaira === 350) plan = '24hr';
+      else if (amountNaira === 2400) plan = '7d';
+      else if (amountNaira === 7500) plan = '30d';
+      else {
+        console.error('❌ Invalid amount:', amountNaira);
+        return res.status(400).json({ error: 'Invalid amount' });
+      }
     }
 
     const username = `user_${Date.now().toString().slice(-6)}`;
     const password = generatePassword();
 
-    // Insert into database
     await pool.query(
       `INSERT INTO payment_queue
        (transaction_id, customer_email, customer_phone, plan,
@@ -93,8 +137,8 @@ app.post('/api/paystack-webhook', async (req, res) => {
        VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')`,
       [
         reference,
-        customer?.email || 'unknown@example.com',
-        customer?.phone || '',
+        data.customer?.email || 'unknown@example.com',
+        data.customer?.phone || '',
         plan,
         username,
         password,
@@ -102,36 +146,31 @@ app.post('/api/paystack-webhook', async (req, res) => {
       ]
     );
 
-    console.log(`✅ Queued Paystack user ${username}`);
-
+    console.log(`✅ Queued user ${username} (Plan: ${plan}, Ref: ${reference})`);
     return res.status(200).json({ received: true });
 
   } catch (error) {
-    console.error('❌ Paystack webhook error:', error.message);
-    return res.status(500).json({ error: 'Webhook error' });
+    console.error('❌ Webhook error:', error.message);
+    return res.status(500).json({ error: 'Webhook processing failed' });
   }
 });
 
-// ========== PAYSTACK CALLBACK - FIXED: IMMEDIATE REDIRECT ==========
+// ========== PAYSTACK CALLBACK (45-second waiting page) ==========
 app.get('/paystack-callback', (req, res) => {
-  const { reference, trxref, transaction_id } = req.query;
-  const ref = reference || trxref || transaction_id;
-  
-  console.log('🔗 Paystack callback received, redirecting:', ref);
-  
-  // FIX: IMMEDIATE REDIRECT - no 45-second wait
-  // This fixes the ERR_CONNECTION_CLOSED error
-  const redirectUrl = `/success?reference=${encodeURIComponent(ref)}`;
-  
-  // Simple HTML with immediate redirect
-  const html = `
+  const { reference, trxref } = req.query;
+  const ref = reference || trxref || 'unknown';
+
+  console.log('🔗 Paystack callback:', ref);
+
+  const html = ` // ← Your existing long callback HTML (same as before)
   <!DOCTYPE html>
   <html>
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Redirecting...</title>
+    <title>Creating Your Account...</title>
     <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
       body {
         font-family: Arial, sans-serif;
         background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
@@ -139,56 +178,235 @@ app.get('/paystack-callback', (req, res) => {
         display: flex;
         align-items: center;
         justify-content: center;
-        color: white;
-        text-align: center;
-        margin: 0;
         padding: 20px;
+        color: white;
       }
       .container {
         background: rgba(255,255,255,0.05);
         padding: 40px;
         border-radius: 20px;
-        max-width: 400px;
+        max-width: 420px;
         width: 100%;
+        text-align: center;
         border: 1px solid rgba(255,255,255,0.1);
+      }
+      .success-badge {
+        background: linear-gradient(135deg, #00c9ff 0%, #92fe9d 100%);
+        color: #000;
+        padding: 10px 25px;
+        border-radius: 50px;
+        font-weight: bold;
+        display: inline-block;
+        margin-bottom: 20px;
+      }
+      .spinner-container {
+        position: relative;
+        width: 120px;
+        height: 120px;
+        margin: 30px auto;
       }
       .spinner {
         border: 4px solid rgba(255,255,255,0.1);
         border-top: 4px solid #00c9ff;
         border-radius: 50%;
-        width: 60px;
-        height: 60px;
-        animation: spin 1s linear infinite;
-        margin: 20px auto;
+        width: 120px;
+        height: 120px;
+        animation: spin 1.5s linear infinite;
+      }
+      .countdown-number {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 36px;
+        font-weight: bold;
+        color: #00c9ff;
       }
       @keyframes spin {
         0% { transform: rotate(0deg); }
         100% { transform: rotate(360deg); }
       }
+      .progress-bar {
+        background: rgba(255,255,255,0.1);
+        border-radius: 10px;
+        height: 10px;
+        margin: 25px 0;
+        overflow: hidden;
+      }
+      .progress-fill {
+        background: linear-gradient(90deg, #00c9ff, #92fe9d);
+        height: 100%;
+        width: 0%;
+        transition: width 1s linear;
+      }
+      h2 { color: #00c9ff; margin-bottom: 15px; }
+      .status-text { margin: 15px 0; line-height: 1.6; }
+      .steps {
+        text-align: left;
+        background: rgba(0,0,0,0.2);
+        padding: 15px 20px;
+        border-radius: 10px;
+        margin: 20px 0;
+        font-size: 14px;
+      }
+      .step {
+        padding: 8px 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .step-icon {
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        flex-shrink: 0;
+      }
+      .step-pending { background: rgba(255,255,255,0.2); }
+      .step-active { background: #00c9ff; animation: pulse 1s infinite; }
+      .step-done { background: #92fe9d; color: #000; }
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+      }
+      .ref-box {
+        background: rgba(0,0,0,0.3);
+        padding: 10px;
+        border-radius: 8px;
+        font-size: 12px;
+        margin-top: 20px;
+        word-break: break-all;
+      }
+      .warning {
+        background: rgba(255,200,0,0.2);
+        border: 1px solid rgba(255,200,0,0.5);
+        padding: 15px;
+        border-radius: 10px;
+        margin-top: 20px;
+        font-size: 13px;
+      }
     </style>
   </head>
   <body>
     <div class="container">
-      <h2>Payment Successful! ✅</h2>
-      <div class="spinner"></div>
-      <p>Redirecting to your account...</p>
-      <p style="font-size: 12px; color: #aaa;">Reference: ${ref || 'N/A'}</p>
+      <div class="success-badge">✓ PAYMENT RECEIVED</div>
+      
+      <h2>Creating Your WiFi Account</h2>
+      
+      <div class="spinner-container">
+        <div class="spinner"></div>
+        <div class="countdown-number" id="countdown">45</div>
+      </div>
+      
+      <div class="progress-bar">
+        <div class="progress-fill" id="progress"></div>
+      </div>
+      
+      <p class="status-text" id="status">Please wait while we set up your account...</p>
+      
+      <div class="steps">
+        <div class="step" id="step1">
+          <div class="step-icon step-active" id="icon1">1</div>
+          <span>Verifying payment with Paystack...</span>
+        </div>
+        <div class="step" id="step2">
+          <div class="step-icon step-pending" id="icon2">2</div>
+          <span>Creating WiFi credentials...</span>
+        </div>
+        <div class="step" id="step3">
+          <div class="step-icon step-pending" id="icon3">3</div>
+          <span>Activating on MikroTik router...</span>
+        </div>
+        <div class="step" id="step4">
+          <div class="step-icon step-pending" id="icon4">4</div>
+          <span>Ready to connect!</span>
+        </div>
+      </div>
+      
+      <div class="warning">
+        ⚠️ <strong>Do NOT close this page!</strong><br>
+        Your account is being created. This takes about 45 seconds.
+      </div>
+      
+      <div class="ref-box">
+        Reference: <strong>${ref || 'N/A'}</strong>
+      </div>
     </div>
     
     <script>
-      // Immediate redirect
-      setTimeout(() => {
-        window.location.href = '${redirectUrl}';
-      }, 500); // Reduced from 45000ms to 500ms
+      const totalSeconds = 45;
+      let seconds = totalSeconds;
+      const countdownEl = document.getElementById('countdown');
+      const progressEl = document.getElementById('progress');
+      const statusEl = document.getElementById('status');
+      
+      function updateStep(stepNum, state) {
+        const icon = document.getElementById('icon' + stepNum);
+        icon.className = 'step-icon step-' + state;
+        if (state === 'done') {
+          icon.textContent = '✓';
+        }
+      }
+      
+      const messages = [
+        { time: 45, msg: 'Connecting to payment server...', step: 1 },
+        { time: 38, msg: 'Payment verified successfully!', step: 1, done: true },
+        { time: 35, msg: 'Generating your unique credentials...', step: 2 },
+        { time: 28, msg: 'Credentials created!', step: 2, done: true },
+        { time: 25, msg: 'Sending to MikroTik router...', step: 3 },
+        { time: 15, msg: 'Activating your account on router...', step: 3 },
+        { time: 8, msg: 'Almost done! Finalizing...', step: 3, done: true },
+        { time: 3, msg: 'Account ready! Redirecting...', step: 4, done: true }
+      ];
+      
+      let lastStep = 0;
+      
+      const timer = setInterval(function() {
+        seconds--;
+        countdownEl.textContent = seconds;
+        
+        const progress = ((totalSeconds - seconds) / totalSeconds) * 100;
+        progressEl.style.width = progress + '%';
+        
+        // Update messages and steps based on time
+        for (let i = 0; i < messages.length; i++) {
+          if (seconds <= messages[i].time && seconds > (messages[i+1]?.time || 0)) {
+            statusEl.textContent = messages[i].msg;
+            
+            if (messages[i].step > lastStep) {
+              updateStep(messages[i].step, 'active');
+              lastStep = messages[i].step;
+            }
+            
+            if (messages[i].done) {
+              updateStep(messages[i].step, 'done');
+              if (messages[i].step < 4) {
+                updateStep(messages[i].step + 1, 'active');
+              }
+            }
+            break;
+          }
+        }
+        
+        if (seconds <= 0) {
+          clearInterval(timer);
+          countdownEl.textContent = '✓';
+          statusEl.textContent = 'Redirecting to your credentials...';
+          window.location.href = '/success?reference=' + encodeURIComponent('${ref || ''}');
+        }
+      }, 1000);
     </script>
   </body>
   </html>
   `;
-  
-  res.send(html);
+
+  res.send(html.replace('${ref || \'\'}', ref)); // Make sure ref is injected
 });
 
-// ========== SUCCESS PAGE ==========
+// ========== SUCCESS PAGE - PATIENT POLLING ==========
 app.get('/success', async (req, res) => {
   try {
     const { reference, trxref } = req.query;
@@ -629,7 +847,7 @@ app.get('/health', async (req, res) => {
   }
 });
 
-// ========== ROOT PAGE ==========
+// ========== ROOT PAGE - CUSTOMER FACING ==========
 app.get('/', (req, res) => {
   const html = `
   <!DOCTYPE html>
@@ -815,10 +1033,8 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 10000;
 const server = app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
-  console.log(`🌐 Local: http://localhost:${PORT}`);
-  console.log(`✅ Success page: https://dreamhatcher-backend.onrender.com/success`);
-  console.log(`🔗 Paystack webhook: https://dreamhatcher-backend.onrender.com/api/paystack-webhook`);
+  console.log(`🌐 Initialize: https://dreamhatcher-backend.onrender.com/api/initialize-payment`);
+  console.log(`🔗 Callback: https://dreamhatcher-backend.onrender.com/paystack-callback`);
 });
 
 server.setTimeout(30000);
-server.keepAliveTimeout = 30000;
