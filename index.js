@@ -582,9 +582,14 @@ app.get('/success', async (req, res) => {
             </ol>
           </div>
           
-          <button class="btn" onclick="copyCredentials()">📋 Copy Credentials</button>
+         <button class="btn" onclick="copyCredentials()">📋 Copy Credentials</button>
+          <button class="btn" id="autoLoginBtn" onclick="autoLogin()" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">🚀 Auto-Login Now</button>
+
+          <div id="autoLoginStatus" style="margin-top: 15px; padding: 15px; background: rgba(0,0,0,0.3); border-radius: 10px; display: none;">
+            <p id="autoLoginText">⏳ Auto-connecting in <span id="autoLoginCountdown">8</span> seconds...</p>
+          </div>
         </div>
-        
+
         <div id="error-state" class="hidden">
           <div class="success-icon">⏳</div>
           <h2>Still Processing...</h2>
@@ -624,7 +629,70 @@ app.get('/success', async (req, res) => {
             setTimeout(function() { element.textContent = original; }, 1000);
           });
         }
-        
+          // ============================================
+        // AUTO-LOGIN FUNCTIONALITY
+        // ============================================
+        let autoLoginTimer = null;
+        let autoLoginCountdown = 8;
+        const HOTSPOT_LOGIN_URL = 'http://192.168.88.1/login';
+
+        function startAutoLoginCountdown() {
+          document.getElementById('autoLoginStatus').style.display = 'block';
+
+          autoLoginTimer = setInterval(function() {
+            autoLoginCountdown--;
+            document.getElementById('autoLoginCountdown').textContent = autoLoginCountdown;
+
+            if (autoLoginCountdown <= 0) {
+              clearInterval(autoLoginTimer);
+              autoLogin();
+            }
+          }, 1000);
+        }
+
+        function autoLogin() {
+          if (autoLoginTimer) {
+            clearInterval(autoLoginTimer);
+          }
+
+          if (!credentials.username || !credentials.password) {
+            document.getElementById('autoLoginText').innerHTML = '❌ Credentials not ready. Please copy and login manually.';
+            return;
+          }
+
+          document.getElementById('autoLoginText').innerHTML = '🔄 Connecting to WiFi login page...';
+          document.getElementById('autoLoginBtn').disabled = true;
+          document.getElementById('autoLoginBtn').textContent = '⏳ Connecting...';
+
+          // Method 1: Try opening hotspot login with credentials in URL
+          const loginUrl = HOTSPOT_LOGIN_URL +
+            '?username=' + encodeURIComponent(credentials.username) +
+            '&password=' + encodeURIComponent(credentials.password) +
+            '&auto=1';
+
+          // Try to open in same window (works if we're in hotspot network)
+          try {
+            // First try: Direct navigation
+            window.location.href = loginUrl;
+
+            // Fallback after 3 seconds if still on this page
+            setTimeout(function() {
+              if (document.getElementById('autoLoginText')) {
+                document.getElementById('autoLoginText').innerHTML =
+                  '⚠️ Auto-login may have opened in a new tab. ' +
+                  '<br>If not connected, <a href="' + loginUrl + '" target="_blank" style="color: #00c9ff;">click here</a> or login manually.';
+                document.getElementById('autoLoginBtn').disabled = false;
+                document.getElementById('autoLoginBtn').textContent = '🔄 Try Again';
+              }
+            }, 3000);
+
+          } catch (e) {
+            // Fallback: Open in new window
+            window.open(loginUrl, '_blank');
+            document.getElementById('autoLoginText').innerHTML =
+              '✅ Login page opened! Check new tab/window.';
+          }
+        }
         function copyCredentials() {
           const text = 'Username: ' + credentials.username + '\\nPassword: ' + credentials.password + '\\nPlan: ' + credentials.plan;
           navigator.clipboard.writeText(text).then(function() {
@@ -663,9 +731,12 @@ app.get('/success', async (req, res) => {
               
               document.getElementById('username-display').textContent = credentials.username;
               document.getElementById('password-display').textContent = credentials.password;
-              document.getElementById('plan-display').textContent = credentials.plan;
-              
+             document.getElementById('plan-display').textContent = credentials.plan;
+
               showState('credentials');
+
+              // Start auto-login countdown after showing credentials
+              setTimeout(startAutoLoginCountdown, 1000);
               
             } else if (checkCount >= maxChecks) {
               // Max attempts reached
@@ -1038,6 +1109,7 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
 
