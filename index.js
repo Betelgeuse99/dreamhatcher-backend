@@ -155,7 +155,7 @@ app.post('/api/paystack-webhook', async (req, res) => {
   }
 });
 
-// ========== PAYSTACK CALLBACK (45-second waiting page) ==========
+// ========== PAYSTACK CALLBACK (30-second waiting page) ==========
 app.get('/paystack-callback', (req, res) => {
   const { reference, trxref } = req.query;
   const ref = reference || trxref || 'unknown';
@@ -298,7 +298,7 @@ app.get('/paystack-callback', (req, res) => {
       
       <div class="spinner-container">
         <div class="spinner"></div>
-        <div class="countdown-number" id="countdown">45</div>
+        <div class="countdown-number" id="countdown">30</div>
       </div>
       
       <div class="progress-bar">
@@ -328,7 +328,7 @@ app.get('/paystack-callback', (req, res) => {
       
       <div class="warning">
         ⚠️ <strong>Do NOT close this page!</strong><br>
-        Your account is being created. This takes about 45 seconds.
+        Your account is being created. This takes about 30 seconds.
       </div>
       
       <div class="ref-box">
@@ -337,7 +337,7 @@ app.get('/paystack-callback', (req, res) => {
     </div>
     
     <script>
-      const totalSeconds = 45;
+      const totalSeconds = 30;
       let seconds = totalSeconds;
       const countdownEl = document.getElementById('countdown');
       const progressEl = document.getElementById('progress');
@@ -352,13 +352,13 @@ app.get('/paystack-callback', (req, res) => {
       }
       
       const messages = [
-        { time: 45, msg: 'Connecting to payment server...', step: 1 },
-        { time: 38, msg: 'Payment verified successfully!', step: 1, done: true },
-        { time: 35, msg: 'Generating your unique credentials...', step: 2 },
-        { time: 28, msg: 'Credentials created!', step: 2, done: true },
-        { time: 25, msg: 'Sending to server...', step: 3 },
-        { time: 15, msg: 'Activating your account on server...', step: 3 },
-        { time: 8, msg: 'Almost done! Finalizing...', step: 3, done: true },
+        { time: 30, msg: 'Connecting to payment server...', step: 1 },
+        { time: 27, msg: 'Payment verified successfully!', step: 1, done: true },
+        { time: 23, msg: 'Generating your unique credentials...', step: 2 },
+        { time: 18, msg: 'Credentials created!', step: 2, done: true },
+        { time: 13, msg: 'Sending to server...', step: 3 },
+        { time: 9, msg: 'Activating your account on server...', step: 3 },
+        { time: 6, msg: 'Almost done! Finalizing...', step: 3, done: true },
         { time: 3, msg: 'Account ready! Redirecting...', step: 4, done: true }
       ];
       
@@ -1038,5 +1038,6 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
