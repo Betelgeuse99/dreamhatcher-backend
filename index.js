@@ -1094,6 +1094,379 @@ app.get('/', (req, res) => {
   res.send(html);
 });
 
+// ============================================
+// ADMIN DASHBOARD ROUTE
+// Add this to your index.js file (before the error handler)
+// ============================================
+
+// Simple password protection (change this!)
+const ADMIN_PASSWORD = 'Huda2024@';
+
+// ========== ADMIN DASHBOARD ==========
+app.get('/admin', async (req, res) => {
+  const { pwd } = req.query;
+
+  // Simple password check
+  if (pwd !== ADMIN_PASSWORD) {
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Admin Login</title>
+        <style>
+          body { font-family: Arial; background: #0a0e1a; color: white; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+          .box { background: rgba(255,255,255,0.05); padding: 40px; border-radius: 20px; text-align: center; }
+          input { padding: 15px; border-radius: 8px; border: none; font-size: 16px; width: 200px; margin: 10px 0; }
+          button { padding: 15px 30px; background: linear-gradient(135deg, #00c9ff, #0066ff); border: none; border-radius: 8px; color: white; font-weight: bold; cursor: pointer; }
+        </style>
+      </head>
+      <body>
+        <div class="box">
+          <h2>🔐 Admin Access</h2>
+          <form method="GET">
+            <input type="password" name="pwd" placeholder="Enter password" required><br>
+            <button type="submit">Login</button>
+          </form>
+        </div>
+      </body>
+      </html>
+    `);
+  }
+
+  try {
+    // Get statistics from database
+    const stats = await pool.query(`
+      SELECT
+        COUNT(*) as total_payments,
+        COUNT(*) FILTER (WHERE status = 'processed') as processed,
+        COUNT(*) FILTER (WHERE status = 'pending') as pending,
+        COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE) as today_count,
+        COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE - INTERVAL '7 days') as week_count,
+        COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE - INTERVAL '30 days') as month_count
+      FROM payment_queue
+    `);
+
+    // Revenue calculations
+    const revenue = await pool.query(`
+      SELECT
+        COALESCE(SUM(CASE
+          WHEN plan = '24hr' THEN 350
+          WHEN plan = '7d' THEN 2400
+          WHEN plan = '30d' THEN 7500
+          ELSE 0
+        END), 0) as total_revenue,
+        COALESCE(SUM(CASE
+          WHEN created_at >= CURRENT_DATE AND plan = '24hr' THEN 350
+          WHEN created_at >= CURRENT_DATE AND plan = '7d' THEN 2400
+          WHEN created_at >= CURRENT_DATE AND plan = '30d' THEN 7500
+          ELSE 0
+        END), 0) as today_revenue,
+        COALESCE(SUM(CASE
+          WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' AND plan = '24hr' THEN 350
+          WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' AND plan = '7d' THEN 2400
+          WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' AND plan = '30d' THEN 7500
+          ELSE 0
+        END), 0) as week_revenue,
+        COALESCE(SUM(CASE
+          WHEN created_at >= CURRENT_DATE - INTERVAL '30 days' AND plan = '24hr' THEN 350
+          WHEN created_at >= CURRENT_DATE - INTERVAL '30 days' AND plan = '7d' THEN 2400
+          WHEN created_at >= CURRENT_DATE - INTERVAL '30 days' AND plan = '30d' THEN 7500
+          ELSE 0
+        END), 0) as month_revenue
+      FROM payment_queue
+      WHERE status = 'processed'
+    `);
+
+    // Plan breakdown
+    const plans = await pool.query(`
+      SELECT
+        plan,
+        COUNT(*) as count
+      FROM payment_queue
+      WHERE status = 'processed'
+      GROUP BY plan
+    `);
+
+    // Recent payments
+    const recent = await pool.query(`
+      SELECT
+        mikrotik_username,
+        plan,
+        status,
+        mac_address,
+        created_at
+      FROM payment_queue
+      ORDER BY created_at DESC
+      LIMIT 20
+    `);
+
+    const s = stats.rows[0];
+    const r = revenue.rows[0];
+    const planData = {};
+    plans.rows.forEach(p => { planData[p.plan] = parseInt(p.count); });
+
+    const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Dream Hatcher Admin Dashboard</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: 'Segoe UI', Arial, sans-serif;
+          background: linear-gradient(135deg, #0a0e1a 0%, #1a1a2e 100%);
+          min-height: 100vh;
+          color: white;
+          padding: 20px;
+        }
+        .header {
+          text-align: center;
+          padding: 20px 0 30px;
+          border-bottom: 1px solid rgba(255,255,255,0.1);
+          margin-bottom: 30px;
+        }
+        .header h1 { color: #00d4ff; font-size: 1.8rem; }
+        .header p { color: #64748b; margin-top: 5px; }
+        .stats-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+          gap: 20px;
+          margin-bottom: 30px;
+        }
+        .stat-card {
+          background: rgba(255,255,255,0.05);
+          border: 1px solid rgba(255,255,255,0.1);
+          border-radius: 16px;
+          padding: 25px;
+          text-align: center;
+        }
+        .stat-card.highlight {
+          background: linear-gradient(135deg, rgba(0,201,255,0.1), rgba(146,254,157,0.1));
+          border-color: rgba(0,201,255,0.3);
+        }
+        .stat-icon { font-size: 2rem; margin-bottom: 10px; }
+        .stat-value { font-size: 2rem; font-weight: 800; color: #00d4ff; }
+        .stat-value.money { color: #10b981; }
+        .stat-label { color: #94a3b8; font-size: 0.9rem; margin-top: 5px; }
+        .section {
+          background: rgba(255,255,255,0.05);
+          border: 1px solid rgba(255,255,255,0.1);
+          border-radius: 16px;
+          padding: 25px;
+          margin-bottom: 25px;
+        }
+        .section h2 {
+          color: #00d4ff;
+          font-size: 1.2rem;
+          margin-bottom: 20px;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        table {
+          width: 100%;
+          border-collapse: collapse;
+        }
+        th, td {
+          padding: 12px 15px;
+          text-align: left;
+          border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        th { color: #94a3b8; font-weight: 600; font-size: 0.85rem; text-transform: uppercase; }
+        td { font-size: 0.9rem; }
+        .badge {
+          padding: 4px 12px;
+          border-radius: 20px;
+          font-size: 0.75rem;
+          font-weight: 600;
+        }
+        .badge-success { background: rgba(16,185,129,0.2); color: #10b981; }
+        .badge-pending { background: rgba(245,158,11,0.2); color: #f59e0b; }
+        .badge-daily { background: rgba(59,130,246,0.2); color: #3b82f6; }
+        .badge-weekly { background: rgba(139,92,246,0.2); color: #8b5cf6; }
+        .badge-monthly { background: rgba(236,72,153,0.2); color: #ec4899; }
+        .plan-bars {
+          display: flex;
+          gap: 15px;
+          flex-wrap: wrap;
+        }
+        .plan-bar {
+          flex: 1;
+          min-width: 150px;
+          background: rgba(0,0,0,0.3);
+          border-radius: 12px;
+          padding: 15px;
+        }
+        .plan-bar-header {
+          display: flex;
+          justify-content: space-between;
+          margin-bottom: 10px;
+        }
+        .plan-bar-label { font-weight: 600; }
+        .plan-bar-count { color: #00d4ff; font-weight: 800; }
+        .plan-bar-fill {
+          height: 8px;
+          border-radius: 4px;
+          background: linear-gradient(90deg, #00c9ff, #92fe9d);
+        }
+        .refresh-btn {
+          background: linear-gradient(135deg, #00c9ff, #0066ff);
+          color: white;
+          border: none;
+          padding: 10px 25px;
+          border-radius: 8px;
+          cursor: pointer;
+          font-weight: 600;
+        }
+        .refresh-btn:hover { opacity: 0.9; }
+        .mac { font-family: monospace; font-size: 0.8rem; color: #64748b; }
+        .time { color: #64748b; font-size: 0.85rem; }
+        @media (max-width: 600px) {
+          .stats-grid { grid-template-columns: 1fr 1fr; }
+          th, td { padding: 8px 10px; font-size: 0.8rem; }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <h1>🌐 Dream Hatcher Admin</h1>
+        <p>WiFi Business Dashboard</p>
+        <button class="refresh-btn" onclick="location.reload()" style="margin-top: 15px;">🔄 Refresh</button>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card highlight">
+          <div class="stat-icon">💰</div>
+          <div class="stat-value money">₦${Number(r.today_revenue).toLocaleString()}</div>
+          <div class="stat-label">Today's Revenue</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">📅</div>
+          <div class="stat-value money">₦${Number(r.week_revenue).toLocaleString()}</div>
+          <div class="stat-label">This Week</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">📆</div>
+          <div class="stat-value money">₦${Number(r.month_revenue).toLocaleString()}</div>
+          <div class="stat-label">This Month</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">🏆</div>
+          <div class="stat-value money">₦${Number(r.total_revenue).toLocaleString()}</div>
+          <div class="stat-label">All-Time Revenue</div>
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-icon">👥</div>
+          <div class="stat-value">${s.total_payments}</div>
+          <div class="stat-label">Total Users</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">✅</div>
+          <div class="stat-value">${s.processed}</div>
+          <div class="stat-label">Active</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">⏳</div>
+          <div class="stat-value">${s.pending}</div>
+          <div class="stat-label">Pending</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">📈</div>
+          <div class="stat-value">${s.today_count}</div>
+          <div class="stat-label">Today's Signups</div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>📊 Plan Breakdown</h2>
+        <div class="plan-bars">
+          <div class="plan-bar">
+            <div class="plan-bar-header">
+              <span class="plan-bar-label">⚡ Daily (₦350)</span>
+              <span class="plan-bar-count">${planData['24hr'] || 0}</span>
+            </div>
+            <div class="plan-bar-fill" style="width: ${Math.min(100, ((planData['24hr'] || 0) / Math.max(1, s.processed)) * 100)}%"></div>
+          </div>
+          <div class="plan-bar">
+            <div class="plan-bar-header">
+              <span class="plan-bar-label">🚀 Weekly (₦2,400)</span>
+              <span class="plan-bar-count">${planData['7d'] || 0}</span>
+            </div>
+            <div class="plan-bar-fill" style="width: ${Math.min(100, ((planData['7d'] || 0) / Math.max(1, s.processed)) * 100)}%; background: linear-gradient(90deg, #8b5cf6, #ec4899);"></div>
+          </div>
+          <div class="plan-bar">
+            <div class="plan-bar-header">
+              <span class="plan-bar-label">👑 Monthly (₦7,500)</span>
+              <span class="plan-bar-count">${planData['30d'] || 0}</span>
+            </div>
+            <div class="plan-bar-fill" style="width: ${Math.min(100, ((planData['30d'] || 0) / Math.max(1, s.processed)) * 100)}%; background: linear-gradient(90deg, #f59e0b, #ef4444);"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>📋 Recent Payments</h2>
+        <div style="overflow-x: auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>Plan</th>
+                <th>Status</th>
+                <th>MAC</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${recent.rows.map(row => `
+                <tr>
+                  <td><strong>${row.mikrotik_username}</strong></td>
+                  <td>
+                    <span class="badge badge-${row.plan === '24hr' ? 'daily' : row.plan === '7d' ? 'weekly' : 'monthly'}">
+                      ${row.plan === '24hr' ? '⚡ Daily' : row.plan === '7d' ? '🚀 Weekly' : '👑 Monthly'}
+                    </span>
+                  </td>
+                  <td>
+                    <span class="badge ${row.status === 'processed' ? 'badge-success' : 'badge-pending'}">
+                      ${row.status === 'processed' ? '✅ Active' : '⏳ Pending'}
+                    </span>
+                  </td>
+                  <td class="mac">${row.mac_address || 'N/A'}</td>
+                  <td class="time">${new Date(row.created_at).toLocaleString('en-NG', { dateStyle: 'short', timeStyle: 'short' })}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div style="text-align: center; padding: 20px; color: #64748b; font-size: 0.85rem;">
+        <p>Dream Hatcher Tech Admin Dashboard</p>
+        <p>Last refreshed: ${new Date().toLocaleString('en-NG')}</p>
+      </div>
+    </body>
+    </html>
+    `;
+
+    res.send(html);
+
+  } catch (error) {
+    console.error('Dashboard error:', error);
+    res.status(500).send('Dashboard error: ' + error.message);
+  }
+});
+
+// ============================================
+// END OF ADMIN DASHBOARD ROUTE
+// ============================================
+
 // ========== ERROR HANDLER ==========
 app.use((err, req, res, next) => {
   console.error('💥 Uncaught error:', err.message);
@@ -1109,6 +1482,7 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
 
