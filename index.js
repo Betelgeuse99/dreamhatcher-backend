@@ -1370,7 +1370,7 @@ app.get('/admin', async (req, res) => {
         <div class="stat-card">
           <div class="stat-icon">✅</div>
           <div class="stat-value">${s.processed}</div>
-          <div class="stat-label">Processed</div>
+          <div class="stat-label">Active</div>
         </div>
         <div class="stat-card">
           <div class="stat-icon">⏳</div>
@@ -1435,7 +1435,7 @@ app.get('/admin', async (req, res) => {
                   </td>
                   <td>
                     <span class="badge ${row.status === 'processed' ? 'badge-success' : 'badge-pending'}">
-                      ${row.status === 'processed' ? '✅ Active' : '⏳ Pending'}
+                      ${row.status === 'processed' ? '✅ Processed' : '⏳ Pending'}
                     </span>
                   </td>
                   <td class="mac">${row.mac_address || 'N/A'}</td>
@@ -1482,6 +1482,7 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
 
