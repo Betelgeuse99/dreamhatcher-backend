@@ -1189,14 +1189,21 @@ app.get('/admin', async (req, res) => {
       GROUP BY plan
     `);
 
-    // Recent payments
+    // Recent payments with expiry calculation
     const recent = await pool.query(`
       SELECT
         mikrotik_username,
         plan,
         status,
         mac_address,
-        created_at
+        created_at,
+        CASE
+          WHEN status != 'processed' THEN 'pending'
+          WHEN plan = '24hr' AND created_at + INTERVAL '24 hours' < NOW() THEN 'expired'
+          WHEN plan = '7d' AND created_at + INTERVAL '7 days' < NOW() THEN 'expired'
+          WHEN plan = '30d' AND created_at + INTERVAL '30 days' < NOW() THEN 'expired'
+          ELSE 'active'
+        END as real_status
       FROM payment_queue
       ORDER BY created_at DESC
       LIMIT 20
@@ -1286,6 +1293,7 @@ app.get('/admin', async (req, res) => {
         }
         .badge-success { background: rgba(16,185,129,0.2); color: #10b981; }
         .badge-pending { background: rgba(245,158,11,0.2); color: #f59e0b; }
+        .badge-expired { background: rgba(239,68,68,0.2); color: #ef4444; }
         .badge-daily { background: rgba(59,130,246,0.2); color: #3b82f6; }
         .badge-weekly { background: rgba(139,92,246,0.2); color: #8b5cf6; }
         .badge-monthly { background: rgba(236,72,153,0.2); color: #ec4899; }
@@ -1433,11 +1441,11 @@ app.get('/admin', async (req, res) => {
                       ${row.plan === '24hr' ? '⚡ Daily' : row.plan === '7d' ? '🚀 Weekly' : '👑 Monthly'}
                     </span>
                   </td>
-                  <td>
-                    <span class="badge ${row.status === 'processed' ? 'badge-success' : 'badge-pending'}">
-                      ${row.status === 'processed' ? '✅ Processed' : '⏳ Pending'}
-                    </span>
-                  </td>
+                 <td>
+                <span class="badge ${row.real_status === 'active' ? 'badge-success' : row.real_status === 'expired' ? 'badge-expired' : 'badge-pending'}">
+                ${row.real_status === 'active' ? '✅ Active' : row.real_status === 'expired' ? '❌ Expired' : '⏳ Pending'}
+              </span>
+              </td>
                   <td class="mac">${row.mac_address || 'N/A'}</td>
                   <td class="time">${new Date(row.created_at).toLocaleString('en-NG', { dateStyle: 'short', timeStyle: 'short' })}</td>
                 </tr>
@@ -1482,6 +1490,7 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
 
