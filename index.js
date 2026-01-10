@@ -1378,7 +1378,7 @@ app.get('/admin', async (req, res) => {
         <div class="stat-card">
           <div class="stat-icon">✅</div>
           <div class="stat-value">${s.processed}</div>
-          <div class="stat-label">Active</div>
+          <div class="stat-label">Processed</div>
         </div>
         <div class="stat-card">
           <div class="stat-icon">⏳</div>
@@ -1490,6 +1490,7 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
 
