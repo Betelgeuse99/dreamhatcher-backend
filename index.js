@@ -1100,7 +1100,7 @@ app.get('/', (req, res) => {
 // ============================================
 
 // Admin configuration
-const ADMIN_PASSWORD = 'dreamhatcher2024'; // CHANGE THIS!
+const ADMIN_PASSWORD = 'Huda2024@'; // CHANGE THIS!
 const SESSION_TIMEOUT = 5 * 60 * 1000; // 5 minutes in milliseconds
 
 // ========== ADMIN DASHBOARD ==========
@@ -1757,3 +1757,4 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
