@@ -1095,18 +1095,19 @@ app.get('/', (req, res) => {
 });
 
 // ============================================
-// ADMIN DASHBOARD ROUTE
-// Add this to your index.js file (before the error handler)
+// ADMIN DASHBOARD v2.0 - ENHANCED VERSION
+// Add this to your index.js (replace old /admin route)
 // ============================================
 
-// Simple password protection (change this!)
-const ADMIN_PASSWORD = 'Huda2024@';
+// Admin configuration
+const ADMIN_PASSWORD = 'dreamhatcher2024'; // CHANGE THIS!
+const SESSION_TIMEOUT = 5 * 60 * 1000; // 5 minutes in milliseconds
 
 // ========== ADMIN DASHBOARD ==========
 app.get('/admin', async (req, res) => {
-  const { pwd } = req.query;
+  const { pwd, action, userId, newPlan } = req.query;
 
-  // Simple password check
+  // Password check
   if (pwd !== ADMIN_PASSWORD) {
     return res.send(`
       <!DOCTYPE html>
@@ -1114,21 +1115,29 @@ app.get('/admin', async (req, res) => {
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Admin Login</title>
+        <title>Admin Login - Dream Hatcher</title>
         <style>
-          body { font-family: Arial; background: #0a0e1a; color: white; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
-          .box { background: rgba(255,255,255,0.05); padding: 40px; border-radius: 20px; text-align: center; }
-          input { padding: 15px; border-radius: 8px; border: none; font-size: 16px; width: 200px; margin: 10px 0; }
-          button { padding: 15px 30px; background: linear-gradient(135deg, #00c9ff, #0066ff); border: none; border-radius: 8px; color: white; font-weight: bold; cursor: pointer; }
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { font-family: 'Segoe UI', Arial; background: linear-gradient(135deg, #0a0e1a, #1a1a2e); color: white; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+          .box { background: rgba(255,255,255,0.05); padding: 50px; border-radius: 24px; text-align: center; border: 1px solid rgba(255,255,255,0.1); max-width: 400px; width: 90%; }
+          .logo { font-size: 48px; margin-bottom: 20px; }
+          h2 { color: #00d4ff; margin-bottom: 30px; }
+          input { padding: 16px; border-radius: 12px; border: 2px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); color: white; font-size: 16px; width: 100%; margin: 10px 0; }
+          input:focus { outline: none; border-color: #00d4ff; }
+          button { padding: 16px 40px; background: linear-gradient(135deg, #00c9ff, #0066ff); border: none; border-radius: 12px; color: white; font-weight: bold; font-size: 16px; cursor: pointer; width: 100%; margin-top: 15px; }
+          button:hover { opacity: 0.9; }
+          .footer { margin-top: 30px; font-size: 12px; color: #64748b; }
         </style>
       </head>
       <body>
         <div class="box">
-          <h2>🔐 Admin Access</h2>
+          <div class="logo">🔐</div>
+          <h2>Admin Access</h2>
           <form method="GET">
-            <input type="password" name="pwd" placeholder="Enter password" required><br>
-            <button type="submit">Login</button>
+            <input type="password" name="pwd" placeholder="Enter admin password" required autofocus>
+            <button type="submit">Login →</button>
           </form>
+          <div class="footer">Dream Hatcher Tech Admin Panel</div>
         </div>
       </body>
       </html>
@@ -1136,7 +1145,25 @@ app.get('/admin', async (req, res) => {
   }
 
   try {
-    // Get statistics from database
+    // Handle admin actions
+    let actionMessage = '';
+
+    if (action === 'delete' && userId) {
+      await pool.query('DELETE FROM payment_queue WHERE id = $1', [userId]);
+      actionMessage = '✅ User deleted successfully';
+    }
+
+    if (action === 'extend' && userId && newPlan) {
+      await pool.query('UPDATE payment_queue SET plan = $1, created_at = NOW() WHERE id = $2', [newPlan, userId]);
+      actionMessage = '✅ User plan extended successfully';
+    }
+
+    if (action === 'reset' && userId) {
+      await pool.query('UPDATE payment_queue SET status = $1 WHERE id = $2', ['pending', userId]);
+      actionMessage = '✅ User reset to pending (will be re-created on MikroTik)';
+    }
+
+    // Get statistics
     const stats = await pool.query(`
       SELECT
         COUNT(*) as total_payments,
@@ -1151,62 +1178,37 @@ app.get('/admin', async (req, res) => {
     // Revenue calculations
     const revenue = await pool.query(`
       SELECT
-        COALESCE(SUM(CASE
-          WHEN plan = '24hr' THEN 350
-          WHEN plan = '7d' THEN 2400
-          WHEN plan = '30d' THEN 7500
-          ELSE 0
-        END), 0) as total_revenue,
-        COALESCE(SUM(CASE
-          WHEN created_at >= CURRENT_DATE AND plan = '24hr' THEN 350
-          WHEN created_at >= CURRENT_DATE AND plan = '7d' THEN 2400
-          WHEN created_at >= CURRENT_DATE AND plan = '30d' THEN 7500
-          ELSE 0
-        END), 0) as today_revenue,
-        COALESCE(SUM(CASE
-          WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' AND plan = '24hr' THEN 350
-          WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' AND plan = '7d' THEN 2400
-          WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' AND plan = '30d' THEN 7500
-          ELSE 0
-        END), 0) as week_revenue,
-        COALESCE(SUM(CASE
-          WHEN created_at >= CURRENT_DATE - INTERVAL '30 days' AND plan = '24hr' THEN 350
-          WHEN created_at >= CURRENT_DATE - INTERVAL '30 days' AND plan = '7d' THEN 2400
-          WHEN created_at >= CURRENT_DATE - INTERVAL '30 days' AND plan = '30d' THEN 7500
-          ELSE 0
-        END), 0) as month_revenue
-      FROM payment_queue
-      WHERE status = 'processed'
+        COALESCE(SUM(CASE WHEN plan = '24hr' THEN 350 WHEN plan = '7d' THEN 2400 WHEN plan = '30d' THEN 7500 ELSE 0 END), 0) as total_revenue,
+        COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE THEN (CASE WHEN plan = '24hr' THEN 350 WHEN plan = '7d' THEN 2400 WHEN plan = '30d' THEN 7500 ELSE 0 END) ELSE 0 END), 0) as today_revenue,
+        COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' THEN (CASE WHEN plan = '24hr' THEN 350 WHEN plan = '7d' THEN 2400 WHEN plan = '30d' THEN 7500 ELSE 0 END) ELSE 0 END), 0) as week_revenue,
+        COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '30 days' THEN (CASE WHEN plan = '24hr' THEN 350 WHEN plan = '7d' THEN 2400 WHEN plan = '30d' THEN 7500 ELSE 0 END) ELSE 0 END), 0) as month_revenue
+      FROM payment_queue WHERE status = 'processed'
     `);
 
     // Plan breakdown
     const plans = await pool.query(`
-      SELECT
-        plan,
-        COUNT(*) as count
-      FROM payment_queue
-      WHERE status = 'processed'
-      GROUP BY plan
+      SELECT plan, COUNT(*) as count FROM payment_queue WHERE status = 'processed' GROUP BY plan
     `);
 
-    // Recent payments with expiry calculation
+    // Recent payments with expiry
     const recent = await pool.query(`
       SELECT
-        mikrotik_username,
-        plan,
-        status,
-        mac_address,
-        created_at,
+        id, mikrotik_username, mikrotik_password, plan, status, mac_address, customer_email, created_at,
         CASE
           WHEN status != 'processed' THEN 'pending'
           WHEN plan = '24hr' AND created_at + INTERVAL '24 hours' < NOW() THEN 'expired'
           WHEN plan = '7d' AND created_at + INTERVAL '7 days' < NOW() THEN 'expired'
           WHEN plan = '30d' AND created_at + INTERVAL '30 days' < NOW() THEN 'expired'
           ELSE 'active'
-        END as real_status
+        END as real_status,
+        CASE
+          WHEN plan = '24hr' THEN created_at + INTERVAL '24 hours'
+          WHEN plan = '7d' THEN created_at + INTERVAL '7 days'
+          WHEN plan = '30d' THEN created_at + INTERVAL '30 days'
+        END as expires_at
       FROM payment_queue
       ORDER BY created_at DESC
-      LIMIT 20
+      LIMIT 50
     `);
 
     const s = stats.rows[0];
@@ -1214,13 +1216,17 @@ app.get('/admin', async (req, res) => {
     const planData = {};
     plans.rows.forEach(p => { planData[p.plan] = parseInt(p.count); });
 
+    // Count by status
+    const activeCount = recent.rows.filter(r => r.real_status === 'active').length;
+    const expiredCount = recent.rows.filter(r => r.real_status === 'expired').length;
+
     const html = `
     <!DOCTYPE html>
     <html>
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Dream Hatcher Admin Dashboard</title>
+      <title>Admin Dashboard - Dream Hatcher</title>
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -1231,121 +1237,246 @@ app.get('/admin', async (req, res) => {
           padding: 20px;
         }
         .header {
-          text-align: center;
-          padding: 20px 0 30px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 15px 0 25px;
           border-bottom: 1px solid rgba(255,255,255,0.1);
-          margin-bottom: 30px;
+          margin-bottom: 25px;
+          flex-wrap: wrap;
+          gap: 15px;
         }
-        .header h1 { color: #00d4ff; font-size: 1.8rem; }
-        .header p { color: #64748b; margin-top: 5px; }
+        .header-left h1 { color: #00d4ff; font-size: 1.5rem; }
+        .header-left p { color: #64748b; font-size: 0.85rem; margin-top: 3px; }
+        .header-right { display: flex; gap: 10px; align-items: center; }
+        .btn {
+          padding: 10px 20px;
+          border-radius: 8px;
+          border: none;
+          font-weight: 600;
+          cursor: pointer;
+          font-size: 0.85rem;
+          text-decoration: none;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .btn-primary { background: linear-gradient(135deg, #00c9ff, #0066ff); color: white; }
+        .btn-danger { background: linear-gradient(135deg, #ef4444, #dc2626); color: white; }
+        .btn-success { background: linear-gradient(135deg, #10b981, #059669); color: white; }
+        .btn-secondary { background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.2); }
+        .btn:hover { opacity: 0.9; transform: translateY(-1px); }
+        .session-timer {
+          background: rgba(245,158,11,0.2);
+          color: #fbbf24;
+          padding: 8px 15px;
+          border-radius: 8px;
+          font-size: 0.8rem;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
         .stats-grid {
           display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-          gap: 20px;
-          margin-bottom: 30px;
+          grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+          gap: 15px;
+          margin-bottom: 25px;
         }
         .stat-card {
           background: rgba(255,255,255,0.05);
           border: 1px solid rgba(255,255,255,0.1);
           border-radius: 16px;
-          padding: 25px;
+          padding: 20px;
           text-align: center;
+          transition: transform 0.2s;
         }
-        .stat-card.highlight {
-          background: linear-gradient(135deg, rgba(0,201,255,0.1), rgba(146,254,157,0.1));
-          border-color: rgba(0,201,255,0.3);
-        }
-        .stat-icon { font-size: 2rem; margin-bottom: 10px; }
-        .stat-value { font-size: 2rem; font-weight: 800; color: #00d4ff; }
+        .stat-card:hover { transform: translateY(-3px); }
+        .stat-card.highlight { background: linear-gradient(135deg, rgba(0,201,255,0.15), rgba(146,254,157,0.1)); border-color: rgba(0,201,255,0.3); }
+        .stat-icon { font-size: 1.8rem; margin-bottom: 8px; }
+        .stat-value { font-size: 1.8rem; font-weight: 800; color: #00d4ff; }
         .stat-value.money { color: #10b981; }
-        .stat-label { color: #94a3b8; font-size: 0.9rem; margin-top: 5px; }
+        .stat-label { color: #94a3b8; font-size: 0.8rem; margin-top: 5px; }
         .section {
           background: rgba(255,255,255,0.05);
           border: 1px solid rgba(255,255,255,0.1);
           border-radius: 16px;
-          padding: 25px;
-          margin-bottom: 25px;
+          padding: 20px;
+          margin-bottom: 20px;
         }
         .section h2 {
           color: #00d4ff;
-          font-size: 1.2rem;
+          font-size: 1.1rem;
+          margin-bottom: 15px;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .tools-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+          gap: 15px;
+        }
+        .tool-card {
+          background: rgba(0,0,0,0.2);
+          border-radius: 12px;
+          padding: 20px;
+        }
+        .tool-card h3 { color: #f8fafc; font-size: 1rem; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+        .tool-card p { color: #94a3b8; font-size: 0.85rem; margin-bottom: 15px; }
+        .tool-card input, .tool-card select {
+          width: 100%;
+          padding: 10px 12px;
+          border-radius: 8px;
+          border: 1px solid rgba(255,255,255,0.1);
+          background: rgba(255,255,255,0.05);
+          color: white;
+          font-size: 0.9rem;
+          margin-bottom: 10px;
+        }
+        .tool-card input:focus, .tool-card select:focus { outline: none; border-color: #00d4ff; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px 10px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.85rem; }
+        th { color: #64748b; font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        tr:hover { background: rgba(255,255,255,0.02); }
+        .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.7rem; font-weight: 600; }
+        .badge-active { background: rgba(16,185,129,0.2); color: #10b981; }
+        .badge-expired { background: rgba(239,68,68,0.2); color: #ef4444; }
+        .badge-pending { background: rgba(245,158,11,0.2); color: #f59e0b; }
+        .badge-daily { background: rgba(59,130,246,0.2); color: #3b82f6; }
+        .badge-weekly { background: rgba(139,92,246,0.2); color: #8b5cf6; }
+        .badge-monthly { background: rgba(236,72,153,0.2); color: #ec4899; }
+        .actions { display: flex; gap: 5px; }
+        .action-btn {
+          padding: 5px 10px;
+          border-radius: 6px;
+          border: none;
+          font-size: 0.75rem;
+          cursor: pointer;
+          background: rgba(255,255,255,0.1);
+          color: white;
+        }
+        .action-btn:hover { background: rgba(255,255,255,0.2); }
+        .action-btn.delete { background: rgba(239,68,68,0.2); color: #ef4444; }
+        .action-btn.extend { background: rgba(16,185,129,0.2); color: #10b981; }
+        .mac { font-family: monospace; font-size: 0.75rem; color: #64748b; }
+        .password { font-family: monospace; color: #fbbf24; cursor: pointer; }
+        .time { color: #64748b; font-size: 0.8rem; }
+        .alert {
+          padding: 15px 20px;
+          border-radius: 12px;
           margin-bottom: 20px;
           display: flex;
           align-items: center;
           gap: 10px;
         }
-        table {
-          width: 100%;
-          border-collapse: collapse;
-        }
-        th, td {
-          padding: 12px 15px;
-          text-align: left;
-          border-bottom: 1px solid rgba(255,255,255,0.1);
-        }
-        th { color: #94a3b8; font-weight: 600; font-size: 0.85rem; text-transform: uppercase; }
-        td { font-size: 0.9rem; }
-        .badge {
-          padding: 4px 12px;
-          border-radius: 20px;
-          font-size: 0.75rem;
-          font-weight: 600;
-        }
-        .badge-success { background: rgba(16,185,129,0.2); color: #10b981; }
-        .badge-pending { background: rgba(245,158,11,0.2); color: #f59e0b; }
-        .badge-expired { background: rgba(239,68,68,0.2); color: #ef4444; }
-        .badge-daily { background: rgba(59,130,246,0.2); color: #3b82f6; }
-        .badge-weekly { background: rgba(139,92,246,0.2); color: #8b5cf6; }
-        .badge-monthly { background: rgba(236,72,153,0.2); color: #ec4899; }
-        .plan-bars {
+        .alert-success { background: rgba(16,185,129,0.2); border: 1px solid rgba(16,185,129,0.3); color: #10b981; }
+        .alert-error { background: rgba(239,68,68,0.2); border: 1px solid rgba(239,68,68,0.3); color: #ef4444; }
+        .search-box {
           display: flex;
-          gap: 15px;
-          flex-wrap: wrap;
+          gap: 10px;
+          margin-bottom: 15px;
         }
-        .plan-bar {
+        .search-box input {
           flex: 1;
-          min-width: 150px;
-          background: rgba(0,0,0,0.3);
-          border-radius: 12px;
-          padding: 15px;
-        }
-        .plan-bar-header {
-          display: flex;
-          justify-content: space-between;
-          margin-bottom: 10px;
-        }
-        .plan-bar-label { font-weight: 600; }
-        .plan-bar-count { color: #00d4ff; font-weight: 800; }
-        .plan-bar-fill {
-          height: 8px;
-          border-radius: 4px;
-          background: linear-gradient(90deg, #00c9ff, #92fe9d);
-        }
-        .refresh-btn {
-          background: linear-gradient(135deg, #00c9ff, #0066ff);
-          color: white;
-          border: none;
-          padding: 10px 25px;
+          padding: 10px 15px;
           border-radius: 8px;
-          cursor: pointer;
-          font-weight: 600;
+          border: 1px solid rgba(255,255,255,0.1);
+          background: rgba(0,0,0,0.2);
+          color: white;
+          font-size: 0.9rem;
         }
-        .refresh-btn:hover { opacity: 0.9; }
-        .mac { font-family: monospace; font-size: 0.8rem; color: #64748b; }
-        .time { color: #64748b; font-size: 0.85rem; }
-        @media (max-width: 600px) {
+        .modal {
+          display: none;
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0,0,0,0.8);
+          z-index: 1000;
+          align-items: center;
+          justify-content: center;
+        }
+        .modal.active { display: flex; }
+        .modal-content {
+          background: #1a1a2e;
+          border-radius: 16px;
+          padding: 30px;
+          max-width: 400px;
+          width: 90%;
+          border: 1px solid rgba(255,255,255,0.1);
+        }
+        .modal-content h3 { margin-bottom: 20px; color: #00d4ff; }
+        @media (max-width: 768px) {
           .stats-grid { grid-template-columns: 1fr 1fr; }
-          th, td { padding: 8px 10px; font-size: 0.8rem; }
+          .header { flex-direction: column; text-align: center; }
+          th, td { padding: 8px 5px; font-size: 0.75rem; }
         }
+        .logout-overlay {
+          display: none;
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0,0,0,0.95);
+          z-index: 2000;
+          align-items: center;
+          justify-content: center;
+          flex-direction: column;
+        }
+        .logout-overlay.active { display: flex; }
+        .logout-overlay h2 { color: #ef4444; margin-bottom: 20px; }
       </style>
     </head>
     <body>
-      <div class="header">
-        <h1>🌐 Dream Hatcher Admin</h1>
-        <p>WiFi Business Dashboard</p>
-        <button class="refresh-btn" onclick="location.reload()" style="margin-top: 15px;">🔄 Refresh</button>
+      <!-- Session timeout overlay -->
+      <div class="logout-overlay" id="logoutOverlay">
+        <h2>⏰ Session Expired</h2>
+        <p style="color: #94a3b8; margin-bottom: 20px;">You've been logged out due to inactivity.</p>
+        <a href="/admin" class="btn btn-primary">🔐 Login Again</a>
       </div>
 
+      <!-- Extend Plan Modal -->
+      <div class="modal" id="extendModal">
+        <div class="modal-content">
+          <h3>⏰ Extend User Plan</h3>
+          <p style="color: #94a3b8; margin-bottom: 20px;">Select new plan for <strong id="extendUsername"></strong></p>
+          <form id="extendForm" method="GET">
+            <input type="hidden" name="pwd" value="${pwd}">
+            <input type="hidden" name="action" value="extend">
+            <input type="hidden" name="userId" id="extendUserId">
+            <select name="newPlan" style="width: 100%; padding: 12px; border-radius: 8px; margin-bottom: 15px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: white;">
+              <option value="24hr">⚡ Daily (24 hours)</option>
+              <option value="7d">🚀 Weekly (7 days)</option>
+              <option value="30d">👑 Monthly (30 days)</option>
+            </select>
+            <div style="display: flex; gap: 10px;">
+              <button type="button" class="btn btn-secondary" onclick="closeExtendModal()" style="flex: 1;">Cancel</button>
+              <button type="submit" class="btn btn-success" style="flex: 1;">Extend Plan</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div class="header">
+        <div class="header-left">
+          <h1>🌐 Dream Hatcher Admin</h1>
+          <p>WiFi Business Dashboard</p>
+        </div>
+        <div class="header-right">
+          <div class="session-timer">
+            <span>⏱️</span>
+            <span id="sessionTimer">5:00</span>
+          </div>
+          <button class="btn btn-primary" onclick="location.reload()">🔄 Refresh</button>
+          <a href="/admin" class="btn btn-danger">🚪 Logout</a>
+        </div>
+      </div>
+
+      ${actionMessage ? `<div class="alert alert-success">${actionMessage}</div>` : ''}
+
+      <!-- Revenue Stats -->
       <div class="stats-grid">
         <div class="stat-card highlight">
           <div class="stat-icon">💰</div>
@@ -1369,6 +1500,7 @@ app.get('/admin', async (req, res) => {
         </div>
       </div>
 
+      <!-- User Stats -->
       <div class="stats-grid">
         <div class="stat-card">
           <div class="stat-icon">👥</div>
@@ -1377,13 +1509,13 @@ app.get('/admin', async (req, res) => {
         </div>
         <div class="stat-card">
           <div class="stat-icon">✅</div>
-          <div class="stat-value">${s.processed}</div>
-          <div class="stat-label">Processed</div>
+          <div class="stat-value" style="color: #10b981;">${activeCount}</div>
+          <div class="stat-label">Active Now</div>
         </div>
         <div class="stat-card">
-          <div class="stat-icon">⏳</div>
-          <div class="stat-value">${s.pending}</div>
-          <div class="stat-label">Pending</div>
+          <div class="stat-icon">❌</div>
+          <div class="stat-value" style="color: #ef4444;">${expiredCount}</div>
+          <div class="stat-label">Expired</div>
         </div>
         <div class="stat-card">
           <div class="stat-icon">📈</div>
@@ -1392,62 +1524,68 @@ app.get('/admin', async (req, res) => {
         </div>
       </div>
 
+      <!-- Admin Tools -->
       <div class="section">
-        <h2>📊 Plan Breakdown</h2>
-        <div class="plan-bars">
-          <div class="plan-bar">
-            <div class="plan-bar-header">
-              <span class="plan-bar-label">⚡ Daily (₦350)</span>
-              <span class="plan-bar-count">${planData['24hr'] || 0}</span>
-            </div>
-            <div class="plan-bar-fill" style="width: ${Math.min(100, ((planData['24hr'] || 0) / Math.max(1, s.processed)) * 100)}%"></div>
+        <h2>🛠️ Admin Tools</h2>
+        <div class="tools-grid">
+          <div class="tool-card">
+            <h3>🔍 Search User</h3>
+            <p>Find user by username or MAC address</p>
+            <input type="text" id="searchInput" placeholder="Enter username or MAC..." onkeyup="searchTable()">
           </div>
-          <div class="plan-bar">
-            <div class="plan-bar-header">
-              <span class="plan-bar-label">🚀 Weekly (₦2,400)</span>
-              <span class="plan-bar-count">${planData['7d'] || 0}</span>
-            </div>
-            <div class="plan-bar-fill" style="width: ${Math.min(100, ((planData['7d'] || 0) / Math.max(1, s.processed)) * 100)}%; background: linear-gradient(90deg, #8b5cf6, #ec4899);"></div>
+          <div class="tool-card">
+            <h3>📊 Export Data</h3>
+            <p>Download payment records as CSV</p>
+            <button class="btn btn-primary" onclick="exportCSV()" style="width: 100%;">📥 Download CSV</button>
           </div>
-          <div class="plan-bar">
-            <div class="plan-bar-header">
-              <span class="plan-bar-label">👑 Monthly (₦7,500)</span>
-              <span class="plan-bar-count">${planData['30d'] || 0}</span>
-            </div>
-            <div class="plan-bar-fill" style="width: ${Math.min(100, ((planData['30d'] || 0) / Math.max(1, s.processed)) * 100)}%; background: linear-gradient(90deg, #f59e0b, #ef4444);"></div>
+          <div class="tool-card">
+            <h3>🧹 Cleanup Expired</h3>
+            <p>Remove expired users from database</p>
+            <a href="/admin?pwd=${pwd}&action=cleanup" class="btn btn-danger" style="width: 100%; justify-content: center;" onclick="return confirm('Delete all expired users?')">🗑️ Delete Expired</a>
           </div>
         </div>
       </div>
 
+      <!-- Recent Payments Table -->
       <div class="section">
-        <h2>📋 Recent Payments</h2>
+        <h2>📋 All Users (${recent.rows.length})</h2>
         <div style="overflow-x: auto;">
-          <table>
+          <table id="usersTable">
             <thead>
               <tr>
                 <th>Username</th>
+                <th>Password</th>
                 <th>Plan</th>
                 <th>Status</th>
+                <th>Expires</th>
                 <th>MAC</th>
-                <th>Time</th>
+                <th>Created</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               ${recent.rows.map(row => `
-                <tr>
+                <tr data-search="${row.mikrotik_username} ${row.mac_address || ''}">
                   <td><strong>${row.mikrotik_username}</strong></td>
+                  <td><span class="password" onclick="copyText(this)" title="Click to copy">${row.mikrotik_password}</span></td>
                   <td>
                     <span class="badge badge-${row.plan === '24hr' ? 'daily' : row.plan === '7d' ? 'weekly' : 'monthly'}">
                       ${row.plan === '24hr' ? '⚡ Daily' : row.plan === '7d' ? '🚀 Weekly' : '👑 Monthly'}
                     </span>
                   </td>
-                 <td>
-                <span class="badge ${row.real_status === 'active' ? 'badge-success' : row.real_status === 'expired' ? 'badge-expired' : 'badge-pending'}">
-                ${row.real_status === 'active' ? '✅ Active' : row.real_status === 'expired' ? '❌ Expired' : '⏳ Pending'}
-              </span>
-              </td>
+                  <td>
+                    <span class="badge ${row.real_status === 'active' ? 'badge-active' : row.real_status === 'expired' ? 'badge-expired' : 'badge-pending'}">
+                      ${row.real_status === 'active' ? '✅ Active' : row.real_status === 'expired' ? '❌ Expired' : '⏳ Pending'}
+                    </span>
+                  </td>
+                  <td class="time">${row.expires_at ? new Date(row.expires_at).toLocaleString('en-NG', { dateStyle: 'short', timeStyle: 'short' }) : 'N/A'}</td>
                   <td class="mac">${row.mac_address || 'N/A'}</td>
                   <td class="time">${new Date(row.created_at).toLocaleString('en-NG', { dateStyle: 'short', timeStyle: 'short' })}</td>
+                  <td class="actions">
+                    <button class="action-btn extend" onclick="openExtendModal('${row.id}', '${row.mikrotik_username}')" title="Extend Plan">⏰</button>
+                    <a href="/admin?pwd=${pwd}&action=reset&userId=${row.id}" class="action-btn" onclick="return confirm('Reset this user to pending?')" title="Reset">🔄</a>
+                    <a href="/admin?pwd=${pwd}&action=delete&userId=${row.id}" class="action-btn delete" onclick="return confirm('Delete this user permanently?')" title="Delete">🗑️</a>
+                  </td>
                 </tr>
               `).join('')}
             </tbody>
@@ -1455,10 +1593,118 @@ app.get('/admin', async (req, res) => {
         </div>
       </div>
 
-      <div style="text-align: center; padding: 20px; color: #64748b; font-size: 0.85rem;">
-        <p>Dream Hatcher Tech Admin Dashboard</p>
+      <div style="text-align: center; padding: 20px; color: #64748b; font-size: 0.8rem;">
+        <p>Dream Hatcher Tech Admin Dashboard v2.0</p>
         <p>Last refreshed: ${new Date().toLocaleString('en-NG')}</p>
       </div>
+
+      <script>
+        // ============================================
+        // SESSION TIMEOUT (5 minutes)
+        // ============================================
+        let sessionTime = 5 * 60; // 5 minutes in seconds
+        let lastActivity = Date.now();
+
+        function updateTimer() {
+          const minutes = Math.floor(sessionTime / 60);
+          const seconds = sessionTime % 60;
+          document.getElementById('sessionTimer').textContent =
+            minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
+
+          if (sessionTime <= 0) {
+            document.getElementById('logoutOverlay').classList.add('active');
+            return;
+          }
+
+          sessionTime--;
+          setTimeout(updateTimer, 1000);
+        }
+
+        // Reset timer on activity
+        document.addEventListener('mousemove', resetTimer);
+        document.addEventListener('keypress', resetTimer);
+        document.addEventListener('click', resetTimer);
+        document.addEventListener('scroll', resetTimer);
+
+        function resetTimer() {
+          sessionTime = 5 * 60;
+        }
+
+        updateTimer();
+
+        // ============================================
+        // SEARCH FUNCTION
+        // ============================================
+        function searchTable() {
+          const input = document.getElementById('searchInput').value.toLowerCase();
+          const rows = document.querySelectorAll('#usersTable tbody tr');
+
+          rows.forEach(row => {
+            const searchData = row.getAttribute('data-search').toLowerCase();
+            row.style.display = searchData.includes(input) ? '' : 'none';
+          });
+        }
+
+        // ============================================
+        // COPY TEXT
+        // ============================================
+        function copyText(element) {
+          const text = element.textContent;
+          navigator.clipboard.writeText(text).then(() => {
+            const original = element.textContent;
+            element.textContent = '✓ Copied!';
+            element.style.color = '#10b981';
+            setTimeout(() => {
+              element.textContent = original;
+              element.style.color = '';
+            }, 1000);
+          });
+        }
+
+        // ============================================
+        // EXTEND MODAL
+        // ============================================
+        function openExtendModal(userId, username) {
+          document.getElementById('extendUserId').value = userId;
+          document.getElementById('extendUsername').textContent = username;
+          document.getElementById('extendModal').classList.add('active');
+        }
+
+        function closeExtendModal() {
+          document.getElementById('extendModal').classList.remove('active');
+        }
+
+        // Close modal on outside click
+        document.getElementById('extendModal').addEventListener('click', function(e) {
+          if (e.target === this) closeExtendModal();
+        });
+
+        // ============================================
+        // EXPORT CSV
+        // ============================================
+        function exportCSV() {
+          const rows = document.querySelectorAll('#usersTable tr');
+          let csv = [];
+
+          rows.forEach(row => {
+            const cols = row.querySelectorAll('td, th');
+            const rowData = [];
+            cols.forEach((col, index) => {
+              if (index < cols.length - 1) { // Skip actions column
+                rowData.push('"' + col.textContent.trim().replace(/"/g, '""') + '"');
+              }
+            });
+            csv.push(rowData.join(','));
+          });
+
+          const blob = new Blob([csv.join('\\n')], { type: 'text/csv' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'dreamhatcher_users_' + new Date().toISOString().slice(0,10) + '.csv';
+          a.click();
+        }
+      </script>
     </body>
     </html>
     `;
@@ -1471,6 +1717,27 @@ app.get('/admin', async (req, res) => {
   }
 });
 
+// ========== CLEANUP EXPIRED USERS ==========
+app.get('/admin', async (req, res, next) => {
+  if (req.query.action === 'cleanup' && req.query.pwd === ADMIN_PASSWORD) {
+    try {
+      const result = await pool.query(`
+        DELETE FROM payment_queue
+        WHERE status = 'processed'
+        AND (
+          (plan = '24hr' AND created_at + INTERVAL '24 hours' < NOW())
+          OR (plan = '7d' AND created_at + INTERVAL '7 days' < NOW())
+          OR (plan = '30d' AND created_at + INTERVAL '30 days' < NOW())
+        )
+      `);
+      // Redirect back with success message (handled by main route)
+      return res.redirect('/admin?pwd=' + req.query.pwd + '&cleaned=' + result.rowCount);
+    } catch (error) {
+      console.error('Cleanup error:', error);
+    }
+  }
+  next();
+});
 // ============================================
 // END OF ADMIN DASHBOARD ROUTE
 // ============================================
@@ -1490,13 +1757,3 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
-
-
-
-
-
-
-
-
-
-
