@@ -130,11 +130,22 @@ app.post('/api/paystack-webhook', async (req, res) => {
     const username = `user_${Date.now().toString().slice(-6)}`;
     const password = generatePassword();
 
+    // Calculate exact expiry timestamp based on plan
+    let expiresAt;
+    const now = new Date();
+    if (plan === '24hr') {
+      expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000); // +24 hours
+    } else if (plan === '7d') {
+      expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // +7 days
+    } else if (plan === '30d') {
+      expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // +30 days
+    }
+
     await pool.query(
       `INSERT INTO payment_queue
        (transaction_id, customer_email, customer_phone, plan,
-        mikrotik_username, mikrotik_password, mac_address, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')`,
+        mikrotik_username, mikrotik_password, mac_address, status, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8)`,
       [
         reference,
         data.customer?.email || 'unknown@example.com',
@@ -142,11 +153,12 @@ app.post('/api/paystack-webhook', async (req, res) => {
         plan,
         username,
         password,
-        macAddress
+        macAddress,
+        expiresAt
       ]
     );
 
-    console.log(`✅ Queued user ${username} (Plan: ${plan}, Ref: ${reference})`);
+    console.log(`✅ Queued user ${username} | Expires: ${expiresAt.toISOString()}`);
     return res.status(200).json({ received: true });
 
   } catch (error) {
@@ -803,7 +815,7 @@ app.get('/api/check-status', async (req, res) => {
     }
     
     const result = await pool.query(
-      `SELECT mikrotik_username, mikrotik_password, plan, status
+      `SELECT mikrotik_username, mikrotik_password, plan, status, mac_address, expires_at
        FROM payment_queue 
        WHERE transaction_id = $1 
        LIMIT 1`,
@@ -855,7 +867,7 @@ app.get('/api/mikrotik-queue-text', async (req, res) => {
     }
 
     const result = await pool.query(`
-      SELECT id, mikrotik_username, mikrotik_password, plan
+      SELECT id, mikrotik_username, mikrotik_password, plan, mac_address, expires_at
       FROM payment_queue
       WHERE status = 'pending'
       ORDER BY created_at ASC
@@ -893,6 +905,60 @@ app.post('/api/mark-processed/:id', async (req, res) => {
   } catch (error) {
     console.error('❌ Update error:', error.message);
     res.status(500).json({ error: 'Update failed' });
+  }
+});
+
+// ========== GET EXPIRED USERS (for MikroTik to disable) ==========
+app.get('/api/expired-users', async (req, res) => {
+  try {
+    const apiKey = req.headers['x-api-key'] || req.query.api_key;
+    if (apiKey !== process.env.MIKROTIK_API_KEY) {
+      return res.status(403).send('FORBIDDEN');
+    }
+
+    // Get users whose expires_at has passed and are still active
+    const result = await pool.query(`
+      SELECT id, mikrotik_username, mac_address, expires_at
+      FROM payment_queue
+      WHERE status = 'processed'
+      AND expires_at IS NOT NULL
+      AND expires_at < NOW()
+      LIMIT 20
+    `);
+
+    if (result.rows.length === 0) {
+      return res.send('');
+    }
+
+    console.log(`⏰ Found ${result.rows.length} expired users to disable`);
+
+     // Format: username|password|plan|id|mac_address|expires_at
+    const lines = result.rows.map(row => {
+      const expiresAt = row.expires_at ? new Date(row.expires_at).toISOString() : 'none';
+      return `${row.mikrotik_username}|${row.mikrotik_password}|${row.plan}|${row.id}|${row.mac_address || 'none'}|${expiresAt}`;
+    });
+
+    res.set('Content-Type', 'text/plain');
+    res.send(lines.join('\n'));
+
+  } catch (error) {
+    console.error('Expired users error:', error.message);
+    res.status(500).send('ERROR');
+  }
+});
+
+// ========== MARK USER AS EXPIRED ==========
+app.post('/api/mark-expired/:id', async (req, res) => {
+  try {
+    await pool.query(
+      `UPDATE payment_queue SET status = 'expired' WHERE id = $1`,
+      [req.params.id]
+    );
+    console.log(`⏰ Marked ${req.params.id} as expired`);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Mark expired error:', error.message);
+    res.status(500).json({ error: 'Failed' });
   }
 });
 
@@ -1739,7 +1805,6 @@ app.get('/admin', async (req, res, next) => {
   next();
 });
 
-
 // ============================================
 // END OF ADMIN DASHBOARD ROUTE
 // ============================================
@@ -1759,6 +1824,7 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
 
