@@ -52,6 +52,62 @@ app.use((req, res, next) => {
   next();
 });
 
+// ========== PAYMENT REDIRECT (Avoids CORS) ==========
+app.get('/pay/:plan', async (req, res) => {
+  const { plan } = req.params;
+  const mac = req.query.mac || 'unknown';
+  
+  // Plan configuration - YOU CONTROL THE AMOUNTS HERE
+  const planConfig = {
+    daily: { amount: 350, code: '24hr' },
+    weekly: { amount: 2400, code: '7d' },
+    monthly: { amount: 7500, code: '30d' }
+  };
+  
+  const selectedPlan = planConfig[plan];
+  
+  if (!selectedPlan) {
+    return res.status(400).send('Invalid plan selected');
+  }
+  
+  try {
+    const response = await axios.post(
+      'https://api.paystack.co/transaction/initialize',
+      {
+        email: 'customer@dreamhatcher.com',
+        amount: selectedPlan.amount * 100, // Paystack uses kobo
+        callback_url: 'https://dreamhatcher-backend.onrender.com/paystack-callback',
+        metadata: {
+          mac_address: mac,
+          plan: selectedPlan.code
+        }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    // Redirect user directly to Paystack checkout
+    res.redirect(response.data.data.authorization_url);
+    
+  } catch (error) {
+    console.error('Payment redirect error:', error.response?.data || error.message);
+    res.send(`
+      <html>
+        <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
+          <h2>⚠️ Payment Error</h2>
+          <p>Could not initialize payment. Please try again.</p>
+          <a href="javascript:history.back()" style="color: #00d4ff;">← Go Back</a>
+          <p style="margin-top: 20px;">Support: 07037412314</p>
+        </body>
+      </html>
+    `);
+  }
+});
+
 // ========== NEW: INITIALIZE PAYSTACK PAYMENT (Dynamic Checkout) ==========
 app.post('/api/initialize-payment', async (req, res) => {
   try {
@@ -1824,6 +1880,7 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
 
