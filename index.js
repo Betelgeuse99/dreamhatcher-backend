@@ -938,9 +938,15 @@ app.get('/api/mikrotik-queue-text', async (req, res) => {
 
     console.log(`📤 Sending ${result.rows.length} users to MikroTik`);
     
-    const lines = result.rows.map(row =>
-      `${row.mikrotik_username}|${row.mikrotik_password}|${row.plan}|${row.id}|${row.mac_address || 'unknown'}|${row.expires_at ? row.expires_at.toISOString() : ''}`
-    );
+    // Format: username|password|plan|mac|expires_at|id
+    const lines = result.rows.map(row => [
+      row.mikrotik_username,
+      row.mikrotik_password,
+      row.plan,
+      row.mac_address || 'unknown',
+      row.expires_at ? row.expires_at.toISOString() : '',
+      row.id  // ID is last
+    ].join('|'));
 
     res.set('Content-Type', 'text/plain');
     res.send(lines.join('\n'));
@@ -953,11 +959,28 @@ app.get('/api/mikrotik-queue-text', async (req, res) => {
 
 app.post('/api/mark-processed/:id', async (req, res) => {
   try {
+    let userId = req.params.id;
+    
+    // Extract ID from pipe-separated string if needed
+    if (userId.includes('|')) {
+      const parts = userId.split('|');
+      // ID should be the LAST element in our format
+      userId = parts[parts.length - 1];
+      console.log(`📝 Extracted ID from string: ${userId}`);
+    }
+    
+    const idNum = parseInt(userId);
+    
+    if (isNaN(idNum)) {
+      console.error('❌ Invalid ID format:', userId);
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
+    
     await pool.query(
       `UPDATE payment_queue SET status = 'processed' WHERE id = $1`,
-      [req.params.id]
+      [idNum]
     );
-    console.log(`✅ Marked ${req.params.id} as processed`);
+    console.log(`✅ Marked ${idNum} as processed`);
     res.json({ success: true });
   } catch (error) {
     console.error('❌ Update error:', error.message);
@@ -988,14 +1011,13 @@ app.get('/api/expired-users', async (req, res) => {
 
     console.log(`⏰ Found ${result.rows.length} expired users`);
 
-    const lines = result.rows.map(row => {
-      return [
-        row.mikrotik_username || 'unknown',
-        row.mac_address || 'unknown',
-        row.id,
-        row.expires_at.toISOString()
-      ].join('|');
-    });
+    // Format: username|mac_address|expires_at|id
+    const lines = result.rows.map(row => [
+      row.mikrotik_username || 'unknown',
+      row.mac_address || 'unknown',
+      row.expires_at.toISOString(),
+      row.id  // ID is last
+    ].join('|'));
 
     res.set('Content-Type', 'text/plain');
     res.send(lines.join('\n'));
@@ -1009,19 +1031,29 @@ app.get('/api/expired-users', async (req, res) => {
 // ========== MARK USER AS EXPIRED ==========
 app.post('/api/mark-expired/:id', async (req, res) => {
   try {
-    const userId = parseInt(req.params.id);
+    let userId = req.params.id;
     
-    if (isNaN(userId) || userId <= 0) {
+    // Extract ID from pipe-separated string if needed
+    if (userId.includes('|')) {
+      const parts = userId.split('|');
+      // ID should be the LAST element in our format
+      userId = parts[parts.length - 1];
+      console.log(`📝 Extracted expired ID from string: ${userId}`);
+    }
+    
+    const idNum = parseInt(userId);
+    
+    if (isNaN(idNum) || idNum <= 0) {
       console.log('❌ Invalid expired ID received:', req.params.id);
       return res.status(400).json({ error: 'Invalid user ID' });
     }
     
     await pool.query(
       `UPDATE payment_queue SET status = 'expired' WHERE id = $1`,
-      [userId]
+      [idNum]
     );
     
-    console.log(`⏰ Marked ${userId} as expired`);
+    console.log(`⏰ Marked ${idNum} as expired`);
     res.json({ success: true });
     
   } catch (error) {
@@ -1742,3 +1774,4 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
