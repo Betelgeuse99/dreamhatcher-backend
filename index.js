@@ -122,18 +122,32 @@ app.get('/pay/:plan', async (req, res) => {
   }
 });
 
-// ========== REQUEST LOGGING ==========
+// ========== REQUEST LOGGING (Skip MikroTik polling endpoints) ==========
 app.use((req, res, next) => {
   const start = Date.now();
-  console.log(`📥 ${req.method} ${req.url}`);
+  
+  // Skip logging for MikroTik polling endpoints to reduce noise
+  if (!req.url.includes('/api/mikrotik-queue-text') && 
+      !req.url.includes('/api/expired-users') &&
+      !req.url.includes('/api/check-status') &&
+      !req.url.includes('/health')) {
+    console.log(`📥 ${req.method} ${req.url}`);
+  }
   
   res.on('finish', () => {
     const duration = Date.now() - start;
-    console.log(`📤 ${req.method} ${req.url} ${res.statusCode} - ${duration}ms`);
+    // Skip logging for MikroTik polling endpoints
+    if (!req.url.includes('/api/mikrotik-queue-text') && 
+        !req.url.includes('/api/expired-users') &&
+        !req.url.includes('/api/check-status') &&
+        !req.url.includes('/health')) {
+      console.log(`📤 ${req.method} ${req.url} ${res.statusCode} - ${duration}ms`);
+    }
   });
   
   next();
 });
+
 // ========== NEW: INITIALIZE PAYSTACK PAYMENT (Dynamic Checkout) ==========
 app.post('/api/initialize-payment', async (req, res) => {
   try {
@@ -1847,6 +1861,7 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
 
