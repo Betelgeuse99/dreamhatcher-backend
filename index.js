@@ -956,7 +956,6 @@ app.get('/api/mikrotik-queue-text', async (req, res) => {
     `);
 
     if (result.rows.length === 0) {
-      console.log('📭 No pending users for MikroTik');
       return res.send('');
     }
 
@@ -1060,11 +1059,8 @@ app.get('/api/expired-users', async (req, res) => {
     `);
 
     if (result.rows.length === 0) {
-      console.log('📭 No expired users found');
       return res.send('');
     }
-
-    console.log(`⏰ Found ${result.rows.length} expired users`);
 
     // Format: username|mac_address|expires_at|id
     const lines = result.rows.map(row => [
@@ -1075,7 +1071,6 @@ app.get('/api/expired-users', async (req, res) => {
     ].join('|'));
 
     const output = lines.join('\n');
-    console.log(`✅ Sending ${result.rows.length} expired users to MikroTik`);
     
     res.set('Content-Type', 'text/plain');
     res.send(output);
@@ -1852,6 +1847,7 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
 
