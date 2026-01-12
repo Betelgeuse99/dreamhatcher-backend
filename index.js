@@ -3,10 +3,10 @@ const express = require('express');
 const { Pool } = require('pg');
 const crypto = require('crypto');
 const https = require('https');
-const axios = require('axios'); // <-- NEW: for Paystack API calls
+const axios = require('axios');
 
 const app = express();
-app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } })); // Needed for webhook signature
+app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 
 // Database connection to Supabase
 const pool = new Pool({
@@ -474,7 +474,7 @@ app.get('/paystack-callback', (req, res) => {
   </html>
   `;
 
-  res.send(html.replace('${ref || \'\'}', ref)); // Make sure ref is injected
+  res.send(html.replace('${ref || \'\'}', ref));
 });
 
 // ========== SUCCESS PAGE - PATIENT POLLING ==========
@@ -640,6 +640,8 @@ app.get('/success', async (req, res) => {
             <div class="credential" id="password-display" onclick="copyText(this)">---</div>
             <div class="credential-label">Plan</div>
             <div class="credential" id="plan-display">---</div>
+            <div class="credential-label">Expires</div>
+            <div class="credential" id="expires-display">---</div>
           </div>
           
           <div class="steps">
@@ -682,8 +684,8 @@ app.get('/success', async (req, res) => {
       <script>
         const ref = '${ref}';
         let checkCount = 0;
-        const maxChecks = 20; // 20 attempts x 5 seconds = 100 seconds max
-        let credentials = { username: '', password: '', plan: '' };
+        const maxChecks = 20;
+        let credentials = { username: '', password: '', plan: '', expires_at: '' };
         
         function showState(state) {
           document.getElementById('loading-state').classList.add('hidden');
@@ -700,9 +702,7 @@ app.get('/success', async (req, res) => {
             setTimeout(function() { element.textContent = original; }, 1000);
           });
         }
-          // ============================================
-        // AUTO-LOGIN FUNCTIONALITY
-        // ============================================
+        
         let autoLoginTimer = null;
         let autoLoginCountdown = 8;
         const HOTSPOT_LOGIN_URL = 'http://192.168.88.1/login';
@@ -735,18 +735,14 @@ app.get('/success', async (req, res) => {
           document.getElementById('autoLoginBtn').disabled = true;
           document.getElementById('autoLoginBtn').textContent = '⏳ Connecting...';
 
-          // Method 1: Try opening hotspot login with credentials in URL
           const loginUrl = HOTSPOT_LOGIN_URL +
             '?username=' + encodeURIComponent(credentials.username) +
             '&password=' + encodeURIComponent(credentials.password) +
             '&auto=1';
 
-          // Try to open in same window (works if we're in hotspot network)
           try {
-            // First try: Direct navigation
             window.location.href = loginUrl;
 
-            // Fallback after 3 seconds if still on this page
             setTimeout(function() {
               if (document.getElementById('autoLoginText')) {
                 document.getElementById('autoLoginText').innerHTML =
@@ -758,14 +754,14 @@ app.get('/success', async (req, res) => {
             }, 3000);
 
           } catch (e) {
-            // Fallback: Open in new window
             window.open(loginUrl, '_blank');
             document.getElementById('autoLoginText').innerHTML =
               '✅ Login page opened! Check new tab/window.';
           }
         }
+        
         function copyCredentials() {
-          const text = 'Username: ' + credentials.username + '\\nPassword: ' + credentials.password + '\\nPlan: ' + credentials.plan;
+          const text = 'Username: ' + credentials.username + '\\nPassword: ' + credentials.password + '\\nPlan: ' + credentials.plan + '\\nExpires: ' + credentials.expires_at;
           navigator.clipboard.writeText(text).then(function() {
             const btns = document.querySelectorAll('.btn');
             btns.forEach(function(btn) {
@@ -793,31 +789,34 @@ app.get('/success', async (req, res) => {
             console.log('Status check #' + checkCount + ':', data);
             
             if (data.ready && data.username && data.password) {
-              // SUCCESS! Credentials are ready
               credentials = {
                 username: data.username,
                 password: data.password,
-                plan: data.plan || 'WiFi Access'
+                plan: data.plan || 'WiFi Access',
+                expires_at: data.expires_at ? new Date(data.expires_at).toLocaleString('en-NG', { 
+                  year: 'numeric', 
+                  month: 'short', 
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                }) : 'Not set'
               };
               
               document.getElementById('username-display').textContent = credentials.username;
               document.getElementById('password-display').textContent = credentials.password;
-             document.getElementById('plan-display').textContent = credentials.plan;
+              document.getElementById('plan-display').textContent = credentials.plan;
+              document.getElementById('expires-display').textContent = credentials.expires_at;
 
               showState('credentials');
-
-              // Start auto-login countdown after showing credentials
               setTimeout(startAutoLoginCountdown, 1000);
               
             } else if (checkCount >= maxChecks) {
-              // Max attempts reached
               document.getElementById('error-text').textContent = 
                 'Your payment was received but account creation is taking longer than expected. ' +
                 'Please wait a few minutes and try the "Check Again" button, or contact support.';
               showState('error');
               
             } else {
-              // Still processing, update status and retry
               if (data.status === 'pending') {
                 statusText.textContent = 'Account queued, waiting for MikroTik to create user...';
               } else if (data.status === 'processed') {
@@ -826,7 +825,6 @@ app.get('/success', async (req, res) => {
                 statusText.textContent = data.message || 'Processing your payment...';
               }
               
-              // Retry after 5 seconds
               setTimeout(checkStatus, 5000);
             }
             
@@ -842,13 +840,11 @@ app.get('/success', async (req, res) => {
                 'Connection issues detected. Please check your internet and try again.';
               showState('error');
             } else {
-              // Retry after 5 seconds
               setTimeout(checkStatus, 5000);
             }
           }
         }
         
-        // Start checking after 3 seconds (give webhook time to arrive)
         setTimeout(checkStatus, 3000);
       </script>
     </body>
@@ -890,12 +886,14 @@ app.get('/api/check-status', async (req, res) => {
           username: user.mikrotik_username,
           password: user.mikrotik_password,
           plan: user.plan,
+          expires_at: user.expires_at,
           message: 'Credentials ready'
         });
       } else {
         return res.json({
           ready: false,
           status: user.status,
+          expires_at: user.expires_at,
           message: 'Status: ' + user.status + ' - Please wait...'
         });
       }
@@ -941,7 +939,7 @@ app.get('/api/mikrotik-queue-text', async (req, res) => {
     console.log(`📤 Sending ${result.rows.length} users to MikroTik`);
     
     const lines = result.rows.map(row =>
-      `${row.mikrotik_username}|${row.mikrotik_password}|${row.plan}|${row.id}`
+      `${row.mikrotik_username}|${row.mikrotik_password}|${row.plan}|${row.id}|${row.mac_address || 'unknown'}|${row.expires_at ? row.expires_at.toISOString() : ''}`
     );
 
     res.set('Content-Type', 'text/plain');
@@ -976,7 +974,7 @@ app.get('/api/expired-users', async (req, res) => {
     }
 
     const result = await pool.query(`
-      SELECT id, mikrotik_username, mac_address
+      SELECT id, mikrotik_username, mac_address, expires_at
       FROM payment_queue
       WHERE status = 'processed'
       AND expires_at IS NOT NULL
@@ -990,12 +988,12 @@ app.get('/api/expired-users', async (req, res) => {
 
     console.log(`⏰ Found ${result.rows.length} expired users`);
 
-    // Format: username|mac_address|id (3 fields only!)
     const lines = result.rows.map(row => {
       return [
         row.mikrotik_username || 'unknown',
         row.mac_address || 'unknown',
-        row.id
+        row.id,
+        row.expires_at.toISOString()
       ].join('|');
     });
 
@@ -1186,7 +1184,6 @@ app.get('/', (req, res) => {
         <h3>📲 Quick Connect QR</h3>
         <p>Scan to open WiFi login:</p>
         <div style="background: white; padding: 10px; display: inline-block; border-radius: 10px;">
-          <!-- QR will be generated by JS -->
           <div id="qrcode"></div>
         </div>
         <p style="font-size: 12px; margin-top: 10px; color: #aaa;">
@@ -1212,7 +1209,6 @@ app.get('/', (req, res) => {
     
     <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
     <script>
-      // Generate QR code for hotspot login
       QRCode.toCanvas(document.getElementById('qrcode'), 'http://192.168.88.1', {
         width: 150,
         margin: 1,
@@ -1231,13 +1227,11 @@ app.get('/', (req, res) => {
 });
 
 // ============================================
-// ADMIN DASHBOARD v2.0 - ENHANCED VERSION
-// Add this to your index.js (replace old /admin route)
+// ADMIN DASHBOARD
 // ============================================
 
 // Admin configuration
-const ADMIN_PASSWORD = 'Huda2024@'; // CHANGE THIS!
-const SESSION_TIMEOUT = 5 * 60 * 1000; // 5 minutes in milliseconds
+const ADMIN_PASSWORD = 'Huda2024@';
 
 // ========== ADMIN DASHBOARD ==========
 app.get('/admin', async (req, res) => {
@@ -1290,7 +1284,21 @@ app.get('/admin', async (req, res) => {
     }
 
     if (action === 'extend' && userId && newPlan) {
-      await pool.query('UPDATE payment_queue SET plan = $1, created_at = NOW() WHERE id = $2', [newPlan, userId]);
+      // Recalculate expires_at when extending plan
+      const now = new Date();
+      let newExpiresAt;
+      if (newPlan === '24hr') {
+        newExpiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+      } else if (newPlan === '7d') {
+        newExpiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      } else if (newPlan === '30d') {
+        newExpiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+      }
+      
+      await pool.query(
+        'UPDATE payment_queue SET plan = $1, expires_at = $2, created_at = NOW() WHERE id = $3',
+        [newPlan, newExpiresAt, userId]
+      );
       actionMessage = '✅ User plan extended successfully';
     }
 
@@ -1299,12 +1307,23 @@ app.get('/admin', async (req, res) => {
       actionMessage = '✅ User reset to pending (will be re-created on MikroTik)';
     }
 
+    if (action === 'cleanup') {
+      const result = await pool.query(`
+        DELETE FROM payment_queue
+        WHERE status = 'processed'
+        AND expires_at IS NOT NULL
+        AND expires_at < NOW()
+      `);
+      actionMessage = `✅ Cleaned up ${result.rowCount} expired users`;
+    }
+
     // Get statistics
     const stats = await pool.query(`
       SELECT
         COUNT(*) as total_payments,
         COUNT(*) FILTER (WHERE status = 'processed') as processed,
         COUNT(*) FILTER (WHERE status = 'pending') as pending,
+        COUNT(*) FILTER (WHERE status = 'expired') as expired,
         COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE) as today_count,
         COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE - INTERVAL '7 days') as week_count,
         COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE - INTERVAL '30 days') as month_count
@@ -1321,27 +1340,17 @@ app.get('/admin', async (req, res) => {
       FROM payment_queue WHERE status = 'processed'
     `);
 
-    // Plan breakdown
-    const plans = await pool.query(`
-      SELECT plan, COUNT(*) as count FROM payment_queue WHERE status = 'processed' GROUP BY plan
-    `);
-
-    // Recent payments with expiry
+    // Recent payments with expiry using expires_at column
     const recent = await pool.query(`
       SELECT
-        id, mikrotik_username, mikrotik_password, plan, status, mac_address, customer_email, created_at,
+        id, mikrotik_username, mikrotik_password, plan, status, mac_address, 
+        customer_email, created_at, expires_at,
         CASE
           WHEN status != 'processed' THEN 'pending'
-          WHEN plan = '24hr' AND created_at + INTERVAL '24 hours' < NOW() THEN 'expired'
-          WHEN plan = '7d' AND created_at + INTERVAL '7 days' < NOW() THEN 'expired'
-          WHEN plan = '30d' AND created_at + INTERVAL '30 days' < NOW() THEN 'expired'
+          WHEN expires_at IS NULL THEN 'active'
+          WHEN expires_at < NOW() THEN 'expired'
           ELSE 'active'
-        END as real_status,
-        CASE
-          WHEN plan = '24hr' THEN created_at + INTERVAL '24 hours'
-          WHEN plan = '7d' THEN created_at + INTERVAL '7 days'
-          WHEN plan = '30d' THEN created_at + INTERVAL '30 days'
-        END as expires_at
+        END as real_status
       FROM payment_queue
       ORDER BY created_at DESC
       LIMIT 50
@@ -1349,10 +1358,6 @@ app.get('/admin', async (req, res) => {
 
     const s = stats.rows[0];
     const r = revenue.rows[0];
-    const planData = {};
-    plans.rows.forEach(p => { planData[p.plan] = parseInt(p.count); });
-
-    // Count by status
     const activeCount = recent.rows.filter(r => r.real_status === 'active').length;
     const expiredCount = recent.rows.filter(r => r.real_status === 'expired').length;
 
@@ -1402,16 +1407,6 @@ app.get('/admin', async (req, res) => {
         .btn-success { background: linear-gradient(135deg, #10b981, #059669); color: white; }
         .btn-secondary { background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.2); }
         .btn:hover { opacity: 0.9; transform: translateY(-1px); }
-        .session-timer {
-          background: rgba(245,158,11,0.2);
-          color: #fbbf24;
-          padding: 8px 15px;
-          border-radius: 8px;
-          font-size: 0.8rem;
-          display: flex;
-          align-items: center;
-          gap: 8px;
-        }
         .stats-grid {
           display: grid;
           grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -1507,104 +1502,30 @@ app.get('/admin', async (req, res) => {
         }
         .alert-success { background: rgba(16,185,129,0.2); border: 1px solid rgba(16,185,129,0.3); color: #10b981; }
         .alert-error { background: rgba(239,68,68,0.2); border: 1px solid rgba(239,68,68,0.3); color: #ef4444; }
-        .search-box {
-          display: flex;
-          gap: 10px;
-          margin-bottom: 15px;
-        }
+        .search-box { margin-bottom: 15px; }
         .search-box input {
-          flex: 1;
           padding: 10px 15px;
           border-radius: 8px;
           border: 1px solid rgba(255,255,255,0.1);
           background: rgba(0,0,0,0.2);
           color: white;
           font-size: 0.9rem;
-        }
-        .modal {
-          display: none;
-          position: fixed;
-          top: 0;
-          left: 0;
           width: 100%;
-          height: 100%;
-          background: rgba(0,0,0,0.8);
-          z-index: 1000;
-          align-items: center;
-          justify-content: center;
         }
-        .modal.active { display: flex; }
-        .modal-content {
-          background: #1a1a2e;
-          border-radius: 16px;
-          padding: 30px;
-          max-width: 400px;
-          width: 90%;
-          border: 1px solid rgba(255,255,255,0.1);
-        }
-        .modal-content h3 { margin-bottom: 20px; color: #00d4ff; }
         @media (max-width: 768px) {
           .stats-grid { grid-template-columns: 1fr 1fr; }
           .header { flex-direction: column; text-align: center; }
           th, td { padding: 8px 5px; font-size: 0.75rem; }
         }
-        .logout-overlay {
-          display: none;
-          position: fixed;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100%;
-          background: rgba(0,0,0,0.95);
-          z-index: 2000;
-          align-items: center;
-          justify-content: center;
-          flex-direction: column;
-        }
-        .logout-overlay.active { display: flex; }
-        .logout-overlay h2 { color: #ef4444; margin-bottom: 20px; }
       </style>
     </head>
     <body>
-      <!-- Session timeout overlay -->
-      <div class="logout-overlay" id="logoutOverlay">
-        <h2>⏰ Session Expired</h2>
-        <p style="color: #94a3b8; margin-bottom: 20px;">You've been logged out due to inactivity.</p>
-        <a href="/admin" class="btn btn-primary">🔐 Login Again</a>
-      </div>
-
-      <!-- Extend Plan Modal -->
-      <div class="modal" id="extendModal">
-        <div class="modal-content">
-          <h3>⏰ Extend User Plan</h3>
-          <p style="color: #94a3b8; margin-bottom: 20px;">Select new plan for <strong id="extendUsername"></strong></p>
-          <form id="extendForm" method="GET">
-            <input type="hidden" name="pwd" value="${pwd}">
-            <input type="hidden" name="action" value="extend">
-            <input type="hidden" name="userId" id="extendUserId">
-            <select name="newPlan" style="width: 100%; padding: 12px; border-radius: 8px; margin-bottom: 15px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: white;">
-              <option value="24hr">⚡ Daily (24 hours)</option>
-              <option value="7d">🚀 Weekly (7 days)</option>
-              <option value="30d">👑 Monthly (30 days)</option>
-            </select>
-            <div style="display: flex; gap: 10px;">
-              <button type="button" class="btn btn-secondary" onclick="closeExtendModal()" style="flex: 1;">Cancel</button>
-              <button type="submit" class="btn btn-success" style="flex: 1;">Extend Plan</button>
-            </div>
-          </form>
-        </div>
-      </div>
-
       <div class="header">
         <div class="header-left">
           <h1>🌐 Dream Hatcher Admin</h1>
           <p>WiFi Business Dashboard</p>
         </div>
         <div class="header-right">
-          <div class="session-timer">
-            <span>⏱️</span>
-            <span id="sessionTimer">5:00</span>
-          </div>
           <button class="btn btn-primary" onclick="location.reload()">🔄 Refresh</button>
           <a href="/admin" class="btn btn-danger">🚪 Logout</a>
         </div>
@@ -1685,6 +1606,9 @@ app.get('/admin', async (req, res) => {
       <!-- Recent Payments Table -->
       <div class="section">
         <h2>📋 All Users (${recent.rows.length})</h2>
+        <div class="search-box">
+          <input type="text" id="searchInput" placeholder="Search by username or MAC..." onkeyup="searchTable()">
+        </div>
         <div style="overflow-x: auto;">
           <table id="usersTable">
             <thead>
@@ -1735,55 +1659,16 @@ app.get('/admin', async (req, res) => {
       </div>
 
       <script>
-        // ============================================
-        // SESSION TIMEOUT (5 minutes)
-        // ============================================
-        let sessionTime = 5 * 60; // 5 minutes in seconds
-        let lastActivity = Date.now();
-
-        function updateTimer() {
-          const minutes = Math.floor(sessionTime / 60);
-          const seconds = sessionTime % 60;
-          document.getElementById('sessionTimer').textContent =
-            minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
-
-          if (sessionTime <= 0) {
-            document.getElementById('logoutOverlay').classList.add('active');
-            return;
-          }
-
-          sessionTime--;
-          setTimeout(updateTimer, 1000);
-        }
-
-        // Reset timer on activity
-        document.addEventListener('mousemove', resetTimer);
-        document.addEventListener('keypress', resetTimer);
-        document.addEventListener('click', resetTimer);
-        document.addEventListener('scroll', resetTimer);
-
-        function resetTimer() {
-          sessionTime = 5 * 60;
-        }
-
-        updateTimer();
-
-        // ============================================
-        // SEARCH FUNCTION
-        // ============================================
         function searchTable() {
           const input = document.getElementById('searchInput').value.toLowerCase();
           const rows = document.querySelectorAll('#usersTable tbody tr');
-
+          
           rows.forEach(row => {
             const searchData = row.getAttribute('data-search').toLowerCase();
             row.style.display = searchData.includes(input) ? '' : 'none';
           });
         }
-
-        // ============================================
-        // COPY TEXT
-        // ============================================
+        
         function copyText(element) {
           const text = element.textContent;
           navigator.clipboard.writeText(text).then(() => {
@@ -1796,49 +1681,37 @@ app.get('/admin', async (req, res) => {
             }, 1000);
           });
         }
-
-        // ============================================
-        // EXTEND MODAL
-        // ============================================
-        function openExtendModal(userId, username) {
-          document.getElementById('extendUserId').value = userId;
-          document.getElementById('extendUsername').textContent = username;
-          document.getElementById('extendModal').classList.add('active');
-        }
-
-        function closeExtendModal() {
-          document.getElementById('extendModal').classList.remove('active');
-        }
-
-        // Close modal on outside click
-        document.getElementById('extendModal').addEventListener('click', function(e) {
-          if (e.target === this) closeExtendModal();
-        });
-
-        // ============================================
-        // EXPORT CSV
-        // ============================================
+        
         function exportCSV() {
           const rows = document.querySelectorAll('#usersTable tr');
           let csv = [];
-
+          
           rows.forEach(row => {
             const cols = row.querySelectorAll('td, th');
             const rowData = [];
             cols.forEach((col, index) => {
-              if (index < cols.length - 1) { // Skip actions column
+              if (index < cols.length - 1) {
                 rowData.push('"' + col.textContent.trim().replace(/"/g, '""') + '"');
               }
             });
             csv.push(rowData.join(','));
           });
-
+          
           const blob = new Blob([csv.join('\\n')], { type: 'text/csv' });
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
           a.download = 'dreamhatcher_users_' + new Date().toISOString().slice(0,10) + '.csv';
           a.click();
+        }
+        
+        function openExtendModal(userId, username) {
+          if (confirm('Extend plan for user: ' + username + '?')) {
+            const newPlan = prompt('Enter new plan (24hr, 7d, 30d):', '24hr');
+            if (newPlan && ['24hr', '7d', '30d'].includes(newPlan)) {
+              window.location.href = '/admin?pwd=${pwd}&action=extend&userId=' + userId + '&newPlan=' + newPlan;
+            }
+          }
         }
       </script>
     </body>
@@ -1853,32 +1726,6 @@ app.get('/admin', async (req, res) => {
   }
 });
 
-// ========== CLEANUP EXPIRED USERS ==========
-app.get('/admin', async (req, res, next) => {
-  if (req.query.action === 'cleanup' && req.query.pwd === ADMIN_PASSWORD) {
-    try {
-      const result = await pool.query(`
-        DELETE FROM payment_queue
-        WHERE status = 'processed'
-        AND (
-          (plan = '24hr' AND created_at + INTERVAL '24 hours' < NOW())
-          OR (plan = '7d' AND created_at + INTERVAL '7 days' < NOW())
-          OR (plan = '30d' AND created_at + INTERVAL '30 days' < NOW())
-        )
-      `);
-      // Redirect back with success message (handled by main route)
-      return res.redirect('/admin?pwd=' + req.query.pwd + '&cleaned=' + result.rowCount);
-    } catch (error) {
-      console.error('Cleanup error:', error);
-    }
-  }
-  next();
-});
-
-// ============================================
-// END OF ADMIN DASHBOARD ROUTE
-// ============================================
-
 // ========== ERROR HANDLER ==========
 app.use((err, req, res, next) => {
   console.error('💥 Uncaught error:', err.message);
@@ -1891,7 +1738,7 @@ const server = app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
   console.log(`🌐 Initialize: https://dreamhatcher-backend.onrender.com/api/initialize-payment`);
   console.log(`🔗 Callback: https://dreamhatcher-backend.onrender.com/paystack-callback`);
+  console.log(`👑 Admin: https://dreamhatcher-backend.onrender.com/admin?pwd=Huda2024@`);
 });
 
 server.setTimeout(30000);
-
