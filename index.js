@@ -92,21 +92,6 @@ app.get('/pay/:plan', async (req, res) => {
     );
     
     console.log(`💳 Payment init: ${plan} | MAC: ${mac} | Email: ${email}`);
-    res.redirect(response.data.data.authorization_url);
-    
-  } catch (error) {
-    console.error('Payment error:', error.response?.data || error.message);
-    res.send(`
-      <html>
-        <body style="font-family:Arial;text-align:center;padding:50px;background:#1a1a2e;color:white;">
-          <h2>⚠️ Payment Error</h2>
-          <p>Could not initialize payment. Please try again.</p>
-          <a href="javascript:history.back()" style="color:#00d4ff;">← Go Back</a>
-        </body>
-      </html>
-    `);
-  }
-});
     
     // Redirect user directly to Paystack checkout
     res.redirect(response.data.data.authorization_url);
@@ -1912,9 +1897,3 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
-
-
-
-
-
-
