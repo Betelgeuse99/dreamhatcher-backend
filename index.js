@@ -940,7 +940,6 @@ app.get('/api/check-status', async (req, res) => {
 // ========== MIKROTIK ENDPOINTS ==========
 app.get('/api/mikrotik-queue-text', async (req, res) => {
   try {
-    console.log('🔐 Checking API key for MikroTik queue');
     const apiKey = req.headers['x-api-key'] || req.query.api_key;
     
     if (!apiKey || apiKey !== process.env.MIKROTIK_API_KEY) {
@@ -948,7 +947,6 @@ app.get('/api/mikrotik-queue-text', async (req, res) => {
       return res.status(403).send('FORBIDDEN');
     }
 
-    console.log('📋 Querying pending users for MikroTik');
     const result = await pool.query(`
       SELECT id, mikrotik_username, mikrotik_password, plan, mac_address, expires_at
       FROM payment_queue
@@ -1045,7 +1043,6 @@ app.post('/api/mark-processed/:id', async (req, res) => {
 // ========== GET EXPIRED USERS (for MikroTik to disable) ==========
 app.get('/api/expired-users', async (req, res) => {
   try {
-    console.log('🔐 Checking API key for expired users');
     const apiKey = req.headers['x-api-key'] || req.query.api_key;
     
     if (!apiKey || apiKey !== process.env.MIKROTIK_API_KEY) {
@@ -1053,7 +1050,6 @@ app.get('/api/expired-users', async (req, res) => {
       return res.status(403).send('FORBIDDEN');
     }
 
-    console.log('⏰ Querying expired users');
     const result = await pool.query(`
       SELECT id, mikrotik_username, mac_address, expires_at
       FROM payment_queue
@@ -1856,5 +1852,6 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
