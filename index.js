@@ -20,6 +20,17 @@ pool.query('SELECT NOW()', (err, res) => {
   else console.log('✅ Connected to Supabase');
 });
 
+// ========== GLOBAL ERROR HANDLERS ==========
+process.on('uncaughtException', (error) => {
+  console.error('💥 UNCAUGHT EXCEPTION:', error);
+  // Don't exit in production, log and continue
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('💥 UNHANDLED REJECTION at:', promise, 'reason:', reason);
+  // Don't exit in production, log and continue
+});
+
 // Helper functions
 function generatePassword(length = 8) {
   return crypto.randomBytes(length).toString('hex').slice(0, length);
@@ -111,6 +122,18 @@ app.get('/pay/:plan', async (req, res) => {
   }
 });
 
+// ========== REQUEST LOGGING ==========
+app.use((req, res, next) => {
+  const start = Date.now();
+  console.log(`📥 ${req.method} ${req.url}`);
+  
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    console.log(`📤 ${req.method} ${req.url} ${res.statusCode} - ${duration}ms`);
+  });
+  
+  next();
+});
 // ========== NEW: INITIALIZE PAYSTACK PAYMENT (Dynamic Checkout) ==========
 app.post('/api/initialize-payment', async (req, res) => {
   try {
@@ -917,12 +940,15 @@ app.get('/api/check-status', async (req, res) => {
 // ========== MIKROTIK ENDPOINTS ==========
 app.get('/api/mikrotik-queue-text', async (req, res) => {
   try {
+    console.log('🔐 Checking API key for MikroTik queue');
     const apiKey = req.headers['x-api-key'] || req.query.api_key;
-    if (apiKey !== process.env.MIKROTIK_API_KEY) {
-      console.log('❌ Invalid API key');
+    
+    if (!apiKey || apiKey !== process.env.MIKROTIK_API_KEY) {
+      console.warn('❌ Invalid or missing API key');
       return res.status(403).send('FORBIDDEN');
     }
 
+    console.log('📋 Querying pending users for MikroTik');
     const result = await pool.query(`
       SELECT id, mikrotik_username, mikrotik_password, plan, mac_address, expires_at
       FROM payment_queue
@@ -932,33 +958,42 @@ app.get('/api/mikrotik-queue-text', async (req, res) => {
     `);
 
     if (result.rows.length === 0) {
-      console.log('📤 No pending users for MikroTik');
+      console.log('📭 No pending users for MikroTik');
       return res.send('');
     }
 
-    console.log(`📤 Sending ${result.rows.length} users to MikroTik`);
+    console.log(`📤 Preparing ${result.rows.length} users for MikroTik`);
     
     // Format: username|password|plan|mac|expires_at|id
-    const lines = result.rows.map(row => [
-      row.mikrotik_username,
-      row.mikrotik_password,
-      row.plan,
-      row.mac_address || 'unknown',
-      row.expires_at ? row.expires_at.toISOString() : '',
-      row.id  // ID is last
-    ].join('|'));
+    const lines = result.rows.map(row => {
+      const expires = row.expires_at ? row.expires_at.toISOString() : '';
+      return [
+        row.mikrotik_username || '',
+        row.mikrotik_password || '',
+        row.plan || '',
+        row.mac_address || 'unknown',
+        expires,
+        row.id
+      ].join('|');
+    });
 
+    const output = lines.join('\n');
+    console.log(`✅ Sending ${result.rows.length} users to MikroTik`);
+    
     res.set('Content-Type', 'text/plain');
-    res.send(lines.join('\n'));
+    res.send(output);
     
   } catch (error) {
-    console.error('❌ Text queue error:', error.message);
-    res.status(500).send('ERROR');
+    console.error('❌ MikroTik queue error:', error.message, error.stack);
+    // Send empty response instead of ERROR to avoid breaking MikroTik
+    res.set('Content-Type', 'text/plain');
+    res.send('');
   }
 });
 
 app.post('/api/mark-processed/:id', async (req, res) => {
   try {
+    console.log(`🔄 Processing mark-processed for: ${req.params.id}`);
     let userId = req.params.id;
     
     // Extract ID from pipe-separated string if needed
@@ -966,36 +1001,59 @@ app.post('/api/mark-processed/:id', async (req, res) => {
       const parts = userId.split('|');
       // ID should be the LAST element in our format
       userId = parts[parts.length - 1];
-      console.log(`📝 Extracted ID from string: ${userId}`);
+      console.log(`📝 Extracted ID from string: ${userId} (full: ${req.params.id})`);
     }
     
     const idNum = parseInt(userId);
     
     if (isNaN(idNum)) {
-      console.error('❌ Invalid ID format:', userId);
-      return res.status(400).json({ error: 'Invalid user ID' });
+      console.error('❌ Invalid ID format for mark-processed:', userId);
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Invalid user ID format' 
+      });
     }
     
-    await pool.query(
-      `UPDATE payment_queue SET status = 'processed' WHERE id = $1`,
+    const result = await pool.query(
+      `UPDATE payment_queue SET status = 'processed' WHERE id = $1 RETURNING id`,
       [idNum]
     );
-    console.log(`✅ Marked ${idNum} as processed`);
-    res.json({ success: true });
+    
+    if (result.rowCount === 0) {
+      console.warn(`⚠️ No user found with ID: ${idNum}`);
+      return res.status(404).json({ 
+        success: false, 
+        error: 'User not found' 
+      });
+    }
+    
+    console.log(`✅ Successfully marked ${idNum} as processed`);
+    res.json({ 
+      success: true,
+      id: idNum
+    });
+    
   } catch (error) {
-    console.error('❌ Update error:', error.message);
-    res.status(500).json({ error: 'Update failed' });
+    console.error('❌ Mark-processed error:', error.message, error.stack);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Database update failed' 
+    });
   }
 });
 
 // ========== GET EXPIRED USERS (for MikroTik to disable) ==========
 app.get('/api/expired-users', async (req, res) => {
   try {
+    console.log('🔐 Checking API key for expired users');
     const apiKey = req.headers['x-api-key'] || req.query.api_key;
-    if (apiKey !== process.env.MIKROTIK_API_KEY) {
+    
+    if (!apiKey || apiKey !== process.env.MIKROTIK_API_KEY) {
+      console.warn('❌ Invalid or missing API key for expired users');
       return res.status(403).send('FORBIDDEN');
     }
 
+    console.log('⏰ Querying expired users');
     const result = await pool.query(`
       SELECT id, mikrotik_username, mac_address, expires_at
       FROM payment_queue
@@ -1006,6 +1064,7 @@ app.get('/api/expired-users', async (req, res) => {
     `);
 
     if (result.rows.length === 0) {
+      console.log('📭 No expired users found');
       return res.send('');
     }
 
@@ -1019,18 +1078,24 @@ app.get('/api/expired-users', async (req, res) => {
       row.id  // ID is last
     ].join('|'));
 
+    const output = lines.join('\n');
+    console.log(`✅ Sending ${result.rows.length} expired users to MikroTik`);
+    
     res.set('Content-Type', 'text/plain');
-    res.send(lines.join('\n'));
+    res.send(output);
 
   } catch (error) {
-    console.error('Expired users error:', error.message);
-    res.status(500).send('ERROR');
+    console.error('❌ Expired users query error:', error.message, error.stack);
+    // Send empty response instead of ERROR to avoid breaking MikroTik
+    res.set('Content-Type', 'text/plain');
+    res.send('');
   }
 });
 
 // ========== MARK USER AS EXPIRED ==========
 app.post('/api/mark-expired/:id', async (req, res) => {
   try {
+    console.log(`🔄 Processing mark-expired for: ${req.params.id}`);
     let userId = req.params.id;
     
     // Extract ID from pipe-separated string if needed
@@ -1038,27 +1103,44 @@ app.post('/api/mark-expired/:id', async (req, res) => {
       const parts = userId.split('|');
       // ID should be the LAST element in our format
       userId = parts[parts.length - 1];
-      console.log(`📝 Extracted expired ID from string: ${userId}`);
+      console.log(`📝 Extracted expired ID from string: ${userId} (full: ${req.params.id})`);
     }
     
     const idNum = parseInt(userId);
     
     if (isNaN(idNum) || idNum <= 0) {
-      console.log('❌ Invalid expired ID received:', req.params.id);
-      return res.status(400).json({ error: 'Invalid user ID' });
+      console.error('❌ Invalid ID format for mark-expired:', userId);
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Invalid user ID' 
+      });
     }
     
-    await pool.query(
-      `UPDATE payment_queue SET status = 'expired' WHERE id = $1`,
+    const result = await pool.query(
+      `UPDATE payment_queue SET status = 'expired' WHERE id = $1 RETURNING id`,
       [idNum]
     );
     
-    console.log(`⏰ Marked ${idNum} as expired`);
-    res.json({ success: true });
+    if (result.rowCount === 0) {
+      console.warn(`⚠️ No user found with ID for mark-expired: ${idNum}`);
+      return res.status(404).json({ 
+        success: false, 
+        error: 'User not found' 
+      });
+    }
+    
+    console.log(`⏰ Successfully marked ${idNum} as expired`);
+    res.json({ 
+      success: true,
+      id: idNum
+    });
     
   } catch (error) {
-    console.error('Mark expired error:', error.message);
-    res.status(500).json({ error: 'Failed' });
+    console.error('❌ Mark-expired error:', error.message, error.stack);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to mark as expired' 
+    });
   }
 });
 
@@ -1774,4 +1856,5 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
