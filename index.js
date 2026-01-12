@@ -976,7 +976,7 @@ app.get('/api/expired-users', async (req, res) => {
     }
 
     const result = await pool.query(`
-      SELECT id, mikrotik_username, mikrotik_password, plan, mac_address, expires_at
+      SELECT id, mikrotik_username, mac_address
       FROM payment_queue
       WHERE status = 'processed'
       AND expires_at IS NOT NULL
@@ -990,15 +990,12 @@ app.get('/api/expired-users', async (req, res) => {
 
     console.log(`⏰ Found ${result.rows.length} expired users`);
 
-    // Format: username|password|plan|id|mac_address|expires_at
+    // Format: username|mac_address|id (3 fields only!)
     const lines = result.rows.map(row => {
       return [
         row.mikrotik_username || 'unknown',
-        row.mikrotik_password || 'unknown', 
-        row.plan || 'unknown',
-        row.id,
-        row.mac_address || 'none',
-        row.expires_at ? new Date(row.expires_at).toISOString() : 'none'
+        row.mac_address || 'unknown',
+        row.id
       ].join('|');
     });
 
@@ -1897,3 +1894,4 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
