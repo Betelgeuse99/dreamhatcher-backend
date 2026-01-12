@@ -52,12 +52,13 @@ app.use((req, res, next) => {
   next();
 });
 
-// ========== PAYMENT REDIRECT (Avoids CORS) ==========
+// ========== PAYMENT REDIRECT (With Email & MAC) ==========
 app.get('/pay/:plan', async (req, res) => {
   const { plan } = req.params;
   const mac = req.query.mac || 'unknown';
+  const email = req.query.email || 'customer@dreamhatcher.com';
   
-  // Plan configuration - YOU CONTROL THE AMOUNTS HERE
+  // Plan configuration - CHANGE PRICES HERE
   const planConfig = {
     daily: { amount: 350, code: '24hr' },
     weekly: { amount: 2400, code: '7d' },
@@ -74,8 +75,8 @@ app.get('/pay/:plan', async (req, res) => {
     const response = await axios.post(
       'https://api.paystack.co/transaction/initialize',
       {
-        email: 'customer@dreamhatcher.com',
-        amount: selectedPlan.amount * 100, // Paystack uses kobo
+        email: email,
+        amount: selectedPlan.amount * 100,
         callback_url: 'https://dreamhatcher-backend.onrender.com/paystack-callback',
         metadata: {
           mac_address: mac,
@@ -89,6 +90,23 @@ app.get('/pay/:plan', async (req, res) => {
         }
       }
     );
+    
+    console.log(`💳 Payment init: ${plan} | MAC: ${mac} | Email: ${email}`);
+    res.redirect(response.data.data.authorization_url);
+    
+  } catch (error) {
+    console.error('Payment error:', error.response?.data || error.message);
+    res.send(`
+      <html>
+        <body style="font-family:Arial;text-align:center;padding:50px;background:#1a1a2e;color:white;">
+          <h2>⚠️ Payment Error</h2>
+          <p>Could not initialize payment. Please try again.</p>
+          <a href="javascript:history.back()" style="color:#00d4ff;">← Go Back</a>
+        </body>
+      </html>
+    `);
+  }
+});
     
     // Redirect user directly to Paystack checkout
     res.redirect(response.data.data.authorization_url);
@@ -972,9 +990,8 @@ app.get('/api/expired-users', async (req, res) => {
       return res.status(403).send('FORBIDDEN');
     }
 
-    // Get users whose expires_at has passed and are still active
     const result = await pool.query(`
-      SELECT id, mikrotik_username, mac_address, expires_at
+      SELECT id, mikrotik_username, mikrotik_password, plan, mac_address, expires_at
       FROM payment_queue
       WHERE status = 'processed'
       AND expires_at IS NOT NULL
@@ -986,12 +1003,18 @@ app.get('/api/expired-users', async (req, res) => {
       return res.send('');
     }
 
-    console.log(`⏰ Found ${result.rows.length} expired users to disable`);
+    console.log(`⏰ Found ${result.rows.length} expired users`);
 
-     // Format: username|password|plan|id|mac_address|expires_at
+    // Format: username|password|plan|id|mac_address|expires_at
     const lines = result.rows.map(row => {
-      const expiresAt = row.expires_at ? new Date(row.expires_at).toISOString() : 'none';
-      return `${row.mikrotik_username}|${row.mikrotik_password}|${row.plan}|${row.id}|${row.mac_address || 'none'}|${expiresAt}`;
+      return [
+        row.mikrotik_username || 'unknown',
+        row.mikrotik_password || 'unknown', 
+        row.plan || 'unknown',
+        row.id,
+        row.mac_address || 'none',
+        row.expires_at ? new Date(row.expires_at).toISOString() : 'none'
+      ].join('|');
     });
 
     res.set('Content-Type', 'text/plain');
@@ -1006,12 +1029,21 @@ app.get('/api/expired-users', async (req, res) => {
 // ========== MARK USER AS EXPIRED ==========
 app.post('/api/mark-expired/:id', async (req, res) => {
   try {
+    const userId = parseInt(req.params.id);
+    
+    if (isNaN(userId) || userId <= 0) {
+      console.log('❌ Invalid expired ID received:', req.params.id);
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
+    
     await pool.query(
       `UPDATE payment_queue SET status = 'expired' WHERE id = $1`,
-      [req.params.id]
+      [userId]
     );
-    console.log(`⏰ Marked ${req.params.id} as expired`);
+    
+    console.log(`⏰ Marked ${userId} as expired`);
     res.json({ success: true });
+    
   } catch (error) {
     console.error('Mark expired error:', error.message);
     res.status(500).json({ error: 'Failed' });
@@ -1880,6 +1912,7 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
 
