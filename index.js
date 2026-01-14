@@ -1346,7 +1346,7 @@ app.get('/', (req, res) => {
 });
 
 // ============================================
-// ADMIN DASHBOARD v3.0 - INDUSTRIAL GRADE
+// ADMIN DASHBOARD v2.0 - ENHANCED VERSION
 // Add this to your index.js (replace old /admin route)
 // ============================================
 
@@ -1356,7 +1356,7 @@ const SESSION_TIMEOUT = 5 * 60 * 1000; // 5 minutes in milliseconds
 
 // ========== ADMIN DASHBOARD ==========
 app.get('/admin', async (req, res) => {
-  const { pwd, action, userId, newPlan, format } = req.query;
+  const { pwd, action, userId, newPlan } = req.query;
 
   // Password check
   if (pwd !== ADMIN_PASSWORD) {
@@ -1367,142 +1367,28 @@ app.get('/admin', async (req, res) => {
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Admin Login - Dream Hatcher</title>
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
         <style>
           * { margin: 0; padding: 0; box-sizing: border-box; }
-          body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: #0f0f14;
-            color: white;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            position: relative;
-            overflow: hidden;
-          }
-          body::before {
-            content: '';
-            position: absolute;
-            top: -50%;
-            left: -50%;
-            width: 200%;
-            height: 200%;
-            background:
-              radial-gradient(circle at 20% 80%, rgba(0, 212, 255, 0.08) 0%, transparent 50%),
-              radial-gradient(circle at 80% 20%, rgba(138, 43, 226, 0.08) 0%, transparent 50%),
-              radial-gradient(circle at 40% 40%, rgba(0, 255, 136, 0.05) 0%, transparent 40%);
-            animation: pulse 15s ease-in-out infinite;
-          }
-          @keyframes pulse {
-            0%, 100% { transform: scale(1) rotate(0deg); }
-            50% { transform: scale(1.1) rotate(5deg); }
-          }
-          .box {
-            background: rgba(20, 20, 30, 0.9);
-            backdrop-filter: blur(20px);
-            padding: 50px;
-            border-radius: 24px;
-            text-align: center;
-            border: 1px solid rgba(255,255,255,0.1);
-            max-width: 420px;
-            width: 90%;
-            position: relative;
-            z-index: 1;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-          }
-          .logo {
-            width: 80px;
-            height: 80px;
-            background: linear-gradient(135deg, #00d4ff, #8b5cf6);
-            border-radius: 20px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 36px;
-            margin: 0 auto 24px;
-            box-shadow: 0 10px 40px rgba(0, 212, 255, 0.3);
-          }
-          h2 {
-            color: #fff;
-            margin-bottom: 8px;
-            font-size: 24px;
-            font-weight: 700;
-          }
-          .subtitle {
-            color: #64748b;
-            font-size: 14px;
-            margin-bottom: 32px;
-          }
-          input {
-            padding: 16px 20px;
-            border-radius: 12px;
-            border: 2px solid rgba(255,255,255,0.1);
-            background: rgba(255,255,255,0.05);
-            color: white;
-            font-size: 16px;
-            width: 100%;
-            margin: 10px 0;
-            transition: all 0.3s ease;
-          }
-          input:focus {
-            outline: none;
-            border-color: #00d4ff;
-            background: rgba(0, 212, 255, 0.05);
-          }
-          input::placeholder { color: #64748b; }
-          button {
-            padding: 16px 40px;
-            background: linear-gradient(135deg, #00d4ff, #0066ff);
-            border: none;
-            border-radius: 12px;
-            color: white;
-            font-weight: 600;
-            font-size: 16px;
-            cursor: pointer;
-            width: 100%;
-            margin-top: 15px;
-            transition: all 0.3s ease;
-            position: relative;
-            overflow: hidden;
-          }
-          button::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
-            transition: 0.5s;
-          }
-          button:hover::before { left: 100%; }
-          button:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(0, 212, 255, 0.3); }
-          .footer { margin-top: 30px; font-size: 12px; color: #475569; }
-          .version {
-            display: inline-block;
-            background: rgba(0, 212, 255, 0.1);
-            color: #00d4ff;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 11px;
-            margin-top: 8px;
-          }
+          body { font-family: 'Segoe UI', Arial; background: linear-gradient(135deg, #0a0e1a, #1a1a2e); color: white; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+          .box { background: rgba(255,255,255,0.05); padding: 50px; border-radius: 24px; text-align: center; border: 1px solid rgba(255,255,255,0.1); max-width: 400px; width: 90%; }
+          .logo { font-size: 48px; margin-bottom: 20px; }
+          h2 { color: #00d4ff; margin-bottom: 30px; }
+          input { padding: 16px; border-radius: 12px; border: 2px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); color: white; font-size: 16px; width: 100%; margin: 10px 0; }
+          input:focus { outline: none; border-color: #00d4ff; }
+          button { padding: 16px 40px; background: linear-gradient(135deg, #00c9ff, #0066ff); border: none; border-radius: 12px; color: white; font-weight: bold; font-size: 16px; cursor: pointer; width: 100%; margin-top: 15px; }
+          button:hover { opacity: 0.9; }
+          .footer { margin-top: 30px; font-size: 12px; color: #64748b; }
         </style>
       </head>
       <body>
         <div class="box">
           <div class="logo">🔐</div>
           <h2>Admin Access</h2>
-          <p class="subtitle">Dream Hatcher Control Center</p>
           <form method="GET">
             <input type="password" name="pwd" placeholder="Enter admin password" required autofocus>
-            <button type="submit">Authenticate →</button>
+            <button type="submit">Login →</button>
           </form>
-          <div class="footer">
-            Secure Administrative Portal
-            <div class="version">v3.0 Industrial</div>
-          </div>
+          <div class="footer">Dream Hatcher Tech Admin Panel</div>
         </div>
       </body>
       </html>
@@ -1528,21 +1414,8 @@ app.get('/admin', async (req, res) => {
       actionMessage = '✅ User reset to pending (will be re-created on MikroTik)';
     }
 
-    if (action === 'cleanup') {
-      const result = await pool.query(\`
-        DELETE FROM payment_queue
-        WHERE status = 'processed'
-        AND (
-          (plan = '24hr' AND created_at + INTERVAL '24 hours' < NOW())
-          OR (plan = '7d' AND created_at + INTERVAL '7 days' < NOW())
-          OR (plan = '30d' AND created_at + INTERVAL '30 days' < NOW())
-        )
-      \`);
-      actionMessage = \`✅ Cleaned up \${result.rowCount} expired users\`;
-    }
-
     // Get statistics
-    const stats = await pool.query(\`
+    const stats = await pool.query(`
       SELECT
         COUNT(*) as total_payments,
         COUNT(*) FILTER (WHERE status = 'processed') as processed,
@@ -1551,37 +1424,25 @@ app.get('/admin', async (req, res) => {
         COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE - INTERVAL '7 days') as week_count,
         COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE - INTERVAL '30 days') as month_count
       FROM payment_queue
-    \`);
+    `);
 
     // Revenue calculations
-    const revenue = await pool.query(\`
+    const revenue = await pool.query(`
       SELECT
         COALESCE(SUM(CASE WHEN plan = '24hr' THEN 350 WHEN plan = '7d' THEN 2400 WHEN plan = '30d' THEN 7500 ELSE 0 END), 0) as total_revenue,
         COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE THEN (CASE WHEN plan = '24hr' THEN 350 WHEN plan = '7d' THEN 2400 WHEN plan = '30d' THEN 7500 ELSE 0 END) ELSE 0 END), 0) as today_revenue,
         COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' THEN (CASE WHEN plan = '24hr' THEN 350 WHEN plan = '7d' THEN 2400 WHEN plan = '30d' THEN 7500 ELSE 0 END) ELSE 0 END), 0) as week_revenue,
         COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '30 days' THEN (CASE WHEN plan = '24hr' THEN 350 WHEN plan = '7d' THEN 2400 WHEN plan = '30d' THEN 7500 ELSE 0 END) ELSE 0 END), 0) as month_revenue
       FROM payment_queue WHERE status = 'processed'
-    \`);
+    `);
 
     // Plan breakdown
-    const plans = await pool.query(\`
+    const plans = await pool.query(`
       SELECT plan, COUNT(*) as count FROM payment_queue WHERE status = 'processed' GROUP BY plan
-    \`);
+    `);
 
-    // Daily revenue for chart (last 7 days)
-    const dailyRevenue = await pool.query(\`
-      SELECT
-        DATE(created_at) as date,
-        COALESCE(SUM(CASE WHEN plan = '24hr' THEN 350 WHEN plan = '7d' THEN 2400 WHEN plan = '30d' THEN 7500 ELSE 0 END), 0) as revenue,
-        COUNT(*) as signups
-      FROM payment_queue
-      WHERE status = 'processed' AND created_at >= CURRENT_DATE - INTERVAL '7 days'
-      GROUP BY DATE(created_at)
-      ORDER BY date
-    \`);
-
-    // All users (for export and display)
-    const allUsers = await pool.query(\`
+    // Recent payments with expiry
+    const recent = await pool.query(`
       SELECT
         id, mikrotik_username, mikrotik_password, plan, status, mac_address, customer_email, created_at,
         CASE
@@ -1598,40 +1459,8 @@ app.get('/admin', async (req, res) => {
         END as expires_at
       FROM payment_queue
       ORDER BY created_at DESC
-    \`);
-
-    // ========== HANDLE EXPORT ==========
-    if (format === 'csv' || format === 'excel') {
-      const BOM = '\uFEFF'; // UTF-8 BOM for Excel compatibility
-      const headers = ['Username', 'Password', 'Plan', 'Status', 'MAC Address', 'Email', 'Created', 'Expires'];
-
-      const rows = allUsers.rows.map(row => {
-        // Use clean text instead of emojis for Excel compatibility
-        const planText = row.plan === '24hr' ? 'Daily (24hr)' : row.plan === '7d' ? 'Weekly (7 days)' : 'Monthly (30 days)';
-        const statusText = row.real_status === 'active' ? 'ACTIVE' : row.real_status === 'expired' ? 'EXPIRED' : 'PENDING';
-
-        return [
-          row.mikrotik_username,
-          row.mikrotik_password,
-          planText,
-          statusText,
-          row.mac_address || 'N/A',
-          row.customer_email || 'N/A',
-          new Date(row.created_at).toISOString().slice(0, 19).replace('T', ' '),
-          row.expires_at ? new Date(row.expires_at).toISOString().slice(0, 19).replace('T', ' ') : 'N/A'
-        ];
-      });
-
-      const csvContent = BOM + [headers, ...rows]
-        .map(row => row.map(cell => \`"\${String(cell).replace(/"/g, '""')}"\`).join(','))
-        .join('\r\n');
-
-      const filename = \`dreamhatcher_users_\${new Date().toISOString().slice(0,10)}.csv\`;
-
-      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-      res.setHeader('Content-Disposition', \`attachment; filename="\${filename}"\`);
-      return res.send(csvContent);
-    }
+      LIMIT 50
+    `);
 
     const s = stats.rows[0];
     const r = revenue.rows[0];
@@ -1639,477 +1468,174 @@ app.get('/admin', async (req, res) => {
     plans.rows.forEach(p => { planData[p.plan] = parseInt(p.count); });
 
     // Count by status
-    const activeCount = allUsers.rows.filter(r => r.real_status === 'active').length;
-    const expiredCount = allUsers.rows.filter(r => r.real_status === 'expired').length;
-    const pendingCount = allUsers.rows.filter(r => r.real_status === 'pending').length;
+    const activeCount = recent.rows.filter(r => r.real_status === 'active').length;
+    const expiredCount = recent.rows.filter(r => r.real_status === 'expired').length;
 
-    // Prepare chart data
-    const chartLabels = dailyRevenue.rows.map(d => new Date(d.date).toLocaleDateString('en-NG', { weekday: 'short', day: 'numeric' }));
-    const chartRevenue = dailyRevenue.rows.map(d => parseInt(d.revenue));
-    const chartSignups = dailyRevenue.rows.map(d => parseInt(d.signups));
-
-    const html = \`
+    const html = `
     <!DOCTYPE html>
     <html>
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>Admin Dashboard - Dream Hatcher</title>
-      <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-      <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
       <style>
-        :root {
-          --bg-primary: #0f0f14;
-          --bg-secondary: #16161e;
-          --bg-tertiary: #1e1e2a;
-          --border: rgba(255,255,255,0.08);
-          --text-primary: #f8fafc;
-          --text-secondary: #94a3b8;
-          --text-muted: #64748b;
-          --accent-blue: #00d4ff;
-          --accent-purple: #8b5cf6;
-          --accent-green: #10b981;
-          --accent-red: #ef4444;
-          --accent-orange: #f59e0b;
-          --accent-pink: #ec4899;
-          --shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-          font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-          background: var(--bg-primary);
+          font-family: 'Segoe UI', Arial, sans-serif;
+          background: linear-gradient(135deg, #0a0e1a 0%, #1a1a2e 100%);
           min-height: 100vh;
-          color: var(--text-primary);
-          line-height: 1.6;
+          color: white;
+          padding: 20px;
         }
-
-        /* Sidebar */
-        .sidebar {
-          position: fixed;
-          left: 0;
-          top: 0;
-          bottom: 0;
-          width: 260px;
-          background: var(--bg-secondary);
-          border-right: 1px solid var(--border);
-          padding: 24px;
-          display: flex;
-          flex-direction: column;
-          z-index: 100;
-          transition: transform 0.3s ease;
-        }
-        .sidebar-header {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          padding-bottom: 24px;
-          border-bottom: 1px solid var(--border);
-          margin-bottom: 24px;
-        }
-        .sidebar-logo {
-          width: 44px;
-          height: 44px;
-          background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
-          border-radius: 12px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 20px;
-        }
-        .sidebar-title h1 { font-size: 16px; font-weight: 700; }
-        .sidebar-title span { font-size: 11px; color: var(--text-muted); }
-        .nav-section { margin-bottom: 24px; }
-        .nav-section-title {
-          font-size: 11px;
-          font-weight: 600;
-          color: var(--text-muted);
-          text-transform: uppercase;
-          letter-spacing: 0.5px;
-          margin-bottom: 12px;
-        }
-        .nav-item {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          padding: 12px 16px;
-          border-radius: 10px;
-          color: var(--text-secondary);
-          text-decoration: none;
-          font-size: 14px;
-          font-weight: 500;
-          transition: all 0.2s ease;
-          margin-bottom: 4px;
-          cursor: pointer;
-        }
-        .nav-item:hover { background: var(--bg-tertiary); color: var(--text-primary); }
-        .nav-item.active { background: rgba(0, 212, 255, 0.1); color: var(--accent-blue); }
-        .nav-item .icon { font-size: 18px; }
-        .sidebar-footer {
-          margin-top: auto;
-          padding-top: 24px;
-          border-top: 1px solid var(--border);
-        }
-
-        /* Main Content */
-        .main {
-          margin-left: 260px;
-          padding: 24px 32px;
-          min-height: 100vh;
-        }
-
-        /* Header */
         .header {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          margin-bottom: 32px;
+          padding: 15px 0 25px;
+          border-bottom: 1px solid rgba(255,255,255,0.1);
+          margin-bottom: 25px;
           flex-wrap: wrap;
-          gap: 16px;
+          gap: 15px;
         }
-        .header-left h2 { font-size: 24px; font-weight: 700; }
-        .header-left p { color: var(--text-muted); font-size: 14px; margin-top: 4px; }
-        .header-right { display: flex; gap: 12px; align-items: center; }
-
-        /* Buttons */
+        .header-left h1 { color: #00d4ff; font-size: 1.5rem; }
+        .header-left p { color: #64748b; font-size: 0.85rem; margin-top: 3px; }
+        .header-right { display: flex; gap: 10px; align-items: center; }
         .btn {
           padding: 10px 20px;
-          border-radius: 10px;
+          border-radius: 8px;
           border: none;
           font-weight: 600;
           cursor: pointer;
-          font-size: 13px;
+          font-size: 0.85rem;
           text-decoration: none;
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          transition: all 0.2s ease;
-        }
-        .btn:hover { transform: translateY(-1px); }
-        .btn-primary { background: linear-gradient(135deg, var(--accent-blue), #0066ff); color: white; }
-        .btn-primary:hover { box-shadow: 0 8px 25px rgba(0, 212, 255, 0.3); }
-        .btn-danger { background: rgba(239, 68, 68, 0.15); color: var(--accent-red); border: 1px solid rgba(239, 68, 68, 0.3); }
-        .btn-danger:hover { background: rgba(239, 68, 68, 0.25); }
-        .btn-success { background: rgba(16, 185, 129, 0.15); color: var(--accent-green); border: 1px solid rgba(16, 185, 129, 0.3); }
-        .btn-success:hover { background: rgba(16, 185, 129, 0.25); }
-        .btn-secondary { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); }
-        .btn-secondary:hover { background: rgba(255,255,255,0.1); }
-        .btn-ghost { background: transparent; color: var(--text-secondary); }
-        .btn-ghost:hover { background: var(--bg-tertiary); color: var(--text-primary); }
-
-        /* Session Timer */
-        .session-badge {
-          background: rgba(245, 158, 11, 0.15);
-          color: var(--accent-orange);
-          padding: 8px 16px;
-          border-radius: 10px;
-          font-size: 13px;
-          font-weight: 600;
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          border: 1px solid rgba(245, 158, 11, 0.3);
-        }
-        .session-badge.warning { background: rgba(239, 68, 68, 0.15); color: var(--accent-red); border-color: rgba(239, 68, 68, 0.3); }
-
-        /* Stats Grid */
-        .stats-grid {
-          display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          gap: 20px;
-          margin-bottom: 32px;
-        }
-        .stat-card {
-          background: var(--bg-secondary);
-          border: 1px solid var(--border);
-          border-radius: 16px;
-          padding: 24px;
-          position: relative;
-          overflow: hidden;
-          transition: all 0.3s ease;
-        }
-        .stat-card::before {
-          content: '';
-          position: absolute;
-          top: 0;
-          left: 0;
-          right: 0;
-          height: 3px;
-          background: linear-gradient(90deg, var(--card-accent, var(--accent-blue)), transparent);
-        }
-        .stat-card:hover { transform: translateY(-4px); box-shadow: var(--shadow); }
-        .stat-card.revenue { --card-accent: var(--accent-green); }
-        .stat-card.users { --card-accent: var(--accent-blue); }
-        .stat-card.active { --card-accent: var(--accent-purple); }
-        .stat-card.expired { --card-accent: var(--accent-red); }
-        .stat-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          margin-bottom: 16px;
-        }
-        .stat-icon {
-          width: 48px;
-          height: 48px;
-          border-radius: 12px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 22px;
-        }
-        .stat-icon.green { background: rgba(16, 185, 129, 0.15); }
-        .stat-icon.blue { background: rgba(0, 212, 255, 0.15); }
-        .stat-icon.purple { background: rgba(139, 92, 246, 0.15); }
-        .stat-icon.red { background: rgba(239, 68, 68, 0.15); }
-        .stat-icon.orange { background: rgba(245, 158, 11, 0.15); }
-        .stat-trend {
-          display: flex;
-          align-items: center;
-          gap: 4px;
-          font-size: 12px;
-          font-weight: 600;
-          padding: 4px 8px;
-          border-radius: 6px;
-        }
-        .stat-trend.up { background: rgba(16, 185, 129, 0.15); color: var(--accent-green); }
-        .stat-trend.down { background: rgba(239, 68, 68, 0.15); color: var(--accent-red); }
-        .stat-value {
-          font-size: 32px;
-          font-weight: 800;
-          line-height: 1;
-          margin-bottom: 4px;
-        }
-        .stat-value.money { color: var(--accent-green); }
-        .stat-label { color: var(--text-muted); font-size: 13px; }
-
-        /* Cards */
-        .card {
-          background: var(--bg-secondary);
-          border: 1px solid var(--border);
-          border-radius: 16px;
-          margin-bottom: 24px;
-          overflow: hidden;
-        }
-        .card-header {
-          padding: 20px 24px;
-          border-bottom: 1px solid var(--border);
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          flex-wrap: wrap;
-          gap: 12px;
-        }
-        .card-title {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          font-size: 16px;
-          font-weight: 600;
-        }
-        .card-title .icon {
-          width: 36px;
-          height: 36px;
-          background: var(--bg-tertiary);
-          border-radius: 10px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-        .card-body { padding: 24px; }
-
-        /* Tools Grid */
-        .tools-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-          gap: 20px;
-        }
-        .tool-card {
-          background: var(--bg-tertiary);
-          border-radius: 14px;
-          padding: 24px;
-          border: 1px solid var(--border);
-          transition: all 0.3s ease;
-        }
-        .tool-card:hover { border-color: rgba(0, 212, 255, 0.3); }
-        .tool-header {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          margin-bottom: 12px;
-        }
-        .tool-icon {
-          width: 42px;
-          height: 42px;
-          background: linear-gradient(135deg, rgba(0, 212, 255, 0.2), rgba(139, 92, 246, 0.2));
-          border-radius: 10px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 18px;
-        }
-        .tool-header h3 { font-size: 15px; font-weight: 600; }
-        .tool-desc { color: var(--text-muted); font-size: 13px; margin-bottom: 16px; }
-        .tool-card input, .tool-card select {
-          width: 100%;
-          padding: 12px 16px;
-          border-radius: 10px;
-          border: 1px solid var(--border);
-          background: var(--bg-secondary);
-          color: var(--text-primary);
-          font-size: 14px;
-          margin-bottom: 12px;
-          transition: all 0.2s ease;
-        }
-        .tool-card input:focus, .tool-card select:focus {
-          outline: none;
-          border-color: var(--accent-blue);
-          box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.1);
-        }
-        .tool-card input::placeholder { color: var(--text-muted); }
-
-        /* Table */
-        .table-container { overflow-x: auto; }
-        table { width: 100%; border-collapse: collapse; }
-        th {
-          padding: 14px 16px;
-          text-align: left;
-          font-size: 11px;
-          font-weight: 600;
-          text-transform: uppercase;
-          letter-spacing: 0.5px;
-          color: var(--text-muted);
-          background: var(--bg-tertiary);
-          border-bottom: 1px solid var(--border);
-          white-space: nowrap;
-        }
-        td {
-          padding: 16px;
-          border-bottom: 1px solid var(--border);
-          font-size: 14px;
-          vertical-align: middle;
-        }
-        tr:hover td { background: rgba(255, 255, 255, 0.02); }
-        tr:last-child td { border-bottom: none; }
-
-        /* Badges */
-        .badge {
-          padding: 6px 12px;
-          border-radius: 8px;
-          font-size: 12px;
-          font-weight: 600;
           display: inline-flex;
           align-items: center;
           gap: 6px;
-          white-space: nowrap;
         }
-        .badge-active { background: rgba(16, 185, 129, 0.15); color: var(--accent-green); }
-        .badge-expired { background: rgba(239, 68, 68, 0.15); color: var(--accent-red); }
-        .badge-pending { background: rgba(245, 158, 11, 0.15); color: var(--accent-orange); }
-        .badge-daily { background: rgba(59, 130, 246, 0.15); color: #3b82f6; }
-        .badge-weekly { background: rgba(139, 92, 246, 0.15); color: var(--accent-purple); }
-        .badge-monthly { background: rgba(236, 72, 153, 0.15); color: var(--accent-pink); }
-
-        /* Actions */
-        .actions { display: flex; gap: 8px; }
-        .action-btn {
-          width: 34px;
-          height: 34px;
+        .btn-primary { background: linear-gradient(135deg, #00c9ff, #0066ff); color: white; }
+        .btn-danger { background: linear-gradient(135deg, #ef4444, #dc2626); color: white; }
+        .btn-success { background: linear-gradient(135deg, #10b981, #059669); color: white; }
+        .btn-secondary { background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.2); }
+        .btn:hover { opacity: 0.9; transform: translateY(-1px); }
+        .session-timer {
+          background: rgba(245,158,11,0.2);
+          color: #fbbf24;
+          padding: 8px 15px;
           border-radius: 8px;
-          border: none;
+          font-size: 0.8rem;
           display: flex;
           align-items: center;
-          justify-content: center;
-          cursor: pointer;
-          transition: all 0.2s ease;
-          background: var(--bg-tertiary);
-          color: var(--text-secondary);
-          text-decoration: none;
-          font-size: 14px;
+          gap: 8px;
         }
-        .action-btn:hover { background: rgba(255, 255, 255, 0.1); color: var(--text-primary); transform: scale(1.05); }
-        .action-btn.extend:hover { background: rgba(16, 185, 129, 0.2); color: var(--accent-green); }
-        .action-btn.delete:hover { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); }
-
-        /* Special text */
-        .mac { font-family: 'SF Mono', 'Monaco', monospace; font-size: 12px; color: var(--text-muted); }
-        .password {
-          font-family: 'SF Mono', 'Monaco', monospace;
-          color: var(--accent-orange);
-          cursor: pointer;
-          padding: 4px 8px;
-          background: rgba(245, 158, 11, 0.1);
-          border-radius: 6px;
-          transition: all 0.2s ease;
+        .stats-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+          gap: 15px;
+          margin-bottom: 25px;
         }
-        .password:hover { background: rgba(245, 158, 11, 0.2); }
-        .time { color: var(--text-muted); font-size: 13px; }
-
-        /* Filters */
-        .filters {
+        .stat-card {
+          background: rgba(255,255,255,0.05);
+          border: 1px solid rgba(255,255,255,0.1);
+          border-radius: 16px;
+          padding: 20px;
+          text-align: center;
+          transition: transform 0.2s;
+        }
+        .stat-card:hover { transform: translateY(-3px); }
+        .stat-card.highlight { background: linear-gradient(135deg, rgba(0,201,255,0.15), rgba(146,254,157,0.1)); border-color: rgba(0,201,255,0.3); }
+        .stat-icon { font-size: 1.8rem; margin-bottom: 8px; }
+        .stat-value { font-size: 1.8rem; font-weight: 800; color: #00d4ff; }
+        .stat-value.money { color: #10b981; }
+        .stat-label { color: #94a3b8; font-size: 0.8rem; margin-top: 5px; }
+        .section {
+          background: rgba(255,255,255,0.05);
+          border: 1px solid rgba(255,255,255,0.1);
+          border-radius: 16px;
+          padding: 20px;
+          margin-bottom: 20px;
+        }
+        .section h2 {
+          color: #00d4ff;
+          font-size: 1.1rem;
+          margin-bottom: 15px;
           display: flex;
-          gap: 12px;
-          flex-wrap: wrap;
           align-items: center;
+          gap: 10px;
         }
-        .filter-group {
-          display: flex;
-          background: var(--bg-tertiary);
-          border-radius: 10px;
-          overflow: hidden;
-          border: 1px solid var(--border);
+        .tools-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+          gap: 15px;
         }
-        .filter-btn {
-          padding: 8px 16px;
-          border: none;
-          background: transparent;
-          color: var(--text-secondary);
-          font-size: 13px;
-          font-weight: 500;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-        .filter-btn:hover { color: var(--text-primary); }
-        .filter-btn.active { background: var(--accent-blue); color: white; }
-        .search-input {
-          background: var(--bg-tertiary);
-          border: 1px solid var(--border);
-          border-radius: 10px;
-          padding: 10px 16px;
-          color: var(--text-primary);
-          font-size: 14px;
-          min-width: 250px;
-        }
-        .search-input:focus {
-          outline: none;
-          border-color: var(--accent-blue);
-        }
-
-        /* Alert */
-        .alert {
-          padding: 16px 20px;
+        .tool-card {
+          background: rgba(0,0,0,0.2);
           border-radius: 12px;
-          margin-bottom: 24px;
+          padding: 20px;
+        }
+        .tool-card h3 { color: #f8fafc; font-size: 1rem; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+        .tool-card p { color: #94a3b8; font-size: 0.85rem; margin-bottom: 15px; }
+        .tool-card input, .tool-card select {
+          width: 100%;
+          padding: 10px 12px;
+          border-radius: 8px;
+          border: 1px solid rgba(255,255,255,0.1);
+          background: rgba(255,255,255,0.05);
+          color: white;
+          font-size: 0.9rem;
+          margin-bottom: 10px;
+        }
+        .tool-card input:focus, .tool-card select:focus { outline: none; border-color: #00d4ff; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px 10px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.85rem; }
+        th { color: #64748b; font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        tr:hover { background: rgba(255,255,255,0.02); }
+        .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.7rem; font-weight: 600; }
+        .badge-active { background: rgba(16,185,129,0.2); color: #10b981; }
+        .badge-expired { background: rgba(239,68,68,0.2); color: #ef4444; }
+        .badge-pending { background: rgba(245,158,11,0.2); color: #f59e0b; }
+        .badge-daily { background: rgba(59,130,246,0.2); color: #3b82f6; }
+        .badge-weekly { background: rgba(139,92,246,0.2); color: #8b5cf6; }
+        .badge-monthly { background: rgba(236,72,153,0.2); color: #ec4899; }
+        .actions { display: flex; gap: 5px; }
+        .action-btn {
+          padding: 5px 10px;
+          border-radius: 6px;
+          border: none;
+          font-size: 0.75rem;
+          cursor: pointer;
+          background: rgba(255,255,255,0.1);
+          color: white;
+        }
+        .action-btn:hover { background: rgba(255,255,255,0.2); }
+        .action-btn.delete { background: rgba(239,68,68,0.2); color: #ef4444; }
+        .action-btn.extend { background: rgba(16,185,129,0.2); color: #10b981; }
+        .mac { font-family: monospace; font-size: 0.75rem; color: #64748b; }
+        .password { font-family: monospace; color: #fbbf24; cursor: pointer; }
+        .time { color: #64748b; font-size: 0.8rem; }
+        .alert {
+          padding: 15px 20px;
+          border-radius: 12px;
+          margin-bottom: 20px;
           display: flex;
           align-items: center;
-          gap: 12px;
-          animation: slideIn 0.3s ease;
+          gap: 10px;
         }
-        @keyframes slideIn {
-          from { opacity: 0; transform: translateY(-10px); }
-          to { opacity: 1; transform: translateY(0); }
+        .alert-success { background: rgba(16,185,129,0.2); border: 1px solid rgba(16,185,129,0.3); color: #10b981; }
+        .alert-error { background: rgba(239,68,68,0.2); border: 1px solid rgba(239,68,68,0.3); color: #ef4444; }
+        .search-box {
+          display: flex;
+          gap: 10px;
+          margin-bottom: 15px;
         }
-        .alert-success {
-          background: rgba(16, 185, 129, 0.1);
-          border: 1px solid rgba(16, 185, 129, 0.3);
-          color: var(--accent-green);
+        .search-box input {
+          flex: 1;
+          padding: 10px 15px;
+          border-radius: 8px;
+          border: 1px solid rgba(255,255,255,0.1);
+          background: rgba(0,0,0,0.2);
+          color: white;
+          font-size: 0.9rem;
         }
-
-        /* Chart Container */
-        .chart-container {
-          height: 250px;
-          position: relative;
-        }
-
-        /* Modal */
         .modal {
           display: none;
           position: fixed;
@@ -2117,47 +1643,26 @@ app.get('/admin', async (req, res) => {
           left: 0;
           width: 100%;
           height: 100%;
-          background: rgba(0, 0, 0, 0.7);
-          backdrop-filter: blur(4px);
+          background: rgba(0,0,0,0.8);
           z-index: 1000;
           align-items: center;
           justify-content: center;
         }
         .modal.active { display: flex; }
         .modal-content {
-          background: var(--bg-secondary);
-          border-radius: 20px;
-          padding: 32px;
-          max-width: 440px;
+          background: #1a1a2e;
+          border-radius: 16px;
+          padding: 30px;
+          max-width: 400px;
           width: 90%;
-          border: 1px solid var(--border);
-          box-shadow: var(--shadow);
-          animation: modalIn 0.3s ease;
+          border: 1px solid rgba(255,255,255,0.1);
         }
-        @keyframes modalIn {
-          from { opacity: 0; transform: scale(0.95); }
-          to { opacity: 1; transform: scale(1); }
+        .modal-content h3 { margin-bottom: 20px; color: #00d4ff; }
+        @media (max-width: 768px) {
+          .stats-grid { grid-template-columns: 1fr 1fr; }
+          .header { flex-direction: column; text-align: center; }
+          th, td { padding: 8px 5px; font-size: 0.75rem; }
         }
-        .modal-header {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          margin-bottom: 20px;
-        }
-        .modal-icon {
-          width: 48px;
-          height: 48px;
-          background: linear-gradient(135deg, rgba(0, 212, 255, 0.2), rgba(139, 92, 246, 0.2));
-          border-radius: 12px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 22px;
-        }
-        .modal-title h3 { font-size: 18px; font-weight: 600; }
-        .modal-title p { color: var(--text-muted); font-size: 13px; margin-top: 2px; }
-
-        /* Logout Overlay */
         .logout-overlay {
           display: none;
           position: fixed;
@@ -2165,523 +1670,197 @@ app.get('/admin', async (req, res) => {
           left: 0;
           width: 100%;
           height: 100%;
-          background: rgba(15, 15, 20, 0.98);
+          background: rgba(0,0,0,0.95);
           z-index: 2000;
           align-items: center;
           justify-content: center;
           flex-direction: column;
         }
         .logout-overlay.active { display: flex; }
-        .logout-icon {
-          width: 80px;
-          height: 80px;
-          background: rgba(239, 68, 68, 0.15);
-          border-radius: 50%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 36px;
-          margin-bottom: 24px;
-        }
-        .logout-overlay h2 { color: var(--text-primary); margin-bottom: 8px; }
-        .logout-overlay p { color: var(--text-muted); margin-bottom: 24px; }
-
-        /* Responsive */
-        @media (max-width: 1200px) {
-          .stats-grid { grid-template-columns: repeat(2, 1fr); }
-        }
-        @media (max-width: 900px) {
-          .sidebar { transform: translateX(-100%); }
-          .sidebar.open { transform: translateX(0); }
-          .main { margin-left: 0; }
-          .mobile-menu { display: flex !important; }
-        }
-        @media (max-width: 600px) {
-          .stats-grid { grid-template-columns: 1fr; }
-          .header { flex-direction: column; align-items: flex-start; }
-          .tools-grid { grid-template-columns: 1fr; }
-        }
-
-        .mobile-menu {
-          display: none;
-          width: 44px;
-          height: 44px;
-          background: var(--bg-secondary);
-          border: 1px solid var(--border);
-          border-radius: 10px;
-          align-items: center;
-          justify-content: center;
-          cursor: pointer;
-          font-size: 20px;
-        }
-
-        /* Keyboard shortcuts hint */
-        .shortcuts {
-          position: fixed;
-          bottom: 20px;
-          right: 20px;
-          background: var(--bg-secondary);
-          border: 1px solid var(--border);
-          border-radius: 12px;
-          padding: 12px 16px;
-          font-size: 12px;
-          color: var(--text-muted);
-          z-index: 50;
-        }
-        .shortcuts kbd {
-          background: var(--bg-tertiary);
-          padding: 2px 6px;
-          border-radius: 4px;
-          font-family: monospace;
-          margin: 0 2px;
-        }
-
-        /* Pulse animation for live indicator */
-        .live-indicator {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          color: var(--accent-green);
-          font-size: 13px;
-          font-weight: 500;
-        }
-        .live-dot {
-          width: 8px;
-          height: 8px;
-          background: var(--accent-green);
-          border-radius: 50%;
-          animation: pulse 2s infinite;
-        }
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
+        .logout-overlay h2 { color: #ef4444; margin-bottom: 20px; }
       </style>
     </head>
     <body>
       <!-- Session timeout overlay -->
       <div class="logout-overlay" id="logoutOverlay">
-        <div class="logout-icon">⏰</div>
-        <h2>Session Expired</h2>
-        <p>You've been logged out due to inactivity</p>
+        <h2>⏰ Session Expired</h2>
+        <p style="color: #94a3b8; margin-bottom: 20px;">You've been logged out due to inactivity.</p>
         <a href="/admin" class="btn btn-primary">🔐 Login Again</a>
       </div>
 
       <!-- Extend Plan Modal -->
       <div class="modal" id="extendModal">
         <div class="modal-content">
-          <div class="modal-header">
-            <div class="modal-icon">⏰</div>
-            <div class="modal-title">
-              <h3>Extend Plan</h3>
-              <p>Update subscription for <strong id="extendUsername"></strong></p>
-            </div>
-          </div>
+          <h3>⏰ Extend User Plan</h3>
+          <p style="color: #94a3b8; margin-bottom: 20px;">Select new plan for <strong id="extendUsername"></strong></p>
           <form id="extendForm" method="GET">
-            <input type="hidden" name="pwd" value="\${pwd}">
+            <input type="hidden" name="pwd" value="${pwd}">
             <input type="hidden" name="action" value="extend">
             <input type="hidden" name="userId" id="extendUserId">
-            <select name="newPlan" style="width: 100%; padding: 14px; border-radius: 10px; margin-bottom: 20px; background: var(--bg-tertiary); border: 1px solid var(--border); color: white; font-size: 14px;">
-              <option value="24hr">⚡ Daily — 24 hours</option>
-              <option value="7d">🚀 Weekly — 7 days</option>
-              <option value="30d">👑 Monthly — 30 days</option>
+            <select name="newPlan" style="width: 100%; padding: 12px; border-radius: 8px; margin-bottom: 15px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: white;">
+              <option value="24hr">⚡ Daily (24 hours)</option>
+              <option value="7d">🚀 Weekly (7 days)</option>
+              <option value="30d">👑 Monthly (30 days)</option>
             </select>
-            <div style="display: flex; gap: 12px;">
+            <div style="display: flex; gap: 10px;">
               <button type="button" class="btn btn-secondary" onclick="closeExtendModal()" style="flex: 1;">Cancel</button>
-              <button type="submit" class="btn btn-success" style="flex: 1;">✓ Extend Plan</button>
+              <button type="submit" class="btn btn-success" style="flex: 1;">Extend Plan</button>
             </div>
           </form>
         </div>
       </div>
 
-      <!-- Confirm Modal -->
-      <div class="modal" id="confirmModal">
-        <div class="modal-content">
-          <div class="modal-header">
-            <div class="modal-icon" id="confirmIcon">⚠️</div>
-            <div class="modal-title">
-              <h3 id="confirmTitle">Confirm Action</h3>
-              <p id="confirmMessage">Are you sure?</p>
-            </div>
+      <div class="header">
+        <div class="header-left">
+          <h1>🌐 Dream Hatcher Admin</h1>
+          <p>WiFi Business Dashboard</p>
+        </div>
+        <div class="header-right">
+          <div class="session-timer">
+            <span>⏱️</span>
+            <span id="sessionTimer">5:00</span>
           </div>
-          <div style="display: flex; gap: 12px;">
-            <button class="btn btn-secondary" onclick="closeConfirmModal()" style="flex: 1;">Cancel</button>
-            <a href="#" id="confirmLink" class="btn btn-danger" style="flex: 1; justify-content: center;">Confirm</a>
+          <button class="btn btn-primary" onclick="location.reload()">🔄 Refresh</button>
+          <a href="/admin" class="btn btn-danger">🚪 Logout</a>
+        </div>
+      </div>
+
+      ${actionMessage ? `<div class="alert alert-success">${actionMessage}</div>` : ''}
+
+      <!-- Revenue Stats -->
+      <div class="stats-grid">
+        <div class="stat-card highlight">
+          <div class="stat-icon">💰</div>
+          <div class="stat-value money">₦${Number(r.today_revenue).toLocaleString()}</div>
+          <div class="stat-label">Today's Revenue</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">📅</div>
+          <div class="stat-value money">₦${Number(r.week_revenue).toLocaleString()}</div>
+          <div class="stat-label">This Week</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">📆</div>
+          <div class="stat-value money">₦${Number(r.month_revenue).toLocaleString()}</div>
+          <div class="stat-label">This Month</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">🏆</div>
+          <div class="stat-value money">₦${Number(r.total_revenue).toLocaleString()}</div>
+          <div class="stat-label">All-Time Revenue</div>
+        </div>
+      </div>
+
+      <!-- User Stats -->
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-icon">👥</div>
+          <div class="stat-value">${s.total_payments}</div>
+          <div class="stat-label">Total Users</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">✅</div>
+          <div class="stat-value" style="color: #10b981;">${activeCount}</div>
+          <div class="stat-label">Active Now</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">❌</div>
+          <div class="stat-value" style="color: #ef4444;">${expiredCount}</div>
+          <div class="stat-label">Expired</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">📈</div>
+          <div class="stat-value">${s.today_count}</div>
+          <div class="stat-label">Today's Signups</div>
+        </div>
+      </div>
+
+      <!-- Admin Tools -->
+      <div class="section">
+        <h2>🛠️ Admin Tools</h2>
+        <div class="tools-grid">
+          <div class="tool-card">
+            <h3>🔍 Search User</h3>
+            <p>Find user by username or MAC address</p>
+            <input type="text" id="searchInput" placeholder="Enter username or MAC..." onkeyup="searchTable()">
+          </div>
+          <div class="tool-card">
+            <h3>📊 Export Data</h3>
+            <p>Download payment records as CSV</p>
+            <button class="btn btn-primary" onclick="exportCSV()" style="width: 100%;">📥 Download CSV</button>
+          </div>
+          <div class="tool-card">
+            <h3>🧹 Cleanup Expired</h3>
+            <p>Remove expired users from database</p>
+            <a href="/admin?pwd=${pwd}&action=cleanup" class="btn btn-danger" style="width: 100%; justify-content: center;" onclick="return confirm('Delete all expired users?')">🗑️ Delete Expired</a>
           </div>
         </div>
       </div>
 
-      <!-- Sidebar -->
-      <aside class="sidebar" id="sidebar">
-        <div class="sidebar-header">
-          <div class="sidebar-logo">🌐</div>
-          <div class="sidebar-title">
-            <h1>Dream Hatcher</h1>
-            <span>Admin Dashboard</span>
-          </div>
+      <!-- Recent Payments Table -->
+      <div class="section">
+        <h2>📋 All Users (${recent.rows.length})</h2>
+        <div style="overflow-x: auto;">
+          <table id="usersTable">
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>Password</th>
+                <th>Plan</th>
+                <th>Status</th>
+                <th>Expires</th>
+                <th>MAC</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${recent.rows.map(row => `
+                <tr data-search="${row.mikrotik_username} ${row.mac_address || ''}">
+                  <td><strong>${row.mikrotik_username}</strong></td>
+                  <td><span class="password" onclick="copyText(this)" title="Click to copy">${row.mikrotik_password}</span></td>
+                  <td>
+                    <span class="badge badge-${row.plan === '24hr' ? 'daily' : row.plan === '7d' ? 'weekly' : 'monthly'}">
+                      ${row.plan === '24hr' ? '⚡ Daily' : row.plan === '7d' ? '🚀 Weekly' : '👑 Monthly'}
+                    </span>
+                  </td>
+                  <td>
+                    <span class="badge ${row.real_status === 'active' ? 'badge-active' : row.real_status === 'expired' ? 'badge-expired' : 'badge-pending'}">
+                      ${row.real_status === 'active' ? '✅ Active' : row.real_status === 'expired' ? '❌ Expired' : '⏳ Pending'}
+                    </span>
+                  </td>
+                  <td class="time">${row.expires_at ? new Date(row.expires_at).toLocaleString('en-NG', { dateStyle: 'short', timeStyle: 'short' }) : 'N/A'}</td>
+                  <td class="mac">${row.mac_address || 'N/A'}</td>
+                  <td class="time">${new Date(row.created_at).toLocaleString('en-NG', { dateStyle: 'short', timeStyle: 'short' })}</td>
+                  <td class="actions">
+                    <button class="action-btn extend" onclick="openExtendModal('${row.id}', '${row.mikrotik_username}')" title="Extend Plan">⏰</button>
+                    <a href="/admin?pwd=${pwd}&action=reset&userId=${row.id}" class="action-btn" onclick="return confirm('Reset this user to pending?')" title="Reset">🔄</a>
+                    <a href="/admin?pwd=${pwd}&action=delete&userId=${row.id}" class="action-btn delete" onclick="return confirm('Delete this user permanently?')" title="Delete">🗑️</a>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
         </div>
+      </div>
 
-        <div class="nav-section">
-          <div class="nav-section-title">Overview</div>
-          <a class="nav-item active" onclick="scrollToSection('stats')">
-            <span class="icon">📊</span> Dashboard
-          </a>
-          <a class="nav-item" onclick="scrollToSection('chart')">
-            <span class="icon">📈</span> Analytics
-          </a>
-        </div>
-
-        <div class="nav-section">
-          <div class="nav-section-title">Management</div>
-          <a class="nav-item" onclick="scrollToSection('tools')">
-            <span class="icon">🛠️</span> Admin Tools
-          </a>
-          <a class="nav-item" onclick="scrollToSection('users')">
-            <span class="icon">👥</span> All Users
-          </a>
-        </div>
-
-        <div class="nav-section">
-          <div class="nav-section-title">Quick Actions</div>
-          <a class="nav-item" href="/admin?pwd=\${pwd}&format=csv">
-            <span class="icon">📥</span> Export CSV
-          </a>
-          <a class="nav-item" onclick="showConfirm('Cleanup Expired', 'Remove all expired users from database?', '/admin?pwd=\${pwd}&action=cleanup', '🧹')">
-            <span class="icon">🧹</span> Cleanup Expired
-          </a>
-        </div>
-
-        <div class="sidebar-footer">
-          <div class="live-indicator">
-            <span class="live-dot"></span>
-            System Online
-          </div>
-          <div style="margin-top: 12px; font-size: 11px; color: var(--text-muted);">
-            v3.0 Industrial Grade
-          </div>
-        </div>
-      </aside>
-
-      <!-- Main Content -->
-      <main class="main">
-        <div class="header">
-          <div class="header-left">
-            <div class="mobile-menu" onclick="toggleSidebar()">☰</div>
-            <h2>Dashboard Overview</h2>
-            <p>Monitor your WiFi business in real-time</p>
-          </div>
-          <div class="header-right">
-            <div class="session-badge" id="sessionBadge">
-              <span>⏱️</span>
-              <span id="sessionTimer">5:00</span>
-            </div>
-            <button class="btn btn-secondary" onclick="location.reload()">
-              <span>🔄</span> Refresh
-            </button>
-            <a href="/admin" class="btn btn-danger">
-              <span>🚪</span> Logout
-            </a>
-          </div>
-        </div>
-
-        \${actionMessage ? \`<div class="alert alert-success">✓ \${actionMessage}</div>\` : ''}
-
-        <!-- Stats Section -->
-        <section id="stats">
-          <div class="stats-grid">
-            <div class="stat-card revenue">
-              <div class="stat-header">
-                <div class="stat-icon green">💰</div>
-              </div>
-              <div class="stat-value money">₦\${Number(r.today_revenue).toLocaleString()}</div>
-              <div class="stat-label">Today's Revenue</div>
-            </div>
-            <div class="stat-card revenue">
-              <div class="stat-header">
-                <div class="stat-icon green">📅</div>
-              </div>
-              <div class="stat-value money">₦\${Number(r.week_revenue).toLocaleString()}</div>
-              <div class="stat-label">This Week</div>
-            </div>
-            <div class="stat-card revenue">
-              <div class="stat-header">
-                <div class="stat-icon green">📆</div>
-              </div>
-              <div class="stat-value money">₦\${Number(r.month_revenue).toLocaleString()}</div>
-              <div class="stat-label">This Month</div>
-            </div>
-            <div class="stat-card revenue">
-              <div class="stat-header">
-                <div class="stat-icon green">🏆</div>
-              </div>
-              <div class="stat-value money">₦\${Number(r.total_revenue).toLocaleString()}</div>
-              <div class="stat-label">All-Time Revenue</div>
-            </div>
-          </div>
-
-          <div class="stats-grid">
-            <div class="stat-card users">
-              <div class="stat-header">
-                <div class="stat-icon blue">👥</div>
-              </div>
-              <div class="stat-value">\${s.total_payments}</div>
-              <div class="stat-label">Total Users</div>
-            </div>
-            <div class="stat-card active">
-              <div class="stat-header">
-                <div class="stat-icon purple">✅</div>
-              </div>
-              <div class="stat-value" style="color: var(--accent-green);">\${activeCount}</div>
-              <div class="stat-label">Active Now</div>
-            </div>
-            <div class="stat-card expired">
-              <div class="stat-header">
-                <div class="stat-icon red">❌</div>
-              </div>
-              <div class="stat-value" style="color: var(--accent-red);">\${expiredCount}</div>
-              <div class="stat-label">Expired</div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-header">
-                <div class="stat-icon orange">📈</div>
-              </div>
-              <div class="stat-value">\${s.today_count}</div>
-              <div class="stat-label">Today's Signups</div>
-            </div>
-          </div>
-        </section>
-
-        <!-- Chart Section -->
-        <section id="chart">
-          <div class="card">
-            <div class="card-header">
-              <div class="card-title">
-                <div class="icon">📈</div>
-                Revenue Analytics (Last 7 Days)
-              </div>
-            </div>
-            <div class="card-body">
-              <div class="chart-container">
-                <canvas id="revenueChart"></canvas>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- Admin Tools Section -->
-        <section id="tools">
-          <div class="card">
-            <div class="card-header">
-              <div class="card-title">
-                <div class="icon">🛠️</div>
-                Admin Tools
-              </div>
-            </div>
-            <div class="card-body">
-              <div class="tools-grid">
-                <div class="tool-card">
-                  <div class="tool-header">
-                    <div class="tool-icon">🔍</div>
-                    <h3>Search Users</h3>
-                  </div>
-                  <p class="tool-desc">Find users by username, MAC address, or email</p>
-                  <input type="text" id="searchInput" placeholder="Type to search..." onkeyup="searchTable()">
-                </div>
-
-                <div class="tool-card">
-                  <div class="tool-header">
-                    <div class="tool-icon">📊</div>
-                    <h3>Export Data</h3>
-                  </div>
-                  <p class="tool-desc">Download payment records (Excel-compatible UTF-8)</p>
-                  <a href="/admin?pwd=\${pwd}&format=csv" class="btn btn-primary" style="width: 100%; justify-content: center;">
-                    📥 Download CSV
-                  </a>
-                </div>
-
-                <div class="tool-card">
-                  <div class="tool-header">
-                    <div class="tool-icon">🧹</div>
-                    <h3>Database Cleanup</h3>
-                  </div>
-                  <p class="tool-desc">Remove expired users to free up resources</p>
-                  <button class="btn btn-danger" style="width: 100%;" onclick="showConfirm('Delete Expired Users', 'This will permanently remove all expired accounts. Continue?', '/admin?pwd=\${pwd}&action=cleanup', '🗑️')">
-                    🗑️ Delete \${expiredCount} Expired
-                  </button>
-                </div>
-
-                <div class="tool-card">
-                  <div class="tool-header">
-                    <div class="tool-icon">⚡</div>
-                    <h3>Quick Stats</h3>
-                  </div>
-                  <p class="tool-desc">Plan distribution overview</p>
-                  <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                    <span class="badge badge-daily">⚡ Daily: \${planData['24hr'] || 0}</span>
-                    <span class="badge badge-weekly">🚀 Weekly: \${planData['7d'] || 0}</span>
-                    <span class="badge badge-monthly">👑 Monthly: \${planData['30d'] || 0}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- Users Table Section -->
-        <section id="users">
-          <div class="card">
-            <div class="card-header">
-              <div class="card-title">
-                <div class="icon">👥</div>
-                All Users (\${allUsers.rows.length})
-              </div>
-              <div class="filters">
-                <div class="filter-group">
-                  <button class="filter-btn active" onclick="filterTable('all', this)">All</button>
-                  <button class="filter-btn" onclick="filterTable('active', this)">Active</button>
-                  <button class="filter-btn" onclick="filterTable('expired', this)">Expired</button>
-                  <button class="filter-btn" onclick="filterTable('pending', this)">Pending</button>
-                </div>
-              </div>
-            </div>
-            <div class="table-container">
-              <table id="usersTable">
-                <thead>
-                  <tr>
-                    <th>Username</th>
-                    <th>Password</th>
-                    <th>Plan</th>
-                    <th>Status</th>
-                    <th>Expires</th>
-                    <th>MAC Address</th>
-                    <th>Created</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  \${allUsers.rows.slice(0, 100).map(row => \`
-                    <tr data-search="\${row.mikrotik_username} \${row.mac_address || ''} \${row.customer_email || ''}" data-status="\${row.real_status}">
-                      <td><strong>\${row.mikrotik_username}</strong></td>
-                      <td><span class="password" onclick="copyText(this)" title="Click to copy">\${row.mikrotik_password}</span></td>
-                      <td>
-                        <span class="badge badge-\${row.plan === '24hr' ? 'daily' : row.plan === '7d' ? 'weekly' : 'monthly'}">
-                          \${row.plan === '24hr' ? '⚡ Daily' : row.plan === '7d' ? '🚀 Weekly' : '👑 Monthly'}
-                        </span>
-                      </td>
-                      <td>
-                        <span class="badge \${row.real_status === 'active' ? 'badge-active' : row.real_status === 'expired' ? 'badge-expired' : 'badge-pending'}">
-                          \${row.real_status === 'active' ? '✓ Active' : row.real_status === 'expired' ? '✗ Expired' : '⏳ Pending'}
-                        </span>
-                      </td>
-                      <td class="time">\${row.expires_at ? new Date(row.expires_at).toLocaleString('en-NG', { dateStyle: 'short', timeStyle: 'short' }) : '—'}</td>
-                      <td class="mac">\${row.mac_address || '—'}</td>
-                      <td class="time">\${new Date(row.created_at).toLocaleString('en-NG', { dateStyle: 'short', timeStyle: 'short' })}</td>
-                      <td class="actions">
-                        <button class="action-btn extend" onclick="openExtendModal('\${row.id}', '\${row.mikrotik_username}')" title="Extend Plan">⏰</button>
-                        <button class="action-btn" onclick="showConfirm('Reset User', 'Reset this user to pending status?', '/admin?pwd=\${pwd}&action=reset&userId=\${row.id}', '🔄')" title="Reset">🔄</button>
-                        <button class="action-btn delete" onclick="showConfirm('Delete User', 'Permanently delete this user?', '/admin?pwd=\${pwd}&action=delete&userId=\${row.id}', '🗑️')" title="Delete">🗑️</button>
-                      </td>
-                    </tr>
-                  \`).join('')}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </section>
-
-        <footer style="text-align: center; padding: 32px 20px; color: var(--text-muted); font-size: 13px;">
-          <p>Dream Hatcher Tech Admin Dashboard v3.0 Industrial</p>
-          <p style="margin-top: 4px;">Last refreshed: \${new Date().toLocaleString('en-NG')}</p>
-        </footer>
-      </main>
-
-      <!-- Keyboard shortcuts hint -->
-      <div class="shortcuts" id="shortcuts">
-        <kbd>R</kbd> Refresh &nbsp; <kbd>S</kbd> Search &nbsp; <kbd>?</kbd> Toggle
+      <div style="text-align: center; padding: 20px; color: #64748b; font-size: 0.8rem;">
+        <p>Dream Hatcher Tech Admin Dashboard v2.0</p>
+        <p>Last refreshed: ${new Date().toLocaleString('en-NG')}</p>
       </div>
 
       <script>
         // ============================================
-        // CHART INITIALIZATION
-        // ============================================
-        const ctx = document.getElementById('revenueChart').getContext('2d');
-        new Chart(ctx, {
-          type: 'bar',
-          data: {
-            labels: \${JSON.stringify(chartLabels)},
-            datasets: [{
-              label: 'Revenue (₦)',
-              data: \${JSON.stringify(chartRevenue)},
-              backgroundColor: 'rgba(16, 185, 129, 0.5)',
-              borderColor: 'rgba(16, 185, 129, 1)',
-              borderWidth: 2,
-              borderRadius: 8,
-              yAxisID: 'y'
-            }, {
-              label: 'Signups',
-              data: \${JSON.stringify(chartSignups)},
-              type: 'line',
-              borderColor: 'rgba(0, 212, 255, 1)',
-              backgroundColor: 'rgba(0, 212, 255, 0.1)',
-              borderWidth: 3,
-              pointRadius: 5,
-              pointBackgroundColor: 'rgba(0, 212, 255, 1)',
-              fill: true,
-              tension: 0.4,
-              yAxisID: 'y1'
-            }]
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: { intersect: false, mode: 'index' },
-            plugins: {
-              legend: {
-                position: 'top',
-                labels: { color: '#94a3b8', font: { family: 'Inter' } }
-              }
-            },
-            scales: {
-              x: {
-                grid: { color: 'rgba(255,255,255,0.05)' },
-                ticks: { color: '#64748b' }
-              },
-              y: {
-                type: 'linear',
-                position: 'left',
-                grid: { color: 'rgba(255,255,255,0.05)' },
-                ticks: {
-                  color: '#10b981',
-                  callback: function(value) { return '₦' + value.toLocaleString(); }
-                }
-              },
-              y1: {
-                type: 'linear',
-                position: 'right',
-                grid: { display: false },
-                ticks: { color: '#00d4ff' }
-              }
-            }
-          }
-        });
-
-        // ============================================
         // SESSION TIMEOUT (5 minutes)
         // ============================================
-        let sessionTime = 5 * 60;
-        const sessionBadge = document.getElementById('sessionBadge');
-        const sessionTimer = document.getElementById('sessionTimer');
+        let sessionTime = 5 * 60; // 5 minutes in seconds
+        let lastActivity = Date.now();
 
         function updateTimer() {
           const minutes = Math.floor(sessionTime / 60);
           const seconds = sessionTime % 60;
-          sessionTimer.textContent = minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
-
-          if (sessionTime <= 60) {
-            sessionBadge.classList.add('warning');
-          } else {
-            sessionBadge.classList.remove('warning');
-          }
+          document.getElementById('sessionTimer').textContent =
+            minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
 
           if (sessionTime <= 0) {
             document.getElementById('logoutOverlay').classList.add('active');
@@ -2692,40 +1871,28 @@ app.get('/admin', async (req, res) => {
           setTimeout(updateTimer, 1000);
         }
 
-        ['mousemove', 'keypress', 'click', 'scroll', 'touchstart'].forEach(event => {
-          document.addEventListener(event, () => { sessionTime = 5 * 60; });
-        });
+        // Reset timer on activity
+        document.addEventListener('mousemove', resetTimer);
+        document.addEventListener('keypress', resetTimer);
+        document.addEventListener('click', resetTimer);
+        document.addEventListener('scroll', resetTimer);
+
+        function resetTimer() {
+          sessionTime = 5 * 60;
+        }
 
         updateTimer();
 
         // ============================================
-        // SEARCH & FILTER
+        // SEARCH FUNCTION
         // ============================================
         function searchTable() {
           const input = document.getElementById('searchInput').value.toLowerCase();
           const rows = document.querySelectorAll('#usersTable tbody tr');
-          rows.forEach(row => {
-            const searchData = row.getAttribute('data-search').toLowerCase();
-            const matchesSearch = searchData.includes(input);
-            const currentFilter = document.querySelector('.filter-btn.active')?.textContent.toLowerCase() || 'all';
-            const matchesFilter = currentFilter === 'all' || row.getAttribute('data-status') === currentFilter;
-            row.style.display = (matchesSearch && matchesFilter) ? '' : 'none';
-          });
-        }
-
-        function filterTable(status, btn) {
-          document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-          btn.classList.add('active');
-
-          const rows = document.querySelectorAll('#usersTable tbody tr');
-          const searchInput = document.getElementById('searchInput').value.toLowerCase();
 
           rows.forEach(row => {
-            const rowStatus = row.getAttribute('data-status');
             const searchData = row.getAttribute('data-search').toLowerCase();
-            const matchesFilter = status === 'all' || rowStatus === status;
-            const matchesSearch = searchData.includes(searchInput);
-            row.style.display = (matchesFilter && matchesSearch) ? '' : 'none';
+            row.style.display = searchData.includes(input) ? '' : 'none';
           });
         }
 
@@ -2736,19 +1903,17 @@ app.get('/admin', async (req, res) => {
           const text = element.textContent;
           navigator.clipboard.writeText(text).then(() => {
             const original = element.textContent;
-            element.textContent = '✓ Copied';
-            element.style.background = 'rgba(16, 185, 129, 0.2)';
+            element.textContent = '✓ Copied!';
             element.style.color = '#10b981';
             setTimeout(() => {
               element.textContent = original;
-              element.style.background = '';
               element.style.color = '';
-            }, 1500);
+            }, 1000);
           });
         }
 
         // ============================================
-        // MODALS
+        // EXTEND MODAL
         // ============================================
         function openExtendModal(userId, username) {
           document.getElementById('extendUserId').value = userId;
@@ -2760,66 +1925,40 @@ app.get('/admin', async (req, res) => {
           document.getElementById('extendModal').classList.remove('active');
         }
 
-        function showConfirm(title, message, link, icon = '⚠️') {
-          document.getElementById('confirmTitle').textContent = title;
-          document.getElementById('confirmMessage').textContent = message;
-          document.getElementById('confirmLink').href = link;
-          document.getElementById('confirmIcon').textContent = icon;
-          document.getElementById('confirmModal').classList.add('active');
-        }
+        // Close modal on outside click
+        document.getElementById('extendModal').addEventListener('click', function(e) {
+          if (e.target === this) closeExtendModal();
+        });
 
-        function closeConfirmModal() {
-          document.getElementById('confirmModal').classList.remove('active');
-        }
+        // ============================================
+        // EXPORT CSV
+        // ============================================
+        function exportCSV() {
+          const rows = document.querySelectorAll('#usersTable tr');
+          let csv = [];
 
-        document.querySelectorAll('.modal').forEach(modal => {
-          modal.addEventListener('click', function(e) {
-            if (e.target === this) {
-              this.classList.remove('active');
-            }
+          rows.forEach(row => {
+            const cols = row.querySelectorAll('td, th');
+            const rowData = [];
+            cols.forEach((col, index) => {
+              if (index < cols.length - 1) { // Skip actions column
+                rowData.push('"' + col.textContent.trim().replace(/"/g, '""') + '"');
+              }
+            });
+            csv.push(rowData.join(','));
           });
-        });
 
-        // ============================================
-        // SIDEBAR & NAVIGATION
-        // ============================================
-        function toggleSidebar() {
-          document.getElementById('sidebar').classList.toggle('open');
+          const blob = new Blob([csv.join('\\n')], { type: 'text/csv' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'dreamhatcher_users_' + new Date().toISOString().slice(0,10) + '.csv';
+          a.click();
         }
-
-        function scrollToSection(id) {
-          document.getElementById(id).scrollIntoView({ behavior: 'smooth' });
-          document.getElementById('sidebar').classList.remove('open');
-        }
-
-        // ============================================
-        // KEYBOARD SHORTCUTS
-        // ============================================
-        document.addEventListener('keydown', function(e) {
-          if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
-
-          switch(e.key.toLowerCase()) {
-            case 'r':
-              location.reload();
-              break;
-            case 's':
-              e.preventDefault();
-              document.getElementById('searchInput').focus();
-              break;
-            case '?':
-              document.getElementById('shortcuts').style.display =
-                document.getElementById('shortcuts').style.display === 'none' ? 'block' : 'none';
-              break;
-            case 'escape':
-              closeExtendModal();
-              closeConfirmModal();
-              break;
-          }
-        });
       </script>
     </body>
     </html>
-    \`;
+    `;
 
     res.send(html);
 
@@ -2827,6 +1966,28 @@ app.get('/admin', async (req, res) => {
     console.error('Dashboard error:', error);
     res.status(500).send('Dashboard error: ' + error.message);
   }
+});
+
+// ========== CLEANUP EXPIRED USERS ==========
+app.get('/admin', async (req, res, next) => {
+  if (req.query.action === 'cleanup' && req.query.pwd === ADMIN_PASSWORD) {
+    try {
+      const result = await pool.query(`
+        DELETE FROM payment_queue
+        WHERE status = 'processed'
+        AND (
+          (plan = '24hr' AND created_at + INTERVAL '24 hours' < NOW())
+          OR (plan = '7d' AND created_at + INTERVAL '7 days' < NOW())
+          OR (plan = '30d' AND created_at + INTERVAL '30 days' < NOW())
+        )
+      `);
+      // Redirect back with success message (handled by main route)
+      return res.redirect('/admin?pwd=' + req.query.pwd + '&cleaned=' + result.rowCount);
+    } catch (error) {
+      console.error('Cleanup error:', error);
+    }
+  }
+  next();
 });
 
 // ========== ERROR HANDLER ==========
@@ -2845,6 +2006,7 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
 
