@@ -164,7 +164,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// ========== NEW: INITIALIZE PAYSTACK PAYMENT (Dynamic Checkout) ==========
+// ========== NEW: INITIALIZE MONNIFY PAYMENT (Dynamic Checkout) ==========
 app.post('/api/initialize-payment', async (req, res) => {
   try {
     const { email, amount, plan, mac_address } = req.body;
@@ -216,7 +216,7 @@ app.post('/api/initialize-payment', async (req, res) => {
   }
 });
 
-// ========== PAYSTACK WEBHOOK ==========
+// ========== MONNIFY WEBHOOK ==========
 app.post('/api/monnify-webhook', async (req, res) => {
   console.log('📥 Monnify webhook received');
 
@@ -292,12 +292,12 @@ app.post('/api/monnify-webhook', async (req, res) => {
   return res.status(200).json({ received: true });
 });
 
-// ========== PAYSTACK CALLBACK (20-second waiting page) ==========
+// ========== MONNIFY CALLBACK (20-second waiting page) ==========
 app.get('/monnify-callback', (req, res) => {
   const { paymentReference, transactionReference } = req.query;
   const ref = paymentReference || transactionReference || 'unknown';
 
-  console.log('🔗 Paystack callback:', ref);
+  console.log('🔗 Monnify callback:', ref);
 
   const html = ` 
   <!DOCTYPE html>
@@ -1351,7 +1351,7 @@ app.get('/', (req, res) => {
       
       <p style="margin-top: 20px; font-size: 12px; color: #888;">
         © 2024 Dream Hatcher Tech. All rights reserved.<br>
-        Secure Payment Processing via Paystack
+        Secure Payment Processing via Monnify
       </p>
     </div>
     
@@ -2030,10 +2030,11 @@ const PORT = process.env.PORT || 10000;
 const server = app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
   console.log(`🌐 Initialize: https://dreamhatcher-backend.onrender.com/api/initialize-payment`);
-  console.log(`🔗 Callback: https://dreamhatcher-backend.onrender.com/paystack-callback`);
+  console.log(`🔗 Callback: https://dreamhatcher-backend.onrender.com/monnify-callback`);
   console.log(`👑 Admin: https://dreamhatcher-backend.onrender.com/admin?pwd=Huda2024@`);
 });
 
 server.setTimeout(30000);
+
 
 
