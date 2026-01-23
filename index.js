@@ -199,7 +199,7 @@ app.post('/api/initialize-payment', async (req, res) => {
         currencyCode: 'NGN',
         contractCode: process.env.MONNIFY_CONTRACT_CODE,
         redirectUrl: 'https://dreamhatcher-backend.onrender.com/monnify-callback',
-        paymentMethods: ['CARD', 'ACCOUNT_TRANSFER'],
+        paymentMethods: ['CARD', 'ACCOUNT_TRANSFER', 'USSD', 'PHONE_NUMBER'],
         metaData: {
           mac_address: mac_address || 'unknown',
           plan: plan
@@ -2049,5 +2049,6 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
