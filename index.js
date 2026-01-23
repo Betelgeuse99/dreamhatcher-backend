@@ -292,12 +292,6 @@ app.post('/api/monnify-webhook', async (req, res) => {
   return res.status(200).json({ received: true });
 });
 
-  } catch (error) {
-    console.error('❌ Webhook error:', error.message);
-    return res.status(500).json({ error: 'Webhook processing failed' });
-  }
-});
-
 // ========== PAYSTACK CALLBACK (20-second waiting page) ==========
 app.get('/monnify-callback', (req, res) => {
   const { paymentReference, transactionReference } = req.query;
@@ -2041,4 +2035,5 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
