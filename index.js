@@ -20,145 +20,6 @@ pool.query('SELECT NOW()', (err, res) => {
   else console.log('✅ Connected to Supabase');
 });
 
-// ========== MONNIFY SERVICE CLASS ==========
-class MonnifyService {
-  constructor() {
-    this.apiKey = process.env.MONNIFY_API_KEY;
-    this.secretKey = process.env.MONNIFY_SECRET_KEY;
-    this.contractCode = process.env.MONNIFY_CONTRACT_CODE;
-    this.baseUrl = process.env.MONNIFY_BASE_URL || 'https://api.monnify.com';
-    
-    this.accessToken = null;
-    this.tokenExpiry = null;
-  }
-
-  async getAuthToken() {
-    try {
-      // Check if token is still valid
-      if (this.accessToken && this.tokenExpiry && Date.now() < this.tokenExpiry) {
-        return this.accessToken;
-      }
-
-      const authString = Buffer.from(`${this.apiKey}:${this.secretKey}`).toString('base64');
-      
-      const response = await axios.post(
-        `${this.baseUrl}/api/v1/auth/login`,
-        {},
-        {
-          headers: {
-            'Authorization': `Basic ${authString}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-
-      if (response.data.responseBody) {
-        this.accessToken = response.data.responseBody.accessToken;
-        this.tokenExpiry = Date.now() + (55 * 60 * 1000); // 55 minutes for safety
-        return this.accessToken;
-      } else {
-        throw new Error('Failed to get authentication token');
-      }
-    } catch (error) {
-      console.error('Monnify Auth Error:', error.response?.data || error.message);
-      throw error;
-    }
-  }
-
-  async initializeTransaction(transactionData) {
-    try {
-      const token = await this.getAuthToken();
-      
-      const payload = {
-        amount: transactionData.amount,
-        customerName: transactionData.customerName || '',
-        customerEmail: transactionData.customerEmail,
-        customerPhoneNumber: transactionData.customerPhoneNumber || '',
-        paymentDescription: transactionData.description || 'WiFi Access Payment',
-        currencyCode: transactionData.currency || 'NGN',
-        contractCode: this.contractCode,
-        redirectUrl: transactionData.redirectUrl || process.env.APP_BASE_URL,
-        paymentReference: transactionData.reference
-      };
-
-      // Add metadata if provided
-      if (transactionData.metadata) {
-        payload.metadata = transactionData.metadata;
-      }
-
-      const response = await axios.post(
-        `${this.baseUrl}/api/v1/merchant/transactions/init-transaction`,
-        payload,
-        {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-
-      if (response.data.responseBody) {
-        return {
-          success: true,
-          message: 'Transaction initialized successfully',
-          data: {
-            transactionReference: response.data.responseBody.transactionReference,
-            paymentReference: response.data.responseBody.paymentReference,
-            checkoutUrl: response.data.responseBody.checkoutUrl,
-            amount: response.data.responseBody.amount,
-            currency: response.data.responseBody.currencyCode
-          }
-        };
-      } else {
-        throw new Error(response.data.responseMessage || 'Failed to initialize transaction');
-      }
-    } catch (error) {
-      console.error('Monnify Initialize Error:', error.response?.data || error.message);
-      return {
-        success: false,
-        message: error.response?.data?.responseMessage || error.message,
-        error: error.response?.data
-      };
-    }
-  }
-
-  async verifyTransaction(transactionReference) {
-    try {
-      const token = await this.getAuthToken();
-      
-      const response = await axios.get(
-        `${this.baseUrl}/api/v2/transactions/${encodeURIComponent(transactionReference)}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-
-      if (response.data.responseBody) {
-        return {
-          success: true,
-          data: response.data.responseBody,
-          status: response.data.responseBody.paymentStatus,
-          amountPaid: response.data.responseBody.amountPaid,
-          settlementAmount: response.data.responseBody.settlementAmount
-        };
-      } else {
-        throw new Error(response.data.responseMessage || 'Failed to verify transaction');
-      }
-    } catch (error) {
-      console.error('Monnify Verify Error:', error.response?.data || error.message);
-      return {
-        success: false,
-        message: error.response?.data?.responseMessage || error.message
-      };
-    }
-  }
-}
-
-const monnify = new MonnifyService();
-
 // ========== GLOBAL ERROR HANDLERS ==========
 process.on('uncaughtException', (error) => {
   console.error('💥 UNCAUGHT EXCEPTION:', error);
@@ -182,7 +43,7 @@ function getPlanDuration(planCode) {
   }
 }
 
-// ========== KEEP ALIVE (prevents Render sleep) ==========
+// ========== KEEP ALIVE ==========
 function keepAlive() {
   https.get('https://dreamhatcher-backend.onrender.com/health', (res) => {
     console.log('🏓 Keep-alive ping, status:', res.statusCode);
@@ -192,88 +53,101 @@ function keepAlive() {
 }
 setInterval(keepAlive, 14 * 60 * 1000);
 
-// ========== ERROR HANDLING & TIMEOUT ==========
-app.use((req, res, next) => {
-  res.setTimeout(30000, () => {
-    console.log(`⏰ Timeout on ${req.method} ${req.url}`);
-  });
-  next();
-});
+// ========== MONNIFY TOKEN HELPER ==========
+async function getMonnifyToken() {
+  const auth = Buffer.from(
+    `${process.env.MONNIFY_API_KEY}:${process.env.MONNIFY_SECRET_KEY}`
+  ).toString('base64');
 
-// ========== MONNIFY PAYMENT REDIRECT ==========
-app.get('/monnify-pay/:plan', async (req, res) => {
+  try {
+    const response = await axios.post(
+      `${process.env.MONNIFY_BASE_URL}/api/v1/auth/login`,
+      {},
+      {
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    if (response.data?.responseBody?.accessToken) {
+      return response.data.responseBody.accessToken;
+    }
+    throw new Error('No access token received');
+  } catch (err) {
+    console.error('Monnify token error:', err.response?.data || err.message);
+    throw err;
+  }
+}
+
+// ========== PAYMENT REDIRECT (Monnify) ==========
+app.get('/pay/:plan', async (req, res) => {
   const { plan } = req.params;
   const mac = req.query.mac || 'unknown';
   const email = req.query.email || 'customer@dreamhatcher.com';
-  
-  // Plan configuration - SAME PRICES AS PAYSTACK
+
   const planConfig = {
-    daily: { amount: 350, code: '24hr', description: '24 Hours WiFi Access' },
-    weekly: { amount: 2400, code: '7d', description: '7 Days WiFi Access' },
-    monthly: { amount: 7500, code: '30d', description: '30 Days WiFi Access' }
+    daily:   { amount: 350,  code: '24hr' },
+    weekly:  { amount: 2400, code: '7d'   },
+    monthly: { amount: 7500, code: '30d'  }
   };
-  
+
   const selectedPlan = planConfig[plan];
-  
+
   if (!selectedPlan) {
-    return res.status(400).send(`
-      <html>
-        <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
-          <h2>⚠️ Invalid Plan</h2>
-          <p>Please select a valid plan.</p>
-          <a href="javascript:history.back()" style="color: #00d4ff;">← Go Back</a>
-        </body>
-      </html>
-    `);
+    return res.status(400).send('Invalid plan selected');
   }
-  
+
   try {
-    const reference = `DHT${Date.now()}${Math.random().toString(36).substr(2, 9)}`;
-    
-    const transactionData = {
-      amount: selectedPlan.amount.toString(),
+    const token = await getMonnifyToken();
+
+    const paymentReference = `dh-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+
+    const payload = {
+      amount: selectedPlan.amount,
+      currencyCode: "NGN",
+      paymentReference: paymentReference,
       customerEmail: email,
-      customerName: `WiFi User ${mac.slice(-6)}`,
-      description: selectedPlan.description,
-      reference: reference,
+      customerName: "Dream Hatcher Customer",
+      customerMobileNumber: "",
+      contractCode: process.env.MONNIFY_CONTRACT_CODE,
       redirectUrl: 'https://dreamhatcher-backend.onrender.com/monnify-callback',
-      currency: 'NGN',
+      paymentMethods: ["CARD", "ACCOUNT_TRANSFER", "USSD", "BANK_TRANSFER"],
       metadata: {
         mac_address: mac,
-        plan: selectedPlan.code,
-        reference: reference
+        plan: selectedPlan.code
       }
     };
 
-    console.log(`💳 Monnify Payment Init: ${plan} | MAC: ${mac} | Email: ${email} | Ref: ${reference}`);
-    
-    const result = await monnify.initializeTransaction(transactionData);
-    
-    if (result.success) {
-      // Store in database pending transaction - SAME AS PAYSTACK
-      await pool.query(
-        `INSERT INTO payment_queue 
-        (transaction_id, customer_email, plan, mac_address, status, expires_at)
-        VALUES ($1, $2, $3, $4, 'pending', NOW() + INTERVAL '10 minutes')`,
-        [reference, email, selectedPlan.code, mac]
-      );
-      
-      console.log(`✅ Monnify checkout URL: ${result.data.checkoutUrl}`);
-      
-      // Redirect to Monnify checkout
-      res.redirect(result.data.checkoutUrl);
-    } else {
-      throw new Error(result.message || 'Failed to initialize Monnify transaction');
+    const response = await axios.post(
+      `${process.env.MONNIFY_BASE_URL}/api/v1/merchant/transactions/init-transaction`,
+      payload,
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    const checkoutUrl = response.data?.responseBody?.checkoutUrl;
+
+    if (!checkoutUrl) {
+      throw new Error('No checkout URL received from Monnify');
     }
-    
+
+    console.log(`💳 Monnify init: ${plan} | Ref: ${paymentReference} | MAC: ${mac} | Email: ${email}`);
+
+    res.redirect(checkoutUrl);
+
   } catch (error) {
-    console.error('Monnify payment redirect error:', error.message);
+    console.error('Monnify redirect error:', error.response?.data || error.message);
     res.send(`
       <html>
         <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
           <h2>⚠️ Payment Error</h2>
-          <p>Could not initialize Monnify payment. Please try again.</p>
-          <p><strong>Error:</strong> ${error.message}</p>
+          <p>Could not initialize payment. Please try again.</p>
           <a href="javascript:history.back()" style="color: #00d4ff;">← Go Back</a>
           <p style="margin-top: 20px;">Support: 07037412314</p>
         </body>
@@ -282,111 +156,150 @@ app.get('/monnify-pay/:plan', async (req, res) => {
   }
 });
 
-// ========== MONNIFY WEBHOOK ==========
-app.post('/api/monnify-webhook', async (req, res) => {
-  console.log('📥 Monnify webhook received');
-  
+// ========== NEW: INITIALIZE MONNIFY PAYMENT (for frontend calls) ==========
+app.post('/api/initialize-payment', async (req, res) => {
   try {
-    const { eventType, eventData } = req.body;
-    
-    console.log(`🔔 Monnify Event Type: ${eventType}`);
-    
-    // Only process successful transactions
-    if (eventType !== 'SUCCESSFUL_TRANSACTION') {
-      console.log(`⚠️ Ignoring event type: ${eventType}`);
-      return res.status(200).json({ received: true });
+    const { email, amount, plan, mac_address } = req.body;
+
+    if (!amount || !plan) {
+      return res.status(400).json({ error: 'Missing amount or plan' });
     }
-    
-    const { paymentReference, amountPaid, customer, paymentMethod, paidOn } = eventData;
-    
-    console.log(`💰 Payment Successful: ${paymentReference} | Amount: ${amountPaid} | Email: ${customer?.email}`);
-    
-    // Extract metadata
-    const metadata = eventData.metaData || {};
-    const macAddress = metadata.mac_address || 'unknown';
-    const plan = metadata.plan;
-    
-    // Determine plan from amount if not in metadata
-    let finalPlan = plan;
-    if (!finalPlan) {
-      if (amountPaid === 350) finalPlan = '24hr';
-      else if (amountPaid === 2400) finalPlan = '7d';
-      else if (amountPaid === 7500) finalPlan = '30d';
-      else {
-        console.error('❌ Invalid amount in webhook:', amountPaid);
-        return res.status(400).json({ error: 'Invalid amount' });
+
+    const planCodeMap = { '24hr': 'daily', '7d': 'weekly', '30d': 'monthly' };
+    const planKey = Object.keys(planCodeMap).find(k => planCodeMap[k] === plan) || plan;
+
+    const token = await getMonnifyToken();
+
+    const paymentReference = `dh-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+
+    const payload = {
+      amount: Number(amount),
+      currencyCode: "NGN",
+      paymentReference,
+      customerEmail: email || 'customer@example.com',
+      customerName: "Customer",
+      contractCode: process.env.MONNIFY_CONTRACT_CODE,
+      redirectUrl: 'https://dreamhatcher-backend.onrender.com/monnify-callback',
+      paymentMethods: ["CARD", "ACCOUNT_TRANSFER", "USSD", "BANK_TRANSFER"],
+      metadata: {
+        mac_address: mac_address || 'unknown',
+        plan: planCodeMap[plan] || plan
       }
-    }
-    
-    const username = `user_${Date.now().toString().slice(-6)}`;
-    const password = generatePassword();
-    
-    // Calculate exact expiry timestamp based on plan
-    let expiresAt;
-    const now = new Date();
-    if (finalPlan === '24hr') {
-      expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-    } else if (finalPlan === '7d') {
-      expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-    } else if (finalPlan === '30d') {
-      expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-    }
-    
-    // Update existing record or create new one - SAME LOGIC AS PAYSTACK
-    await pool.query(
-      `UPDATE payment_queue 
-       SET status = 'pending',  // KEEP AS PENDING FOR MIKROTIK
-           mikrotik_username = $1,
-           mikrotik_password = $2,
-           expires_at = $3,
-           customer_email = COALESCE(customer_email, $4),
-           updated_at = NOW()
-       WHERE transaction_id = $5
-       RETURNING id`,
-      [username, password, expiresAt, customer?.email || 'unknown@example.com', paymentReference]
+    };
+
+    const response = await axios.post(
+      `${process.env.MONNIFY_BASE_URL}/api/v1/merchant/transactions/init-transaction`,
+      payload,
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      }
     );
-    
-    // If no record was updated, insert new
-    const check = await pool.query(
-      `SELECT id FROM payment_queue WHERE transaction_id = $1`,
-      [paymentReference]
-    );
-    
-    if (check.rows.length === 0) {
-      await pool.query(
-        `INSERT INTO payment_queue
-         (transaction_id, customer_email, customer_phone, plan,
-          mikrotik_username, mikrotik_password, mac_address, status, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8)`,
-        [
-          paymentReference,
-          customer?.email || 'unknown@example.com',
-          customer?.phoneNumber || '',
-          finalPlan,
-          username,
-          password,
-          macAddress,
-          expiresAt
-        ]
-      );
+
+    const checkoutUrl = response.data?.responseBody?.checkoutUrl;
+
+    if (!checkoutUrl) {
+      throw new Error('No checkout URL');
     }
-    
-    console.log(`✅ Monnify user created: ${username} | Expires: ${expiresAt.toISOString()}`);
-    
-    return res.status(200).json({ received: true });
-    
+
+    res.json({
+      success: true,
+      authorization_url: checkoutUrl,   // kept name for frontend compatibility
+      reference: paymentReference
+    });
+
   } catch (error) {
-    console.error('❌ Monnify webhook error:', error.message);
-    return res.status(500).json({ error: 'Webhook processing failed' });
+    console.error('❌ Monnify initialize error:', error.response?.data || error.message);
+    res.status(500).json({ error: 'Failed to initialize payment' });
   }
 });
 
-// ========== MONNIFY CALLBACK ==========
-app.get('/monnify-callback', (req, res) => {
-  const { paymentReference, transactionReference } = req.query;
-  const ref = paymentReference || transactionReference || 'unknown';
+// ========== MONNIFY IPN (replaces Paystack webhook) ==========
+app.post('/api/monnify-ipn', async (req, res) => {
+  console.log('📥 Monnify IPN received');
 
-  console.log('🔗 Monnify callback:', ref);
+  try {
+    const event = req.body;
+
+    // Monnify sends different formats depending on version — adjust if needed
+    if (!event?.eventType || !event?.data) {
+      return res.status(200).send('OK');
+    }
+
+    if (event.eventType !== 'TRANSACTION_COMPLETED') {
+      return res.status(200).send('OK');
+    }
+
+    const data = event.data;
+
+    if (data.paymentStatus !== 'PAID') {
+      console.log(`Payment not successful: ${data.paymentStatus}`);
+      return res.status(200).send('OK');
+    }
+
+    const reference = data.paymentReference;
+    const amountNaira = data.amountPaid;
+    const meta = data.metaData || data.metadata || {};
+
+    let plan = meta.plan;
+    if (!plan) {
+      if (amountNaira === 350) plan = '24hr';
+      else if (amountNaira === 2400) plan = '7d';
+      else if (amountNaira === 7500) plan = '30d';
+      else {
+        console.error('❌ Invalid Monnify amount:', amountNaira);
+        return res.status(200).send('OK');
+      }
+    }
+
+    const macAddress = meta.mac_address || 'unknown';
+
+    const username = `user_${Date.now().toString().slice(-6)}`;
+    const password = generatePassword();
+
+    let expiresAt;
+    const now = new Date();
+    if (plan === '24hr') {
+      expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    } else if (plan === '7d') {
+      expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    } else if (plan === '30d') {
+      expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    }
+
+    await pool.query(
+      `INSERT INTO payment_queue
+       (transaction_id, customer_email, customer_phone, plan,
+        mikrotik_username, mikrotik_password, mac_address, status, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8)`,
+      [
+        reference,
+        data.customer?.email || data.payerInfo?.email || 'unknown@example.com',
+        data.customer?.phoneNumber || '',
+        plan,
+        username,
+        password,
+        macAddress,
+        expiresAt
+      ]
+    );
+
+    console.log(`✅ Queued user ${username} | Expires: ${expiresAt.toISOString()}`);
+    return res.status(200).send('OK');
+
+  } catch (error) {
+    console.error('❌ Monnify IPN error:', error.message);
+    return res.status(200).send('OK'); // still acknowledge to Monnify
+  }
+});
+
+// ========== MONNIFY CALLBACK (20-second waiting page) ==========
+app.get('/monnify-callback', (req, res) => {
+  const ref = req.query.paymentReference || 'unknown';
+
+  console.log('🔗 Monnify callback:', ref, req.query);
 
   const html = ` 
   <!DOCTYPE html>
@@ -396,169 +309,41 @@ app.get('/monnify-callback', (req, res) => {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Creating Your Account...</title>
     <style>
+      /* same style as original Paystack callback page */
       * { margin: 0; padding: 0; box-sizing: border-box; }
-      body {
-        font-family: Arial, sans-serif;
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-        min-height: 100vh;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 20px;
-        color: white;
-      }
-      .container {
-        background: rgba(255,255,255,0.05);
-        padding: 40px;
-        border-radius: 20px;
-        max-width: 420px;
-        width: 100%;
-        text-align: center;
-        border: 1px solid rgba(255,255,255,0.1);
-      }
-      .success-badge {
-        background: linear-gradient(135deg, #00c9ff 0%, #92fe9d 100%);
-        color: #000;
-        padding: 10px 25px;
-        border-radius: 50px;
-        font-weight: bold;
-        display: inline-block;
-        margin-bottom: 20px;
-      }
-      .spinner-container {
-        position: relative;
-        width: 120px;
-        height: 120px;
-        margin: 30px auto;
-      }
-      .spinner {
-        border: 4px solid rgba(255,255,255,0.1);
-        border-top: 4px solid #00c9ff;
-        border-radius: 50%;
-        width: 120px;
-        height: 120px;
-        animation: spin 1.5s linear infinite;
-      }
-      .countdown-number {
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        font-size: 36px;
-        font-weight: bold;
-        color: #00c9ff;
-      }
-      @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-      }
-      .progress-bar {
-        background: rgba(255,255,255,0.1);
-        border-radius: 10px;
-        height: 10px;
-        margin: 25px 0;
-        overflow: hidden;
-      }
-      .progress-fill {
-        background: linear-gradient(90deg, #00c9ff, #92fe9d);
-        height: 100%;
-        width: 0%;
-        transition: width 1s linear;
-      }
+      body { font-family: Arial, sans-serif; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; color: white; }
+      .container { background: rgba(255,255,255,0.05); padding: 40px; border-radius: 20px; max-width: 420px; width: 100%; text-align: center; border: 1px solid rgba(255,255,255,0.1); }
+      .success-badge { background: linear-gradient(135deg, #00c9ff 0%, #92fe9d 100%); color: #000; padding: 10px 25px; border-radius: 50px; font-weight: bold; display: inline-block; margin-bottom: 20px; }
+      .spinner-container { position: relative; width: 120px; height: 120px; margin: 30px auto; }
+      .spinner { border: 4px solid rgba(255,255,255,0.1); border-top: 4px solid #00c9ff; border-radius: 50%; width: 120px; height: 120px; animation: spin 1.5s linear infinite; }
+      .countdown-number { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 36px; font-weight: bold; color: #00c9ff; }
+      @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+      .progress-bar { background: rgba(255,255,255,0.1); border-radius: 10px; height: 10px; margin: 25px 0; overflow: hidden; }
+      .progress-fill { background: linear-gradient(90deg, #00c9ff, #92fe9d); height: 100%; width: 0%; transition: width 1s linear; }
       h2 { color: #00c9ff; margin-bottom: 15px; }
       .status-text { margin: 15px 0; line-height: 1.6; }
-      .steps {
-        text-align: left;
-        background: rgba(0,0,0,0.2);
-        padding: 15px 20px;
-        border-radius: 10px;
-        margin: 20px 0;
-        font-size: 14px;
-      }
-      .step {
-        padding: 8px 0;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
-      .step-icon {
-        width: 24px;
-        height: 24px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 12px;
-        flex-shrink: 0;
-      }
-      .step-pending { background: rgba(255,255,255,0.2); }
-      .step-active { background: #00c9ff; animation: pulse 1s infinite; }
-      .step-done { background: #92fe9d; color: #000; }
-      @keyframes pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.5; }
-      }
-      .ref-box {
-        background: rgba(0,0,0,0.3);
-        padding: 10px;
-        border-radius: 8px;
-        font-size: 12px;
-        margin-top: 20px;
-        word-break: break-all;
-      }
-      .warning {
-        background: rgba(255,200,0,0.2);
-        border: 1px solid rgba(255,200,0,0.5);
-        padding: 15px;
-        border-radius: 10px;
-        margin-top: 20px;
-        font-size: 13px;
-      }
+      .warning { background: rgba(255,200,0,0.2); border: 1px solid rgba(255,200,0,0.5); padding: 15px; border-radius: 10px; margin-top: 20px; font-size: 13px; }
+      .ref-box { background: rgba(0,0,0,0.3); padding: 10px; border-radius: 8px; font-size: 12px; margin-top: 20px; word-break: break-all; }
     </style>
   </head>
   <body>
     <div class="container">
       <div class="success-badge">✓ PAYMENT RECEIVED</div>
-      
       <h2>Creating Your WiFi Account</h2>
-      
       <div class="spinner-container">
         <div class="spinner"></div>
         <div class="countdown-number" id="countdown">20</div>
       </div>
-      
       <div class="progress-bar">
         <div class="progress-fill" id="progress"></div>
       </div>
-      
       <p class="status-text" id="status">Please wait while we set up your account...</p>
-      
-      <div class="steps">
-        <div class="step" id="step1">
-          <div class="step-icon step-active" id="icon1">1</div>
-          <span>Verifying payment with Monnify...</span>
-        </div>
-        <div class="step" id="step2">
-          <div class="step-icon step-pending" id="icon2">2</div>
-          <span>Creating WiFi credentials...</span>
-        </div>
-        <div class="step" id="step3">
-          <div class="step-icon step-pending" id="icon3">3</div>
-          <span>Activating on Server...</span>
-        </div>
-        <div class="step" id="step4">
-          <div class="step-icon step-pending" id="icon4">4</div>
-          <span>Ready to connect!</span>
-        </div>
-      </div>
-      
       <div class="warning">
         ⚠️ <strong>Do NOT close this page!</strong><br>
         Your account is being created. This takes about 20 seconds.
       </div>
-      
       <div class="ref-box">
-        Reference: <strong>${ref}</strong>
+        Reference: <strong>${ref || 'N/A'}</strong>
       </div>
     </div>
     
@@ -569,59 +354,17 @@ app.get('/monnify-callback', (req, res) => {
       const progressEl = document.getElementById('progress');
       const statusEl = document.getElementById('status');
       
-      function updateStep(stepNum, state) {
-        const icon = document.getElementById('icon' + stepNum);
-        icon.className = 'step-icon step-' + state;
-        if (state === 'done') {
-          icon.textContent = '✓';
-        }
-      }
-      
-      const messages = [
-        { time: 20, msg: 'Connecting to payment server...', step: 1 },
-        { time: 17, msg: 'Payment verified successfully!', step: 1, done: true },
-        { time: 15, msg: 'Generating your unique credentials...', step: 2 },
-        { time: 12, msg: 'Credentials created!', step: 2, done: true },
-        { time: 10, msg: 'Sending to server...', step: 3 },
-        { time: 7, msg: 'Activating your account on server...', step: 3 },
-        { time: 5, msg: 'Almost done! Finalizing...', step: 3, done: true },
-        { time: 3, msg: 'Account ready! Redirecting...', step: 4, done: true }
-      ];
-      
-      let lastStep = 0;
-      
       const timer = setInterval(function() {
         seconds--;
         countdownEl.textContent = seconds;
-        
         const progress = ((totalSeconds - seconds) / totalSeconds) * 100;
         progressEl.style.width = progress + '%';
-        
-        // Update messages and steps based on time
-        for (let i = 0; i < messages.length; i++) {
-          if (seconds <= messages[i].time && seconds > (messages[i+1]?.time || 0)) {
-            statusEl.textContent = messages[i].msg;
-            
-            if (messages[i].step > lastStep) {
-              updateStep(messages[i].step, 'active');
-              lastStep = messages[i].step;
-            }
-            
-            if (messages[i].done) {
-              updateStep(messages[i].step, 'done');
-              if (messages[i].step < 4) {
-                updateStep(messages[i].step + 1, 'active');
-              }
-            }
-            break;
-          }
-        }
         
         if (seconds <= 0) {
           clearInterval(timer);
           countdownEl.textContent = '✓';
           statusEl.textContent = 'Redirecting to your credentials...';
-          window.location.href = '/monnify-success?reference=' + encodeURIComponent('${ref}');
+          window.location.href = '/success?reference=' + encodeURIComponent('${ref || ''}');
         }
       }, 1000);
     </script>
@@ -632,14 +375,15 @@ app.get('/monnify-callback', (req, res) => {
   res.send(html);
 });
 
-// ========== MONNIFY SUCCESS PAGE ==========
-app.get('/monnify-success', async (req, res) => {
+// ========== SUCCESS PAGE - PATIENT POLLING ==========
+app.get('/success', async (req, res) => {
   try {
-    const { reference } = req.query;
+    const { reference, trxref } = req.query;
+    const ref = reference || trxref;
     
-    console.log('📄 Monnify success page accessed, ref:', reference);
+    console.log('📄 Success page accessed, ref:', ref);
     
-    if (!reference) {
+    if (!ref) {
       return res.send(`
         <!DOCTYPE html>
         <html>
@@ -778,7 +522,7 @@ app.get('/monnify-success', async (req, res) => {
             <div class="spinner"></div>
             <p id="status-text">Creating your WiFi account...</p>
             <p class="attempt-info" id="attempt-info">This usually takes 30-60 seconds</p>
-            <p style="font-size: 12px; margin-top: 10px;">Reference: ${reference}</p>
+            <p style="font-size: 12px; margin-top: 10px;">Reference: ${ref}</p>
           </div>
         </div>
         
@@ -809,7 +553,7 @@ app.get('/monnify-success', async (req, res) => {
             </ol>
           </div>
           
-          <button class="btn" onclick="copyCredentials()">📋 Copy Credentials</button>
+         <button class="btn" onclick="copyCredentials()">📋 Copy Credentials</button>
           <button class="btn" id="autoLoginBtn" onclick="autoLogin()" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">🚀 Auto-Login Now</button>
 
           <div id="autoLoginStatus" style="margin-top: 15px; padding: 15px; background: rgba(0,0,0,0.3); border-radius: 10px; display: none;">
@@ -824,7 +568,7 @@ app.get('/monnify-success', async (req, res) => {
             <p id="error-text">Your account is being created. This may take a bit longer.</p>
             <button class="btn" onclick="checkStatus()" style="margin-top: 15px;">🔄 Check Again</button>
             <p style="margin-top: 15px; font-size: 12px;">
-              Reference: <strong>${reference}</strong><br>
+              Reference: <strong>${ref}</strong><br>
               Save this reference and contact support if needed.
             </p>
           </div>
@@ -836,7 +580,7 @@ app.get('/monnify-success', async (req, res) => {
       </div>
       
       <script>
-        const ref = '${reference}';
+        const ref = '${ref}';
         let checkCount = 0;
         const maxChecks = 20;
         let credentials = { username: '', password: '', plan: '', expires_at: '' };
@@ -853,8 +597,7 @@ app.get('/monnify-success', async (req, res) => {
           navigator.clipboard.writeText(text).then(function() {
             const original = element.textContent;
             element.textContent = '✓ Copied!';
-            element.style.color = '#10b981';
-            setTimeout(function() { element.textContent = original; element.style.color = ''; }, 1000);
+            setTimeout(function() { element.textContent = original; }, 1000);
           });
         }
         
@@ -938,7 +681,7 @@ app.get('/monnify-success', async (req, res) => {
           attemptInfo.textContent = 'Attempt ' + checkCount + ' of ' + maxChecks + ' (checking every 5 seconds)';
           
           try {
-            const response = await fetch('/api/monnify-check-status?ref=' + encodeURIComponent(ref));
+            const response = await fetch('/api/check-status?ref=' + encodeURIComponent(ref));
             const data = await response.json();
             
             console.log('Status check #' + checkCount + ':', data);
@@ -973,7 +716,7 @@ app.get('/monnify-success', async (req, res) => {
               
             } else {
               if (data.status === 'pending') {
-                statusText.textContent = 'Account queued, waiting for MikroTik processing...';
+                statusText.textContent = 'Account queued, waiting for MikroTik to create user...';
               } else if (data.status === 'processed') {
                 statusText.textContent = 'Account created! Loading credentials...';
               } else {
@@ -1010,13 +753,13 @@ app.get('/monnify-success', async (req, res) => {
     res.send(html);
     
   } catch (error) {
-    console.error('Monnify success page error:', error.message);
+    console.error('Success page error:', error.message);
     res.status(500).send('Error loading page. Please contact support: 07037412314');
   }
 });
 
-// ========== MONNIFY STATUS CHECK ==========
-app.get('/api/monnify-check-status', async (req, res) => {
+// ========== SIMPLE STATUS CHECK ==========
+app.get('/api/check-status', async (req, res) => {
   try {
     const { ref } = req.query;
     
@@ -1035,7 +778,7 @@ app.get('/api/monnify-check-status', async (req, res) => {
     if (result.rows.length > 0) {
       const user = result.rows[0];
       
-      if (user.mikrotik_username && user.mikrotik_password) {
+      if (user.status === 'processed') {
         return res.json({
           ready: true,
           username: user.mikrotik_username,
@@ -1044,17 +787,12 @@ app.get('/api/monnify-check-status', async (req, res) => {
           expires_at: user.expires_at,
           message: 'Credentials ready'
         });
-      } else if (user.status === 'pending') {
+      } else {
         return res.json({
           ready: false,
           status: user.status,
           expires_at: user.expires_at,
           message: 'Status: ' + user.status + ' - Please wait...'
-        });
-      } else {
-        return res.json({ 
-          ready: false,
-          message: 'Payment not found in system. Please wait a moment...'
         });
       }
     } else {
@@ -1065,7 +803,7 @@ app.get('/api/monnify-check-status', async (req, res) => {
     }
     
   } catch (error) {
-    console.error('Monnify check status error:', error.message);
+    console.error('Check status error:', error.message);
     return res.json({ 
       ready: false, 
       error: 'Server error',
@@ -1074,7 +812,7 @@ app.get('/api/monnify-check-status', async (req, res) => {
   }
 });
 
-// ========== MIKROTIK ENDPOINTS (EXACTLY SAME AS PAYSTACK) ==========
+// ========== MIKROTIK ENDPOINTS ==========
 app.get('/api/mikrotik-queue-text', async (req, res) => {
   try {
     const apiKey = req.headers['x-api-key'] || req.query.api_key;
@@ -1088,8 +826,6 @@ app.get('/api/mikrotik-queue-text', async (req, res) => {
       SELECT id, mikrotik_username, mikrotik_password, plan, mac_address, expires_at
       FROM payment_queue
       WHERE status = 'pending'
-      AND mikrotik_username IS NOT NULL
-      AND mikrotik_password IS NOT NULL
       ORDER BY created_at ASC
       LIMIT 5
     `);
@@ -1100,6 +836,7 @@ app.get('/api/mikrotik-queue-text', async (req, res) => {
 
     console.log(`📤 Preparing ${result.rows.length} users for MikroTik`);
     
+    // Format: username|password|plan|mac|expires_at|id
     const lines = result.rows.map(row => {
       const expires = row.expires_at ? row.expires_at.toISOString() : '';
       return [
@@ -1120,6 +857,7 @@ app.get('/api/mikrotik-queue-text', async (req, res) => {
     
   } catch (error) {
     console.error('❌ MikroTik queue error:', error.message, error.stack);
+    // Send empty response instead of ERROR to avoid breaking MikroTik
     res.set('Content-Type', 'text/plain');
     res.send('');
   }
@@ -1130,8 +868,10 @@ app.post('/api/mark-processed/:id', async (req, res) => {
     console.log(`🔄 Processing mark-processed for: ${req.params.id}`);
     let userId = req.params.id;
     
+    // Extract ID from pipe-separated string if needed
     if (userId.includes('|')) {
       const parts = userId.split('|');
+      // ID should be the LAST element in our format
       userId = parts[parts.length - 1];
       console.log(`📝 Extracted ID from string: ${userId} (full: ${req.params.id})`);
     }
@@ -1174,6 +914,7 @@ app.post('/api/mark-processed/:id', async (req, res) => {
   }
 });
 
+// ========== GET EXPIRED USERS (for MikroTik to disable) ==========
 app.get('/api/expired-users', async (req, res) => {
   try {
     const apiKey = req.headers['x-api-key'] || req.query.api_key;
@@ -1196,11 +937,12 @@ app.get('/api/expired-users', async (req, res) => {
       return res.send('');
     }
 
+    // Format: username|mac_address|expires_at|id
     const lines = result.rows.map(row => [
       row.mikrotik_username || 'unknown',
       row.mac_address || 'unknown',
       row.expires_at.toISOString(),
-      row.id
+      row.id  // ID is last
     ].join('|'));
 
     const output = lines.join('\n');
@@ -1210,18 +952,22 @@ app.get('/api/expired-users', async (req, res) => {
 
   } catch (error) {
     console.error('❌ Expired users query error:', error.message, error.stack);
+    // Send empty response instead of ERROR to avoid breaking MikroTik
     res.set('Content-Type', 'text/plain');
     res.send('');
   }
 });
 
+// ========== MARK USER AS EXPIRED ==========
 app.post('/api/mark-expired/:id', async (req, res) => {
   try {
     console.log(`🔄 Processing mark-expired for: ${req.params.id}`);
     let userId = req.params.id;
     
+    // Extract ID from pipe-separated string if needed
     if (userId.includes('|')) {
       const parts = userId.split('|');
+      // ID should be the LAST element in our format
       userId = parts[parts.length - 1];
       console.log(`📝 Extracted expired ID from string: ${userId} (full: ${req.params.id})`);
     }
@@ -1286,7 +1032,7 @@ app.get('/health', async (req, res) => {
   }
 });
 
-// ========== ROOT PAGE ==========
+// ========== ROOT PAGE - CUSTOMER FACING ==========
 app.get('/', (req, res) => {
   const html = `
   <!DOCTYPE html>
@@ -1383,19 +1129,6 @@ app.get('/', (req, res) => {
         background: rgba(0,0,0,0.2);
         border-radius: 15px;
       }
-      .payment-badges {
-        display: flex;
-        justify-content: center;
-        gap: 10px;
-        margin: 15px 0;
-      }
-      .payment-badge {
-        background: rgba(0,201,255,0.1);
-        border: 1px solid rgba(0,201,255,0.3);
-        padding: 5px 10px;
-        border-radius: 20px;
-        font-size: 12px;
-      }
     </style>
   </head>
   <body>
@@ -1405,11 +1138,6 @@ app.get('/', (req, res) => {
       <p>High-Speed Business WiFi Solutions</p>
       
       <div class="status-badge">✅ SYSTEM OPERATIONAL</div>
-      
-      <div class="payment-badges">
-        <span class="payment-badge">💳 Monnify Payments</span>
-        <span class="payment-badge">🔒 Secure Processing</span>
-      </div>
       
       <div class="option-card">
         <h3>📱 <span>Already on our WiFi?</span></h3>
@@ -1423,16 +1151,13 @@ app.get('/', (req, res) => {
       <div class="option-card">
         <h3>💰 <span>Need WiFi Access?</span></h3>
         <p>Purchase WiFi packages starting at ₦350/day:</p>
-        <a href="http://192.168.88.1/hotspotlogin-monnify.html" class="btn">View WiFi Plans & Pricing</a>
-        <p style="margin-top: 10px; font-size: 12px; color: #aaa;">
-          Secure payments via Monnify
-        </p>
+        <a href="http://192.168.88.1/hotspotlogin.html" class="btn">View WiFi Plans & Pricing</a>
       </div>
       
       <div class="option-card">
         <h3>✅ <span>Already Paid?</span></h3>
         <p>Check your payment status and get credentials:</p>
-        <a href="/monnify-success" class="btn">Check Payment Status</a>
+        <a href="/success" class="btn">Check Payment Status</a>
       </div>
       
       <div class="qr-section">
@@ -1458,7 +1183,7 @@ app.get('/', (req, res) => {
       
       <p style="margin-top: 20px; font-size: 12px; color: #888;">
         © 2024 Dream Hatcher Tech. All rights reserved.<br>
-        Secure Payment Processing via Monnify
+        Secure Payment Processing via Paystack
       </p>
     </div>
     
@@ -1481,13 +1206,20 @@ app.get('/', (req, res) => {
   res.send(html);
 });
 
-// ========== ADMIN DASHBOARD (SAME AS BEFORE) ==========
-const ADMIN_PASSWORD = 'dreamhatcher2024';
-const SESSION_TIMEOUT = 5 * 60 * 1000;
+// ============================================
+// ADMIN DASHBOARD v2.0 - ENHANCED VERSION
+// Add this to your index.js (replace old /admin route)
+// ============================================
 
+// Admin configuration
+const ADMIN_PASSWORD = 'dreamhatcher2024'; // CHANGE THIS!
+const SESSION_TIMEOUT = 5 * 60 * 1000; // 5 minutes in milliseconds
+
+// ========== ADMIN DASHBOARD ==========
 app.get('/admin', async (req, res) => {
   const { pwd, action, userId, newPlan } = req.query;
 
+  // Password check
   if (pwd !== ADMIN_PASSWORD) {
     return res.send(`
       <!DOCTYPE html>
@@ -1525,6 +1257,7 @@ app.get('/admin', async (req, res) => {
   }
 
   try {
+    // Handle admin actions
     let actionMessage = '';
 
     if (action === 'delete' && userId) {
@@ -1542,6 +1275,7 @@ app.get('/admin', async (req, res) => {
       actionMessage = '✅ User reset to pending (will be re-created on MikroTik)';
     }
 
+    // Get statistics
     const stats = await pool.query(`
       SELECT
         COUNT(*) as total_payments,
@@ -1553,6 +1287,7 @@ app.get('/admin', async (req, res) => {
       FROM payment_queue
     `);
 
+    // Revenue calculations
     const revenue = await pool.query(`
       SELECT
         COALESCE(SUM(CASE WHEN plan = '24hr' THEN 350 WHEN plan = '7d' THEN 2400 WHEN plan = '30d' THEN 7500 ELSE 0 END), 0) as total_revenue,
@@ -1562,10 +1297,12 @@ app.get('/admin', async (req, res) => {
       FROM payment_queue WHERE status = 'processed'
     `);
 
+    // Plan breakdown
     const plans = await pool.query(`
       SELECT plan, COUNT(*) as count FROM payment_queue WHERE status = 'processed' GROUP BY plan
     `);
 
+    // Recent payments with expiry
     const recent = await pool.query(`
       SELECT
         id, mikrotik_username, mikrotik_password, plan, status, mac_address, customer_email, created_at,
@@ -1588,6 +1325,10 @@ app.get('/admin', async (req, res) => {
 
     const s = stats.rows[0];
     const r = revenue.rows[0];
+    const planData = {};
+    plans.rows.forEach(p => { planData[p.plan] = parseInt(p.count); });
+
+    // Count by status
     const activeCount = recent.rows.filter(r => r.real_status === 'active').length;
     const expiredCount = recent.rows.filter(r => r.real_status === 'expired').length;
 
@@ -1682,6 +1423,29 @@ app.get('/admin', async (req, res) => {
           align-items: center;
           gap: 10px;
         }
+        .tools-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+          gap: 15px;
+        }
+        .tool-card {
+          background: rgba(0,0,0,0.2);
+          border-radius: 12px;
+          padding: 20px;
+        }
+        .tool-card h3 { color: #f8fafc; font-size: 1rem; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+        .tool-card p { color: #94a3b8; font-size: 0.85rem; margin-bottom: 15px; }
+        .tool-card input, .tool-card select {
+          width: 100%;
+          padding: 10px 12px;
+          border-radius: 8px;
+          border: 1px solid rgba(255,255,255,0.1);
+          background: rgba(255,255,255,0.05);
+          color: white;
+          font-size: 0.9rem;
+          margin-bottom: 10px;
+        }
+        .tool-card input:focus, .tool-card select:focus { outline: none; border-color: #00d4ff; }
         table { width: 100%; border-collapse: collapse; }
         th, td { padding: 12px 10px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.85rem; }
         th { color: #64748b; font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -1690,6 +1454,9 @@ app.get('/admin', async (req, res) => {
         .badge-active { background: rgba(16,185,129,0.2); color: #10b981; }
         .badge-expired { background: rgba(239,68,68,0.2); color: #ef4444; }
         .badge-pending { background: rgba(245,158,11,0.2); color: #f59e0b; }
+        .badge-daily { background: rgba(59,130,246,0.2); color: #3b82f6; }
+        .badge-weekly { background: rgba(139,92,246,0.2); color: #8b5cf6; }
+        .badge-monthly { background: rgba(236,72,153,0.2); color: #ec4899; }
         .actions { display: flex; gap: 5px; }
         .action-btn {
           padding: 5px 10px;
@@ -1715,9 +1482,95 @@ app.get('/admin', async (req, res) => {
           gap: 10px;
         }
         .alert-success { background: rgba(16,185,129,0.2); border: 1px solid rgba(16,185,129,0.3); color: #10b981; }
+        .alert-error { background: rgba(239,68,68,0.2); border: 1px solid rgba(239,68,68,0.3); color: #ef4444; }
+        .search-box {
+          display: flex;
+          gap: 10px;
+          margin-bottom: 15px;
+        }
+        .search-box input {
+          flex: 1;
+          padding: 10px 15px;
+          border-radius: 8px;
+          border: 1px solid rgba(255,255,255,0.1);
+          background: rgba(0,0,0,0.2);
+          color: white;
+          font-size: 0.9rem;
+        }
+        .modal {
+          display: none;
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0,0,0,0.8);
+          z-index: 1000;
+          align-items: center;
+          justify-content: center;
+        }
+        .modal.active { display: flex; }
+        .modal-content {
+          background: #1a1a2e;
+          border-radius: 16px;
+          padding: 30px;
+          max-width: 400px;
+          width: 90%;
+          border: 1px solid rgba(255,255,255,0.1);
+        }
+        .modal-content h3 { margin-bottom: 20px; color: #00d4ff; }
+        @media (max-width: 768px) {
+          .stats-grid { grid-template-columns: 1fr 1fr; }
+          .header { flex-direction: column; text-align: center; }
+          th, td { padding: 8px 5px; font-size: 0.75rem; }
+        }
+        .logout-overlay {
+          display: none;
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0,0,0,0.95);
+          z-index: 2000;
+          align-items: center;
+          justify-content: center;
+          flex-direction: column;
+        }
+        .logout-overlay.active { display: flex; }
+        .logout-overlay h2 { color: #ef4444; margin-bottom: 20px; }
       </style>
     </head>
     <body>
+      <!-- Session timeout overlay -->
+      <div class="logout-overlay" id="logoutOverlay">
+        <h2>⏰ Session Expired</h2>
+        <p style="color: #94a3b8; margin-bottom: 20px;">You've been logged out due to inactivity.</p>
+        <a href="/admin" class="btn btn-primary">🔐 Login Again</a>
+      </div>
+
+      <!-- Extend Plan Modal -->
+      <div class="modal" id="extendModal">
+        <div class="modal-content">
+          <h3>⏰ Extend User Plan</h3>
+          <p style="color: #94a3b8; margin-bottom: 20px;">Select new plan for <strong id="extendUsername"></strong></p>
+          <form id="extendForm" method="GET">
+            <input type="hidden" name="pwd" value="${pwd}">
+            <input type="hidden" name="action" value="extend">
+            <input type="hidden" name="userId" id="extendUserId">
+            <select name="newPlan" style="width: 100%; padding: 12px; border-radius: 8px; margin-bottom: 15px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: white;">
+              <option value="24hr">⚡ Daily (24 hours)</option>
+              <option value="7d">🚀 Weekly (7 days)</option>
+              <option value="30d">👑 Monthly (30 days)</option>
+            </select>
+            <div style="display: flex; gap: 10px;">
+              <button type="button" class="btn btn-secondary" onclick="closeExtendModal()" style="flex: 1;">Cancel</button>
+              <button type="submit" class="btn btn-success" style="flex: 1;">Extend Plan</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
       <div class="header">
         <div class="header-left">
           <h1>🌐 Dream Hatcher Admin</h1>
@@ -1783,6 +1636,28 @@ app.get('/admin', async (req, res) => {
         </div>
       </div>
 
+      <!-- Admin Tools -->
+      <div class="section">
+        <h2>🛠️ Admin Tools</h2>
+        <div class="tools-grid">
+          <div class="tool-card">
+            <h3>🔍 Search User</h3>
+            <p>Find user by username or MAC address</p>
+            <input type="text" id="searchInput" placeholder="Enter username or MAC..." onkeyup="searchTable()">
+          </div>
+          <div class="tool-card">
+            <h3>📊 Export Data</h3>
+            <p>Download payment records as CSV</p>
+            <button class="btn btn-primary" onclick="exportCSV()" style="width: 100%;">📥 Download CSV</button>
+          </div>
+          <div class="tool-card">
+            <h3>🧹 Cleanup Expired</h3>
+            <p>Remove expired users from database</p>
+            <a href="/admin?pwd=${pwd}&action=cleanup" class="btn btn-danger" style="width: 100%; justify-content: center;" onclick="return confirm('Delete all expired users?')">🗑️ Delete Expired</a>
+          </div>
+        </div>
+      </div>
+
       <!-- Recent Payments Table -->
       <div class="section">
         <h2>📋 All Users (${recent.rows.length})</h2>
@@ -1802,11 +1677,11 @@ app.get('/admin', async (req, res) => {
             </thead>
             <tbody>
               ${recent.rows.map(row => `
-                <tr>
+                <tr data-search="${row.mikrotik_username} ${row.mac_address || ''}">
                   <td><strong>${row.mikrotik_username}</strong></td>
                   <td><span class="password" onclick="copyText(this)" title="Click to copy">${row.mikrotik_password}</span></td>
                   <td>
-                    <span class="badge ${row.plan === '24hr' ? 'badge-daily' : row.plan === '7d' ? 'badge-weekly' : 'badge-monthly'}">
+                    <span class="badge badge-${row.plan === '24hr' ? 'daily' : row.plan === '7d' ? 'weekly' : 'monthly'}">
                       ${row.plan === '24hr' ? '⚡ Daily' : row.plan === '7d' ? '🚀 Weekly' : '👑 Monthly'}
                     </span>
                   </td>
@@ -1819,7 +1694,7 @@ app.get('/admin', async (req, res) => {
                   <td class="mac">${row.mac_address || 'N/A'}</td>
                   <td class="time">${new Date(row.created_at).toLocaleString('en-NG', { dateStyle: 'short', timeStyle: 'short' })}</td>
                   <td class="actions">
-                    <a href="/admin?pwd=${pwd}&action=extend&userId=${row.id}&newPlan=30d" class="action-btn extend" title="Extend Plan">⏰</a>
+                    <button class="action-btn extend" onclick="openExtendModal('${row.id}', '${row.mikrotik_username}')" title="Extend Plan">⏰</button>
                     <a href="/admin?pwd=${pwd}&action=reset&userId=${row.id}" class="action-btn" onclick="return confirm('Reset this user to pending?')" title="Reset">🔄</a>
                     <a href="/admin?pwd=${pwd}&action=delete&userId=${row.id}" class="action-btn delete" onclick="return confirm('Delete this user permanently?')" title="Delete">🗑️</a>
                   </td>
@@ -1830,9 +1705,18 @@ app.get('/admin', async (req, res) => {
         </div>
       </div>
 
+      <div style="text-align: center; padding: 20px; color: #64748b; font-size: 0.8rem;">
+        <p>Dream Hatcher Tech Admin Dashboard v2.0</p>
+        <p>Last refreshed: ${new Date().toLocaleString('en-NG')}</p>
+      </div>
+
       <script>
-        let sessionTime = 5 * 60;
-        
+        // ============================================
+        // SESSION TIMEOUT (5 minutes)
+        // ============================================
+        let sessionTime = 5 * 60; // 5 minutes in seconds
+        let lastActivity = Date.now();
+
         function updateTimer() {
           const minutes = Math.floor(sessionTime / 60);
           const seconds = sessionTime % 60;
@@ -1840,7 +1724,7 @@ app.get('/admin', async (req, res) => {
             minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
 
           if (sessionTime <= 0) {
-            window.location.href = '/admin';
+            document.getElementById('logoutOverlay').classList.add('active');
             return;
           }
 
@@ -1848,11 +1732,34 @@ app.get('/admin', async (req, res) => {
           setTimeout(updateTimer, 1000);
         }
 
-        document.addEventListener('mousemove', () => sessionTime = 5 * 60);
-        document.addEventListener('keypress', () => sessionTime = 5 * 60);
-        
+        // Reset timer on activity
+        document.addEventListener('mousemove', resetTimer);
+        document.addEventListener('keypress', resetTimer);
+        document.addEventListener('click', resetTimer);
+        document.addEventListener('scroll', resetTimer);
+
+        function resetTimer() {
+          sessionTime = 5 * 60;
+        }
+
         updateTimer();
-        
+
+        // ============================================
+        // SEARCH FUNCTION
+        // ============================================
+        function searchTable() {
+          const input = document.getElementById('searchInput').value.toLowerCase();
+          const rows = document.querySelectorAll('#usersTable tbody tr');
+
+          rows.forEach(row => {
+            const searchData = row.getAttribute('data-search').toLowerCase();
+            row.style.display = searchData.includes(input) ? '' : 'none';
+          });
+        }
+
+        // ============================================
+        // COPY TEXT
+        // ============================================
         function copyText(element) {
           const text = element.textContent;
           navigator.clipboard.writeText(text).then(() => {
@@ -1864,6 +1771,50 @@ app.get('/admin', async (req, res) => {
               element.style.color = '';
             }, 1000);
           });
+        }
+
+        // ============================================
+        // EXTEND MODAL
+        // ============================================
+        function openExtendModal(userId, username) {
+          document.getElementById('extendUserId').value = userId;
+          document.getElementById('extendUsername').textContent = username;
+          document.getElementById('extendModal').classList.add('active');
+        }
+
+        function closeExtendModal() {
+          document.getElementById('extendModal').classList.remove('active');
+        }
+
+        // Close modal on outside click
+        document.getElementById('extendModal').addEventListener('click', function(e) {
+          if (e.target === this) closeExtendModal();
+        });
+
+        // ============================================
+        // EXPORT CSV
+        // ============================================
+        function exportCSV() {
+          const rows = document.querySelectorAll('#usersTable tr');
+          let csv = [];
+
+          rows.forEach(row => {
+            const cols = row.querySelectorAll('td, th');
+            const rowData = [];
+            cols.forEach((col, index) => {
+              if (index < cols.length - 1) { // Skip actions column
+                rowData.push('"' + col.textContent.trim().replace(/"/g, '""') + '"');
+              }
+            });
+            csv.push(rowData.join(','));
+          });
+
+          const blob = new Blob([csv.join('\\n')], { type: 'text/csv' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'dreamhatcher_users_' + new Date().toISOString().slice(0,10) + '.csv';
+          a.click();
         }
       </script>
     </body>
@@ -1878,6 +1829,28 @@ app.get('/admin', async (req, res) => {
   }
 });
 
+// ========== CLEANUP EXPIRED USERS ==========
+app.get('/admin', async (req, res, next) => {
+  if (req.query.action === 'cleanup' && req.query.pwd === ADMIN_PASSWORD) {
+    try {
+      const result = await pool.query(`
+        DELETE FROM payment_queue
+        WHERE status = 'processed'
+        AND (
+          (plan = '24hr' AND created_at + INTERVAL '24 hours' < NOW())
+          OR (plan = '7d' AND created_at + INTERVAL '7 days' < NOW())
+          OR (plan = '30d' AND created_at + INTERVAL '30 days' < NOW())
+        )
+      `);
+      // Redirect back with success message (handled by main route)
+      return res.redirect('/admin?pwd=' + req.query.pwd + '&cleaned=' + result.rowCount);
+    } catch (error) {
+      console.error('Cleanup error:', error);
+    }
+  }
+  next();
+});
+
 // ========== ERROR HANDLER ==========
 app.use((err, req, res, next) => {
   console.error('💥 Uncaught error:', err.message);
@@ -1888,10 +1861,10 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 10000;
 const server = app.listen(PORT, () => {
   console.log(`🚀 Monnify Backend running on port ${PORT}`);
-  console.log(`🌐 Monnify Pay: https://dreamhatcher-backend.onrender.com/monnify-pay/:plan`);
-  console.log(`🔗 Monnify Callback: https://dreamhatcher-backend.onrender.com/monnify-callback`);
-  console.log(`📨 Monnify Webhook: https://dreamhatcher-backend.onrender.com/api/monnify-webhook`);
-  console.log(`👑 Admin: https://dreamhatcher-backend.onrender.com/admin?pwd=dreamhatcher2024`);
+  console.log(`🌐 Init example:    https://dreamhatcher-backend.onrender.com/pay/daily`);
+  console.log(`🔗 Callback:        https://dreamhatcher-backend.onrender.com/monnify-callback`);
+  console.log(`📡 IPN should point to: https://dreamhatcher-backend.onrender.com/api/monnify-ipn`);
+  console.log(`👑 Admin:           https://dreamhatcher-backend.onrender.com/admin?pwd=Huda2024@`);
 });
 
 server.setTimeout(30000);
