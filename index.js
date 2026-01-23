@@ -23,10 +23,12 @@ pool.query('SELECT NOW()', (err, res) => {
 // ========== GLOBAL ERROR HANDLERS ==========
 process.on('uncaughtException', (error) => {
   console.error('💥 UNCAUGHT EXCEPTION:', error);
+  // Don't exit in production, log and continue
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('💥 UNHANDLED REJECTION at:', promise, 'reason:', reason);
+  // Don't exit in production, log and continue
 });
 
 // Helper functions
@@ -43,7 +45,7 @@ function getPlanDuration(planCode) {
   }
 }
 
-// ========== KEEP ALIVE ==========
+// ========== KEEP ALIVE (prevents Render sleep) ==========
 function keepAlive() {
   https.get('https://dreamhatcher-backend.onrender.com/health', (res) => {
     console.log('🏓 Keep-alive ping, status:', res.statusCode);
@@ -53,107 +55,81 @@ function keepAlive() {
 }
 setInterval(keepAlive, 14 * 60 * 1000);
 
-// ========== MONNIFY TOKEN HELPER ==========
-async function getMonnifyToken() {
-  const auth = Buffer.from(
-    `${process.env.MONNIFY_API_KEY}:${process.env.MONNIFY_SECRET_KEY}`
-  ).toString('base64');
+// ========== ERROR HANDLING & TIMEOUT ==========
+app.use((req, res, next) => {
+  res.setTimeout(30000, () => {
+    console.log(`⏰ Timeout on ${req.method} ${req.url}`);
+  });
+  next();
+});
 
-  try {
-    const response = await axios.post(
-      `${process.env.MONNIFY_BASE_URL}/api/v1/auth/login`,
-      {},
-      {
-        headers: {
-          'Authorization': `Basic ${auth}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
-    if (response.data?.responseBody?.accessToken) {
-      return response.data.responseBody.accessToken;
-    }
-    throw new Error('No access token received');
-  } catch (err) {
-    console.error('Monnify token error:', err.response?.data || err.message);
-    throw err;
-  }
-}
-
-// ========== PAYMENT REDIRECT (Monnify) ==========
+// ========== PAYMENT REDIRECT (With Email & MAC) ==========
 app.get('/pay/:plan', async (req, res) => {
   const { plan } = req.params;
   const mac = req.query.mac || 'unknown';
   const email = req.query.email || 'customer@dreamhatcher.com';
-
+  
+  // Plan configuration - CHANGE PRICES HERE
   const planConfig = {
-    daily:   { amount: 350,  code: '24hr' },
-    weekly:  { amount: 2400, code: '7d'   },
-    monthly: { amount: 7500, code: '30d'  }
+    daily: { amount: 350, code: '24hr' },
+    weekly: { amount: 2400, code: '7d' },
+    monthly: { amount: 7500, code: '30d' }
   };
-
+  
   const selectedPlan = planConfig[plan];
-
+  
   if (!selectedPlan) {
     return res.status(400).send('Invalid plan selected');
   }
-
+  
   try {
-    const token = await getMonnifyToken();
+    / First get access token
+const authString = Buffer.from(
+  `${process.env.MONNIFY_API_KEY}:${process.env.MONNIFY_SECRET_KEY}`
+).toString('base64');
 
-    // Generate a Monnify-compatible reference
-    const paymentReference = `DHT${Date.now()}${crypto.randomBytes(4).toString('hex')}`;
+const tokenRes = await axios.post(
+  `${process.env.MONNIFY_BASE_URL}/api/v1/auth/login`,
+  {},
+  { headers: { Authorization: `Basic ${authString}` } }
+);
+const accessToken = tokenRes.data.responseBody.accessToken;
 
-    const payload = {
-      amount: selectedPlan.amount.toString(), // Monnify expects string
-      currencyCode: "NGN",
-      paymentReference: paymentReference,
-      customerEmail: email,
-      customerName: "Dream Hatcher Customer",
-      customerMobileNumber: "", // Optional, can be empty
-      contractCode: process.env.MONNIFY_CONTRACT_CODE,
-      redirectUrl: 'https://dreamhatcher-backend.onrender.com/monnify-callback',
-      paymentMethods: ["CARD", "ACCOUNT_TRANSFER", "USSD", "BANK_TRANSFER"],
-      metadata: {
-        mac_address: mac,
-        plan: selectedPlan.code
-      }
-    };
-
-    console.log('📤 Monnify payload:', JSON.stringify(payload, null, 2));
-
-    const response = await axios.post(
-      `${process.env.MONNIFY_BASE_URL}/api/v1/merchant/transactions/init-transaction`,
-      payload,
-      {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
-    const checkoutUrl = response.data?.responseBody?.checkoutUrl;
-
-    if (!checkoutUrl) {
-      throw new Error('No checkout URL received from Monnify');
+// Initialize transaction
+const response = await axios.post(
+  `${process.env.MONNIFY_BASE_URL}/api/v1/merchant/transactions/init-transaction`,
+  {
+    amount: selectedPlan.amount, // Naira (NOT kobo!)
+    customerName: 'WiFi Customer',
+    customerEmail: email,
+    paymentReference: `DH_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    paymentDescription: `Dream Hatcher WiFi - ${selectedPlan.code}`,
+    currencyCode: 'NGN',
+    contractCode: process.env.MONNIFY_CONTRACT_CODE,
+    redirectUrl: 'https://dreamhatcher-backend.onrender.com/monnify-callback',
+    paymentMethods: ['CARD', 'ACCOUNT_TRANSFER'],
+    metaData: {
+      mac_address: mac,
+      plan: selectedPlan.code
     }
+  },
+  {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    }
+  }
+);
 
-    console.log(`💳 Monnify init: ${plan} | Ref: ${paymentReference} | MAC: ${mac} | Email: ${email}`);
-
-    res.redirect(checkoutUrl);
-
+res.redirect(response.data.responseBody.checkoutUrl);
+    
   } catch (error) {
-    console.error('❌ Monnify redirect error:', error.response?.data || error.message);
+    console.error('Payment redirect error:', error.response?.data || error.message);
     res.send(`
       <html>
         <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
           <h2>⚠️ Payment Error</h2>
           <p>Could not initialize payment. Please try again.</p>
-          <p style="color: #ff6b6b; font-size: 14px; margin: 20px 0; background: rgba(255,0,0,0.1); padding: 10px; border-radius: 5px;">
-            ${error.response?.data?.responseMessage || error.message}
-          </p>
           <a href="javascript:history.back()" style="color: #00d4ff;">← Go Back</a>
           <p style="margin-top: 20px;">Support: 07037412314</p>
         </body>
@@ -162,147 +138,172 @@ app.get('/pay/:plan', async (req, res) => {
   }
 });
 
-// ========== NEW: INITIALIZE MONNIFY PAYMENT (for frontend calls) ==========
+// ========== REQUEST LOGGING (Skip MikroTik polling endpoints) ==========
+app.use((req, res, next) => {
+  const start = Date.now();
+  
+  // Skip logging for MikroTik polling endpoints to reduce noise
+  if (!req.url.includes('/api/mikrotik-queue-text') && 
+      !req.url.includes('/api/expired-users') &&
+      !req.url.includes('/api/check-status') &&
+      !req.url.includes('/health')) {
+    console.log(`📥 ${req.method} ${req.url}`);
+  }
+  
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    // Skip logging for MikroTik polling endpoints
+    if (!req.url.includes('/api/mikrotik-queue-text') && 
+        !req.url.includes('/api/expired-users') &&
+        !req.url.includes('/api/check-status') &&
+        !req.url.includes('/health')) {
+      console.log(`📤 ${req.method} ${req.url} ${res.statusCode} - ${duration}ms`);
+    }
+  });
+  
+  next();
+});
+
+// ========== NEW: INITIALIZE PAYSTACK PAYMENT (Dynamic Checkout) ==========
 app.post('/api/initialize-payment', async (req, res) => {
   try {
     const { email, amount, plan, mac_address } = req.body;
 
-    if (!amount || !plan) {
-      return res.status(400).json({ error: 'Missing amount or plan' });
-    }
+    // Get Monnify access token
+    const authString = Buffer.from(
+      `${process.env.MONNIFY_API_KEY}:${process.env.MONNIFY_SECRET_KEY}`
+    ).toString('base64');
 
-    const planCodeMap = { '24hr': 'daily', '7d': 'weekly', '30d': 'monthly' };
-    const planKey = Object.keys(planCodeMap).find(k => planCodeMap[k] === plan) || plan;
+    const tokenRes = await axios.post(
+      `${process.env.MONNIFY_BASE_URL}/api/v1/auth/login`,
+      {},
+      { headers: { Authorization: `Basic ${authString}` } }
+    );
+    const accessToken = tokenRes.data.responseBody.accessToken;
 
-    const token = await getMonnifyToken();
-
-    const paymentReference = `dh-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
-
-    const payload = {
-      amount: Number(amount),
-      currencyCode: "NGN",
-      paymentReference,
-      customerEmail: email || 'customer@example.com',
-      customerName: "Customer",
-      contractCode: process.env.MONNIFY_CONTRACT_CODE,
-      redirectUrl: 'https://dreamhatcher-backend.onrender.com/monnify-callback',
-      paymentMethods: ["CARD", "ACCOUNT_TRANSFER", "USSD", "BANK_TRANSFER"],
-      metadata: {
-        mac_address: mac_address || 'unknown',
-        plan: planCodeMap[plan] || plan
-      }
-    };
+    const paymentRef = `DH_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
     const response = await axios.post(
       `${process.env.MONNIFY_BASE_URL}/api/v1/merchant/transactions/init-transaction`,
-      payload,
+      {
+        amount: amount, // Naira directly!
+        customerName: 'WiFi Customer',
+        customerEmail: email || 'customer@example.com',
+        paymentReference: paymentRef,
+        paymentDescription: `Dream Hatcher WiFi - ${plan}`,
+        currencyCode: 'NGN',
+        contractCode: process.env.MONNIFY_CONTRACT_CODE,
+        redirectUrl: 'https://dreamhatcher-backend.onrender.com/monnify-callback',
+        paymentMethods: ['CARD', 'ACCOUNT_TRANSFER'],
+        metaData: { mac_address: mac_address || 'unknown', plan }
+      },
       {
         headers: {
-          'Authorization': `Bearer ${token}`,
+          Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json'
         }
       }
     );
 
-    const checkoutUrl = response.data?.responseBody?.checkoutUrl;
-
-    if (!checkoutUrl) {
-      throw new Error('No checkout URL');
-    }
-
     res.json({
       success: true,
-      authorization_url: checkoutUrl,   // kept name for frontend compatibility
-      reference: paymentReference
+      checkout_url: response.data.responseBody.checkoutUrl,
+      payment_reference: paymentRef
     });
-
   } catch (error) {
-    console.error('❌ Monnify initialize error:', error.response?.data || error.message);
-    res.status(500).json({ error: 'Failed to initialize payment' });
+    console.error('❌ Monnify initialize error:', error);
+    res.status(500).json({ error: 'Failed to initialize' });
   }
 });
 
-// ========== MONNIFY IPN (FIXED - NO SQL COMMENTS) ==========
-app.post('/api/monnify-ipn', async (req, res) => {
-  console.log('📥 Monnify IPN received');
+// ========== PAYSTACK WEBHOOK ==========
+app.post('/api/monnify-webhook', async (req, res) => {
+  console.log('📥 Monnify webhook received');
 
-  try {
-    const event = req.body;
+  // Verify Monnify signature
+  const secret = process.env.MONNIFY_SECRET_KEY;
+  const hash = crypto.createHmac('sha512', secret)
+    .update(JSON.stringify(req.body))
+    .digest('hex');
 
-    // Monnify sends different formats depending on version — adjust if needed
-    if (!event?.eventType || !event?.data) {
-      return res.status(200).send('OK');
-    }
+  if (hash !== req.headers['monnify-signature']) {
+    console.log('❌ Invalid Monnify signature');
+    return res.status(400).send('Invalid signature');
+  }
 
-    if (event.eventType !== 'SUCCESSFUL_TRANSACTION') {
-      return res.status(200).send('OK');
-    }
+  const { eventType, eventData } = req.body;
 
-    const data = event.data;
+  if (eventType !== 'SUCCESSFUL_TRANSACTION') {
+    return res.status(200).json({ received: true });
+  }
 
-    if (data.paymentStatus !== 'PAID') {
-      console.log(`Payment not successful: ${data.paymentStatus}`);
-      return res.status(200).send('OK');
-    }
+  const {
+    paymentReference,
+    amountPaid,
+    metaData,
+    customer
+  } = eventData;
 
-    const reference = data.paymentReference;
-    const amountNaira = data.amountPaid;
-    const meta = data.metaData || data.metadata || {};
+  const amountNaira = amountPaid; // Already in Naira!
+  const macAddress = metaData?.mac_address;
+  const plan = metaData?.plan;
+  const reference = paymentReference;
 
-    let plan = meta.plan;
-    if (!plan) {
-      if (amountNaira === 350) plan = '24hr';
-      else if (amountNaira === 2400) plan = '7d';
-      else if (amountNaira === 7500) plan = '30d';
-      else {
-        console.error('❌ Invalid Monnify amount:', amountNaira);
-        return res.status(200).send('OK');
-      }
-    }
+  // Determine plan from amount if not in metadata
+  let finalPlan = plan;
+  if (!finalPlan) {
+    if (amountNaira === 350) finalPlan = '24hr';
+    else if (amountNaira === 2400) finalPlan = '7d';
+    else if (amountNaira === 7500) finalPlan = '30d';
+  }
 
-    const macAddress = meta.mac_address || 'unknown';
+  const username = `user_${Date.now().toString().slice(-6)}`;
+  const password = generatePassword();
 
-    const username = `user_${Date.now().toString().slice(-6)}`;
-    const password = generatePassword();
+  // Calculate expiry
+  let expiresAt;
+  const now = new Date();
+  if (finalPlan === '24hr') {
+    expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  } else if (finalPlan === '7d') {
+    expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+  } else if (finalPlan === '30d') {
+    expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+  }
 
-    let expiresAt;
-    const now = new Date();
-    if (plan === '24hr') {
-      expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-    } else if (plan === '7d') {
-      expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-    } else if (plan === '30d') {
-      expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-    }
+  await pool.query(
+    `INSERT INTO payment_queue
+     (transaction_id, customer_email, customer_phone, plan,
+      mikrotik_username, mikrotik_password, mac_address, status, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8)`,
+    [
+      reference,
+      customer?.email || 'unknown@example.com',
+      customer?.phoneNumber || '',
+      finalPlan,
+      username,
+      password,
+      macAddress || 'unknown',
+      expiresAt
+    ]
+  );
 
-    await pool.query(
-      `INSERT INTO payment_queue (transaction_id, customer_email, customer_phone, plan, mikrotik_username, mikrotik_password, mac_address, status, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8)`,
-      [
-        reference,
-        data.customer?.email || data.payerInfo?.email || 'unknown@example.com',
-        data.customer?.phoneNumber || '',
-        plan,
-        username,
-        password,
-        macAddress,
-        expiresAt
-      ]
-    );
-
-    console.log(`✅ Queued user ${username} | Expires: ${expiresAt.toISOString()}`);
-    return res.status(200).send('OK');
+  console.log(`✅ Queued ${username} | Expires: ${expiresAt}`);
+  return res.status(200).json({ received: true });
+});
 
   } catch (error) {
-    console.error('❌ Monnify IPN error:', error.message);
-    return res.status(200).send('OK'); // still acknowledge to Monnify
+    console.error('❌ Webhook error:', error.message);
+    return res.status(500).json({ error: 'Webhook processing failed' });
   }
 });
 
-// ========== MONNIFY CALLBACK (20-second waiting page) ==========
+// ========== PAYSTACK CALLBACK (20-second waiting page) ==========
 app.get('/monnify-callback', (req, res) => {
-  const ref = req.query.paymentReference || 'unknown';
+  const { paymentReference, transactionReference } = req.query;
+  const ref = paymentReference || transactionReference || 'unknown';
 
-  console.log('🔗 Monnify callback:', ref, req.query);
+  console.log('🔗 Paystack callback:', ref);
 
   const html = ` 
   <!DOCTYPE html>
@@ -313,37 +314,166 @@ app.get('/monnify-callback', (req, res) => {
     <title>Creating Your Account...</title>
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
-      body { font-family: Arial, sans-serif; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; color: white; }
-      .container { background: rgba(255,255,255,0.05); padding: 40px; border-radius: 20px; max-width: 420px; width: 100%; text-align: center; border: 1px solid rgba(255,255,255,0.1); }
-      .success-badge { background: linear-gradient(135deg, #00c9ff 0%, #92fe9d 100%); color: #000; padding: 10px 25px; border-radius: 50px; font-weight: bold; display: inline-block; margin-bottom: 20px; }
-      .spinner-container { position: relative; width: 120px; height: 120px; margin: 30px auto; }
-      .spinner { border: 4px solid rgba(255,255,255,0.1); border-top: 4px solid #00c9ff; border-radius: 50%; width: 120px; height: 120px; animation: spin 1.5s linear infinite; }
-      .countdown-number { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 36px; font-weight: bold; color: #00c9ff; }
-      @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-      .progress-bar { background: rgba(255,255,255,0.1); border-radius: 10px; height: 10px; margin: 25px 0; overflow: hidden; }
-      .progress-fill { background: linear-gradient(90deg, #00c9ff, #92fe9d); height: 100%; width: 0%; transition: width 1s linear; }
+      body {
+        font-family: Arial, sans-serif;
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        color: white;
+      }
+      .container {
+        background: rgba(255,255,255,0.05);
+        padding: 40px;
+        border-radius: 20px;
+        max-width: 420px;
+        width: 100%;
+        text-align: center;
+        border: 1px solid rgba(255,255,255,0.1);
+      }
+      .success-badge {
+        background: linear-gradient(135deg, #00c9ff 0%, #92fe9d 100%);
+        color: #000;
+        padding: 10px 25px;
+        border-radius: 50px;
+        font-weight: bold;
+        display: inline-block;
+        margin-bottom: 20px;
+      }
+      .spinner-container {
+        position: relative;
+        width: 120px;
+        height: 120px;
+        margin: 30px auto;
+      }
+      .spinner {
+        border: 4px solid rgba(255,255,255,0.1);
+        border-top: 4px solid #00c9ff;
+        border-radius: 50%;
+        width: 120px;
+        height: 120px;
+        animation: spin 1.5s linear infinite;
+      }
+      .countdown-number {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 36px;
+        font-weight: bold;
+        color: #00c9ff;
+      }
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+      .progress-bar {
+        background: rgba(255,255,255,0.1);
+        border-radius: 10px;
+        height: 10px;
+        margin: 25px 0;
+        overflow: hidden;
+      }
+      .progress-fill {
+        background: linear-gradient(90deg, #00c9ff, #92fe9d);
+        height: 100%;
+        width: 0%;
+        transition: width 1s linear;
+      }
       h2 { color: #00c9ff; margin-bottom: 15px; }
       .status-text { margin: 15px 0; line-height: 1.6; }
-      .warning { background: rgba(255,200,0,0.2); border: 1px solid rgba(255,200,0,0.5); padding: 15px; border-radius: 10px; margin-top: 20px; font-size: 13px; }
-      .ref-box { background: rgba(0,0,0,0.3); padding: 10px; border-radius: 8px; font-size: 12px; margin-top: 20px; word-break: break-all; }
+      .steps {
+        text-align: left;
+        background: rgba(0,0,0,0.2);
+        padding: 15px 20px;
+        border-radius: 10px;
+        margin: 20px 0;
+        font-size: 14px;
+      }
+      .step {
+        padding: 8px 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .step-icon {
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        flex-shrink: 0;
+      }
+      .step-pending { background: rgba(255,255,255,0.2); }
+      .step-active { background: #00c9ff; animation: pulse 1s infinite; }
+      .step-done { background: #92fe9d; color: #000; }
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+      }
+      .ref-box {
+        background: rgba(0,0,0,0.3);
+        padding: 10px;
+        border-radius: 8px;
+        font-size: 12px;
+        margin-top: 20px;
+        word-break: break-all;
+      }
+      .warning {
+        background: rgba(255,200,0,0.2);
+        border: 1px solid rgba(255,200,0,0.5);
+        padding: 15px;
+        border-radius: 10px;
+        margin-top: 20px;
+        font-size: 13px;
+      }
     </style>
   </head>
   <body>
     <div class="container">
       <div class="success-badge">✓ PAYMENT RECEIVED</div>
+      
       <h2>Creating Your WiFi Account</h2>
+      
       <div class="spinner-container">
         <div class="spinner"></div>
         <div class="countdown-number" id="countdown">20</div>
       </div>
+      
       <div class="progress-bar">
         <div class="progress-fill" id="progress"></div>
       </div>
+      
       <p class="status-text" id="status">Please wait while we set up your account...</p>
+      
+      <div class="steps">
+        <div class="step" id="step1">
+          <div class="step-icon step-active" id="icon1">1</div>
+          <span>Verifying payment with Monnify...</span>
+        </div>
+        <div class="step" id="step2">
+          <div class="step-icon step-pending" id="icon2">2</div>
+          <span>Creating WiFi credentials...</span>
+        </div>
+        <div class="step" id="step3">
+          <div class="step-icon step-pending" id="icon3">3</div>
+          <span>Activating on Server...</span>
+        </div>
+        <div class="step" id="step4">
+          <div class="step-icon step-pending" id="icon4">4</div>
+          <span>Ready to connect!</span>
+        </div>
+      </div>
+      
       <div class="warning">
         ⚠️ <strong>Do NOT close this page!</strong><br>
         Your account is being created. This takes about 20 seconds.
       </div>
+      
       <div class="ref-box">
         Reference: <strong>${ref || 'N/A'}</strong>
       </div>
@@ -356,11 +486,53 @@ app.get('/monnify-callback', (req, res) => {
       const progressEl = document.getElementById('progress');
       const statusEl = document.getElementById('status');
       
+      function updateStep(stepNum, state) {
+        const icon = document.getElementById('icon' + stepNum);
+        icon.className = 'step-icon step-' + state;
+        if (state === 'done') {
+          icon.textContent = '✓';
+        }
+      }
+      
+      const messages = [
+        { time: 20, msg: 'Connecting to payment server...', step: 1 },
+        { time: 17, msg: 'Payment verified successfully!', step: 1, done: true },
+        { time: 15, msg: 'Generating your unique credentials...', step: 2 },
+        { time: 12, msg: 'Credentials created!', step: 2, done: true },
+        { time: 10, msg: 'Sending to server...', step: 3 },
+        { time: 7, msg: 'Activating your account on server...', step: 3 },
+        { time: 5, msg: 'Almost done! Finalizing...', step: 3, done: true },
+        { time: 3, msg: 'Account ready! Redirecting...', step: 4, done: true }
+      ];
+      
+      let lastStep = 0;
+      
       const timer = setInterval(function() {
         seconds--;
         countdownEl.textContent = seconds;
+        
         const progress = ((totalSeconds - seconds) / totalSeconds) * 100;
         progressEl.style.width = progress + '%';
+        
+        // Update messages and steps based on time
+        for (let i = 0; i < messages.length; i++) {
+          if (seconds <= messages[i].time && seconds > (messages[i+1]?.time || 0)) {
+            statusEl.textContent = messages[i].msg;
+            
+            if (messages[i].step > lastStep) {
+              updateStep(messages[i].step, 'active');
+              lastStep = messages[i].step;
+            }
+            
+            if (messages[i].done) {
+              updateStep(messages[i].step, 'done');
+              if (messages[i].step < 4) {
+                updateStep(messages[i].step + 1, 'active');
+              }
+            }
+            break;
+          }
+        }
         
         if (seconds <= 0) {
           clearInterval(timer);
@@ -374,7 +546,7 @@ app.get('/monnify-callback', (req, res) => {
   </html>
   `;
 
-  res.send(html);
+  res.send(html.replace('${ref || \'\'}', ref));
 });
 
 // ========== SUCCESS PAGE - PATIENT POLLING ==========
@@ -1862,11 +2034,10 @@ app.use((err, req, res, next) => {
 // ========== START SERVER ==========
 const PORT = process.env.PORT || 10000;
 const server = app.listen(PORT, () => {
-  console.log(`🚀 Monnify Backend running on port ${PORT}`);
-  console.log(`🌐 Init example:    https://dreamhatcher-backend.onrender.com/pay/daily`);
-  console.log(`🔗 Callback:        https://dreamhatcher-backend.onrender.com/monnify-callback`);
-  console.log(`📡 IPN should point to: https://dreamhatcher-backend.onrender.com/api/monnify-ipn`);
-  console.log(`👑 Admin:           https://dreamhatcher-backend.onrender.com/admin?pwd=dreamhatcher2024`);
+  console.log(`🚀 Backend running on port ${PORT}`);
+  console.log(`🌐 Initialize: https://dreamhatcher-backend.onrender.com/api/initialize-payment`);
+  console.log(`🔗 Callback: https://dreamhatcher-backend.onrender.com/paystack-callback`);
+  console.log(`👑 Admin: https://dreamhatcher-backend.onrender.com/admin?pwd=Huda2024@`);
 });
 
 server.setTimeout(30000);
