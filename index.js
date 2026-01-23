@@ -78,8 +78,7 @@ class MonnifyService {
         currencyCode: transactionData.currency || 'NGN',
         contractCode: this.contractCode,
         redirectUrl: transactionData.redirectUrl || process.env.APP_BASE_URL,
-        paymentReference: transactionData.reference || `DHT${Date.now()}${Math.random().toString(36).substr(2, 9)}`
-        // REMOVED paymentMethods to use all available methods from contract code
+        paymentReference: transactionData.reference
       };
 
       // Add metadata if provided
@@ -238,14 +237,12 @@ app.get('/monnify-pay/:plan', async (req, res) => {
       description: selectedPlan.description,
       reference: reference,
       redirectUrl: 'https://dreamhatcher-backend.onrender.com/monnify-callback',
-      currency: 'NGN'
-    };
-
-    // Add MAC address to metadata
-    transactionData.metadata = {
-      mac_address: mac,
-      plan: selectedPlan.code,
-      reference: reference
+      currency: 'NGN',
+      metadata: {
+        mac_address: mac,
+        plan: selectedPlan.code,
+        reference: reference
+      }
     };
 
     console.log(`💳 Monnify Payment Init: ${plan} | MAC: ${mac} | Email: ${email} | Ref: ${reference}`);
@@ -253,12 +250,12 @@ app.get('/monnify-pay/:plan', async (req, res) => {
     const result = await monnify.initializeTransaction(transactionData);
     
     if (result.success) {
-      // Store in database as pending - NO CREDENTIALS YET
+      // Store in database pending transaction - SAME AS PAYSTACK
       await pool.query(
         `INSERT INTO payment_queue 
-        (transaction_id, customer_email, plan, mac_address, status, amount, created_at, expires_at)
-        VALUES ($1, $2, $3, $4, 'pending', $5, NOW(), NOW() + INTERVAL '30 minutes')`,
-        [reference, email, selectedPlan.code, mac, selectedPlan.amount]
+        (transaction_id, customer_email, plan, mac_address, status, expires_at)
+        VALUES ($1, $2, $3, $4, 'pending', NOW() + INTERVAL '10 minutes')`,
+        [reference, email, selectedPlan.code, mac]
       );
       
       console.log(`✅ Monnify checkout URL: ${result.data.checkoutUrl}`);
@@ -287,42 +284,36 @@ app.get('/monnify-pay/:plan', async (req, res) => {
 
 // ========== MONNIFY WEBHOOK ==========
 app.post('/api/monnify-webhook', async (req, res) => {
-  console.log('📥 Monnify webhook received:', JSON.stringify(req.body, null, 2));
+  console.log('📥 Monnify webhook received');
   
   try {
     const { eventType, eventData } = req.body;
     
     console.log(`🔔 Monnify Event Type: ${eventType}`);
-    console.log('🔔 Event Data:', eventData);
     
-    // Only process successful transactions - CORRECTED EVENT TYPE
+    // Only process successful transactions
     if (eventType !== 'SUCCESSFUL_TRANSACTION') {
       console.log(`⚠️ Ignoring event type: ${eventType}`);
-      return res.status(200).json({ received: true, status: 'ignored' });
+      return res.status(200).json({ received: true });
     }
     
     const { paymentReference, amountPaid, customer, paymentMethod, paidOn } = eventData;
-    const amountNaira = amountPaid;
     
-    console.log(`💰 Payment Successful: ${paymentReference} | Amount: ${amountNaira} | Email: ${customer?.email}`);
+    console.log(`💰 Payment Successful: ${paymentReference} | Amount: ${amountPaid} | Email: ${customer?.email}`);
     
     // Extract metadata
     const metadata = eventData.metaData || {};
     const macAddress = metadata.mac_address || 'unknown';
     const plan = metadata.plan;
     
-    console.log('📦 Metadata:', metadata);
-    console.log('📱 MAC Address:', macAddress);
-    console.log('📋 Plan:', plan);
-    
     // Determine plan from amount if not in metadata
     let finalPlan = plan;
     if (!finalPlan) {
-      if (amountNaira === 350) finalPlan = '24hr';
-      else if (amountNaira === 2400) finalPlan = '7d';
-      else if (amountNaira === 7500) finalPlan = '30d';
+      if (amountPaid === 350) finalPlan = '24hr';
+      else if (amountPaid === 2400) finalPlan = '7d';
+      else if (amountPaid === 7500) finalPlan = '30d';
       else {
-        console.error('❌ Invalid amount in webhook:', amountNaira);
+        console.error('❌ Invalid amount in webhook:', amountPaid);
         return res.status(400).json({ error: 'Invalid amount' });
       }
     }
@@ -341,88 +332,61 @@ app.post('/api/monnify-webhook', async (req, res) => {
       expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
     }
     
-    console.log(`🔑 Generated Credentials - Username: ${username}, Password: ${password}`);
-    console.log(`⏰ Expires at: ${expiresAt.toISOString()}`);
+    // Update existing record or create new one - SAME LOGIC AS PAYSTACK
+    await pool.query(
+      `UPDATE payment_queue 
+       SET status = 'pending',  // KEEP AS PENDING FOR MIKROTIK
+           mikrotik_username = $1,
+           mikrotik_password = $2,
+           expires_at = $3,
+           customer_email = COALESCE(customer_email, $4),
+           updated_at = NOW()
+       WHERE transaction_id = $5
+       RETURNING id`,
+      [username, password, expiresAt, customer?.email || 'unknown@example.com', paymentReference]
+    );
     
-    // Check if record already exists
-    const existingRecord = await pool.query(
+    // If no record was updated, insert new
+    const check = await pool.query(
       `SELECT id FROM payment_queue WHERE transaction_id = $1`,
       [paymentReference]
     );
     
-    if (existingRecord.rows.length > 0) {
-      // Update existing record - SET STATUS TO 'pending' NOT 'processed'
-      await pool.query(
-        `UPDATE payment_queue 
-         SET status = 'pending',  // CHANGED FROM 'processed' to 'pending'
-             mikrotik_username = $1,
-             mikrotik_password = $2,
-             expires_at = $3,
-             customer_email = COALESCE(customer_email, $4),
-             updated_at = NOW()
-         WHERE transaction_id = $5`,
-        [username, password, expiresAt, customer?.email || 'unknown@example.com', paymentReference]
-      );
-      
-      console.log(`✅ Updated existing record for ${paymentReference}`);
-    } else {
-      // Insert new record with 'pending' status
+    if (check.rows.length === 0) {
       await pool.query(
         `INSERT INTO payment_queue
-         (transaction_id, customer_email, customer_phone, plan, amount,
-          mikrotik_username, mikrotik_password, mac_address, status, expires_at, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9, NOW())`,  // CHANGED FROM 'processed' to 'pending'
+         (transaction_id, customer_email, customer_phone, plan,
+          mikrotik_username, mikrotik_password, mac_address, status, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8)`,
         [
           paymentReference,
           customer?.email || 'unknown@example.com',
           customer?.phoneNumber || '',
           finalPlan,
-          amountNaira,
           username,
           password,
           macAddress,
           expiresAt
         ]
       );
-      
-      console.log(`✅ Created new record for ${paymentReference}`);
     }
     
-    // Verify the record was created
-    const verifyRecord = await pool.query(
-      `SELECT id, status, mikrotik_username FROM payment_queue WHERE transaction_id = $1`,
-      [paymentReference]
-    );
+    console.log(`✅ Monnify user created: ${username} | Expires: ${expiresAt.toISOString()}`);
     
-    if (verifyRecord.rows.length > 0) {
-      console.log(`✅ Database record verified: ID=${verifyRecord.rows[0].id}, Status=${verifyRecord.rows[0].status}, Username=${verifyRecord.rows[0].mikrotik_username}`);
-    } else {
-      console.error('❌ Failed to verify record creation');
-    }
-    
-    console.log(`🎉 Monnify webhook processing completed for ${paymentReference}`);
-    
-    return res.status(200).json({ 
-      received: true, 
-      status: 'processed',
-      message: 'Payment processed and credentials generated'
-    });
+    return res.status(200).json({ received: true });
     
   } catch (error) {
-    console.error('❌ Monnify webhook error:', error.message, error.stack);
-    return res.status(500).json({ 
-      error: 'Webhook processing failed',
-      message: error.message
-    });
+    console.error('❌ Monnify webhook error:', error.message);
+    return res.status(500).json({ error: 'Webhook processing failed' });
   }
 });
 
-// ========== MONNIFY CALLBACK (20-second waiting page) ==========
+// ========== MONNIFY CALLBACK ==========
 app.get('/monnify-callback', (req, res) => {
   const { paymentReference, transactionReference } = req.query;
   const ref = paymentReference || transactionReference || 'unknown';
 
-  console.log('🔗 Monnify callback received, reference:', ref);
+  console.log('🔗 Monnify callback:', ref);
 
   const html = ` 
   <!DOCTYPE html>
@@ -874,7 +838,7 @@ app.get('/monnify-success', async (req, res) => {
       <script>
         const ref = '${reference}';
         let checkCount = 0;
-        const maxChecks = 30; // Increased from 20
+        const maxChecks = 20;
         let credentials = { username: '', password: '', plan: '', expires_at: '' };
         
         function showState(state) {
@@ -1071,7 +1035,6 @@ app.get('/api/monnify-check-status', async (req, res) => {
     if (result.rows.length > 0) {
       const user = result.rows[0];
       
-      // Check if credentials are available
       if (user.mikrotik_username && user.mikrotik_password) {
         return res.json({
           ready: true,
@@ -1079,20 +1042,19 @@ app.get('/api/monnify-check-status', async (req, res) => {
           password: user.mikrotik_password,
           plan: user.plan,
           expires_at: user.expires_at,
-          status: user.status,
           message: 'Credentials ready'
         });
       } else if (user.status === 'pending') {
         return res.json({
           ready: false,
           status: user.status,
-          message: 'Payment received, waiting for credential generation...'
+          expires_at: user.expires_at,
+          message: 'Status: ' + user.status + ' - Please wait...'
         });
       } else {
-        return res.json({
+        return res.json({ 
           ready: false,
-          status: user.status || 'unknown',
-          message: 'Payment processing...'
+          message: 'Payment not found in system. Please wait a moment...'
         });
       }
     } else {
@@ -1112,7 +1074,7 @@ app.get('/api/monnify-check-status', async (req, res) => {
   }
 });
 
-// ========== MIKROTIK ENDPOINTS ==========
+// ========== MIKROTIK ENDPOINTS (EXACTLY SAME AS PAYSTACK) ==========
 app.get('/api/mikrotik-queue-text', async (req, res) => {
   try {
     const apiKey = req.headers['x-api-key'] || req.query.api_key;
@@ -1138,7 +1100,6 @@ app.get('/api/mikrotik-queue-text', async (req, res) => {
 
     console.log(`📤 Preparing ${result.rows.length} users for MikroTik`);
     
-    // Format: username|password|plan|mac|expires_at|id
     const lines = result.rows.map(row => {
       const expires = row.expires_at ? row.expires_at.toISOString() : '';
       return [
@@ -1159,7 +1120,6 @@ app.get('/api/mikrotik-queue-text', async (req, res) => {
     
   } catch (error) {
     console.error('❌ MikroTik queue error:', error.message, error.stack);
-    // Send empty response instead of ERROR to avoid breaking MikroTik
     res.set('Content-Type', 'text/plain');
     res.send('');
   }
@@ -1170,10 +1130,8 @@ app.post('/api/mark-processed/:id', async (req, res) => {
     console.log(`🔄 Processing mark-processed for: ${req.params.id}`);
     let userId = req.params.id;
     
-    // Extract ID from pipe-separated string if needed
     if (userId.includes('|')) {
       const parts = userId.split('|');
-      // ID should be the LAST element in our format
       userId = parts[parts.length - 1];
       console.log(`📝 Extracted ID from string: ${userId} (full: ${req.params.id})`);
     }
@@ -1189,7 +1147,7 @@ app.post('/api/mark-processed/:id', async (req, res) => {
     }
     
     const result = await pool.query(
-      `UPDATE payment_queue SET status = 'processed' WHERE id = $1 RETURNING id, mikrotik_username`,
+      `UPDATE payment_queue SET status = 'processed' WHERE id = $1 RETURNING id`,
       [idNum]
     );
     
@@ -1201,7 +1159,7 @@ app.post('/api/mark-processed/:id', async (req, res) => {
       });
     }
     
-    console.log(`✅ Successfully marked ${idNum} (${result.rows[0].mikrotik_username}) as processed`);
+    console.log(`✅ Successfully marked ${idNum} as processed`);
     res.json({ 
       success: true,
       id: idNum
@@ -1216,7 +1174,6 @@ app.post('/api/mark-processed/:id', async (req, res) => {
   }
 });
 
-// ========== GET EXPIRED USERS (for MikroTik to disable) ==========
 app.get('/api/expired-users', async (req, res) => {
   try {
     const apiKey = req.headers['x-api-key'] || req.query.api_key;
@@ -1239,12 +1196,11 @@ app.get('/api/expired-users', async (req, res) => {
       return res.send('');
     }
 
-    // Format: username|mac_address|expires_at|id
     const lines = result.rows.map(row => [
       row.mikrotik_username || 'unknown',
       row.mac_address || 'unknown',
       row.expires_at.toISOString(),
-      row.id  // ID is last
+      row.id
     ].join('|'));
 
     const output = lines.join('\n');
@@ -1254,22 +1210,18 @@ app.get('/api/expired-users', async (req, res) => {
 
   } catch (error) {
     console.error('❌ Expired users query error:', error.message, error.stack);
-    // Send empty response instead of ERROR to avoid breaking MikroTik
     res.set('Content-Type', 'text/plain');
     res.send('');
   }
 });
 
-// ========== MARK USER AS EXPIRED ==========
 app.post('/api/mark-expired/:id', async (req, res) => {
   try {
     console.log(`🔄 Processing mark-expired for: ${req.params.id}`);
     let userId = req.params.id;
     
-    // Extract ID from pipe-separated string if needed
     if (userId.includes('|')) {
       const parts = userId.split('|');
-      // ID should be the LAST element in our format
       userId = parts[parts.length - 1];
       console.log(`📝 Extracted expired ID from string: ${userId} (full: ${req.params.id})`);
     }
@@ -1312,39 +1264,11 @@ app.post('/api/mark-expired/:id', async (req, res) => {
   }
 });
 
-// ========== REQUEST LOGGING ==========
-app.use((req, res, next) => {
-  const start = Date.now();
-  
-  if (!req.url.includes('/api/mikrotik-queue-text') && 
-      !req.url.includes('/api/expired-users') &&
-      !req.url.includes('/api/check-status') &&
-      !req.url.includes('/health') &&
-      !req.url.includes('/api/monnify-check-status')) {
-    console.log(`📥 ${req.method} ${req.url}`);
-  }
-  
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    if (!req.url.includes('/api/mikrotik-queue-text') && 
-        !req.url.includes('/api/expired-users') &&
-        !req.url.includes('/api/check-status') &&
-        !req.url.includes('/health') &&
-        !req.url.includes('/api/monnify-check-status')) {
-      console.log(`📤 ${req.method} ${req.url} ${res.statusCode} - ${duration}ms`);
-    }
-  });
-  
-  next();
-});
-
 // ========== HEALTH CHECK ==========
 app.get('/health', async (req, res) => {
   try {
     const dbResult = await pool.query('SELECT NOW()');
     const queueResult = await pool.query('SELECT COUNT(*) FROM payment_queue');
-    const pendingResult = await pool.query(`SELECT COUNT(*) FROM payment_queue WHERE status = 'pending'`);
-    const processedResult = await pool.query(`SELECT COUNT(*) FROM payment_queue WHERE status = 'processed'`);
     
     res.json({ 
       status: 'OK', 
@@ -1352,8 +1276,6 @@ app.get('/health', async (req, res) => {
       database: 'connected',
       db_time: dbResult.rows[0].now,
       total_payments: queueResult.rows[0].count,
-      pending: pendingResult.rows[0].count,
-      processed: processedResult.rows[0].count,
       uptime: process.uptime()
     });
   } catch (error) {
@@ -1364,7 +1286,7 @@ app.get('/health', async (req, res) => {
   }
 });
 
-// ========== ROOT PAGE (UPDATED WITH MONNIFY) ==========
+// ========== ROOT PAGE ==========
 app.get('/', (req, res) => {
   const html = `
   <!DOCTYPE html>
@@ -1559,14 +1481,13 @@ app.get('/', (req, res) => {
   res.send(html);
 });
 
-// ========== ADMIN DASHBOARD ==========
-// (Keep your existing admin dashboard code as is)
+// ========== ADMIN DASHBOARD (SAME AS BEFORE) ==========
+const ADMIN_PASSWORD = 'dreamhatcher2024';
+const SESSION_TIMEOUT = 5 * 60 * 1000;
+
 app.get('/admin', async (req, res) => {
   const { pwd, action, userId, newPlan } = req.query;
 
-  // Password check
-  const ADMIN_PASSWORD = 'dreamhatcher2024'; // CHANGE THIS!
-  
   if (pwd !== ADMIN_PASSWORD) {
     return res.send(`
       <!DOCTYPE html>
@@ -1604,7 +1525,6 @@ app.get('/admin', async (req, res) => {
   }
 
   try {
-    // Handle admin actions
     let actionMessage = '';
 
     if (action === 'delete' && userId) {
@@ -1622,7 +1542,6 @@ app.get('/admin', async (req, res) => {
       actionMessage = '✅ User reset to pending (will be re-created on MikroTik)';
     }
 
-    // Get statistics
     const stats = await pool.query(`
       SELECT
         COUNT(*) as total_payments,
@@ -1634,7 +1553,6 @@ app.get('/admin', async (req, res) => {
       FROM payment_queue
     `);
 
-    // Revenue calculations
     const revenue = await pool.query(`
       SELECT
         COALESCE(SUM(CASE WHEN plan = '24hr' THEN 350 WHEN plan = '7d' THEN 2400 WHEN plan = '30d' THEN 7500 ELSE 0 END), 0) as total_revenue,
@@ -1644,12 +1562,10 @@ app.get('/admin', async (req, res) => {
       FROM payment_queue WHERE status = 'processed'
     `);
 
-    // Plan breakdown
     const plans = await pool.query(`
       SELECT plan, COUNT(*) as count FROM payment_queue WHERE status = 'processed' GROUP BY plan
     `);
 
-    // Recent payments with expiry
     const recent = await pool.query(`
       SELECT
         id, mikrotik_username, mikrotik_password, plan, status, mac_address, customer_email, created_at,
@@ -1672,10 +1588,6 @@ app.get('/admin', async (req, res) => {
 
     const s = stats.rows[0];
     const r = revenue.rows[0];
-    const planData = {};
-    plans.rows.forEach(p => { planData[p.plan] = parseInt(p.count); });
-
-    // Count by status
     const activeCount = recent.rows.filter(r => r.real_status === 'active').length;
     const expiredCount = recent.rows.filter(r => r.real_status === 'expired').length;
 
@@ -1770,29 +1682,6 @@ app.get('/admin', async (req, res) => {
           align-items: center;
           gap: 10px;
         }
-        .tools-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-          gap: 15px;
-        }
-        .tool-card {
-          background: rgba(0,0,0,0.2);
-          border-radius: 12px;
-          padding: 20px;
-        }
-        .tool-card h3 { color: #f8fafc; font-size: 1rem; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
-        .tool-card p { color: #94a3b8; font-size: 0.85rem; margin-bottom: 15px; }
-        .tool-card input, .tool-card select {
-          width: 100%;
-          padding: 10px 12px;
-          border-radius: 8px;
-          border: 1px solid rgba(255,255,255,0.1);
-          background: rgba(255,255,255,0.05);
-          color: white;
-          font-size: 0.9rem;
-          margin-bottom: 10px;
-        }
-        .tool-card input:focus, .tool-card select:focus { outline: none; border-color: #00d4ff; }
         table { width: 100%; border-collapse: collapse; }
         th, td { padding: 12px 10px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.85rem; }
         th { color: #64748b; font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -1801,9 +1690,6 @@ app.get('/admin', async (req, res) => {
         .badge-active { background: rgba(16,185,129,0.2); color: #10b981; }
         .badge-expired { background: rgba(239,68,68,0.2); color: #ef4444; }
         .badge-pending { background: rgba(245,158,11,0.2); color: #f59e0b; }
-        .badge-daily { background: rgba(59,130,246,0.2); color: #3b82f6; }
-        .badge-weekly { background: rgba(139,92,246,0.2); color: #8b5cf6; }
-        .badge-monthly { background: rgba(236,72,153,0.2); color: #ec4899; }
         .actions { display: flex; gap: 5px; }
         .action-btn {
           padding: 5px 10px;
@@ -1829,95 +1715,9 @@ app.get('/admin', async (req, res) => {
           gap: 10px;
         }
         .alert-success { background: rgba(16,185,129,0.2); border: 1px solid rgba(16,185,129,0.3); color: #10b981; }
-        .alert-error { background: rgba(239,68,68,0.2); border: 1px solid rgba(239,68,68,0.3); color: #ef4444; }
-        .search-box {
-          display: flex;
-          gap: 10px;
-          margin-bottom: 15px;
-        }
-        .search-box input {
-          flex: 1;
-          padding: 10px 15px;
-          border-radius: 8px;
-          border: 1px solid rgba(255,255,255,0.1);
-          background: rgba(0,0,0,0.2);
-          color: white;
-          font-size: 0.9rem;
-        }
-        .modal {
-          display: none;
-          position: fixed;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100%;
-          background: rgba(0,0,0,0.8);
-          z-index: 1000;
-          align-items: center;
-          justify-content: center;
-        }
-        .modal.active { display: flex; }
-        .modal-content {
-          background: #1a1a2e;
-          border-radius: 16px;
-          padding: 30px;
-          max-width: 400px;
-          width: 90%;
-          border: 1px solid rgba(255,255,255,0.1);
-        }
-        .modal-content h3 { margin-bottom: 20px; color: #00d4ff; }
-        @media (max-width: 768px) {
-          .stats-grid { grid-template-columns: 1fr 1fr; }
-          .header { flex-direction: column; text-align: center; }
-          th, td { padding: 8px 5px; font-size: 0.75rem; }
-        }
-        .logout-overlay {
-          display: none;
-          position: fixed;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100%;
-          background: rgba(0,0,0,0.95);
-          z-index: 2000;
-          align-items: center;
-          justify-content: center;
-          flex-direction: column;
-        }
-        .logout-overlay.active { display: flex; }
-        .logout-overlay h2 { color: #ef4444; margin-bottom: 20px; }
       </style>
     </head>
     <body>
-      <!-- Session timeout overlay -->
-      <div class="logout-overlay" id="logoutOverlay">
-        <h2>⏰ Session Expired</h2>
-        <p style="color: #94a3b8; margin-bottom: 20px;">You've been logged out due to inactivity.</p>
-        <a href="/admin" class="btn btn-primary">🔐 Login Again</a>
-      </div>
-
-      <!-- Extend Plan Modal -->
-      <div class="modal" id="extendModal">
-        <div class="modal-content">
-          <h3>⏰ Extend User Plan</h3>
-          <p style="color: #94a3b8; margin-bottom: 20px;">Select new plan for <strong id="extendUsername"></strong></p>
-          <form id="extendForm" method="GET">
-            <input type="hidden" name="pwd" value="${pwd}">
-            <input type="hidden" name="action" value="extend">
-            <input type="hidden" name="userId" id="extendUserId">
-            <select name="newPlan" style="width: 100%; padding: 12px; border-radius: 8px; margin-bottom: 15px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: white;">
-              <option value="24hr">⚡ Daily (24 hours)</option>
-              <option value="7d">🚀 Weekly (7 days)</option>
-              <option value="30d">👑 Monthly (30 days)</option>
-            </select>
-            <div style="display: flex; gap: 10px;">
-              <button type="button" class="btn btn-secondary" onclick="closeExtendModal()" style="flex: 1;">Cancel</button>
-              <button type="submit" class="btn btn-success" style="flex: 1;">Extend Plan</button>
-            </div>
-          </form>
-        </div>
-      </div>
-
       <div class="header">
         <div class="header-left">
           <h1>🌐 Dream Hatcher Admin</h1>
@@ -1983,28 +1783,6 @@ app.get('/admin', async (req, res) => {
         </div>
       </div>
 
-      <!-- Admin Tools -->
-      <div class="section">
-        <h2>🛠️ Admin Tools</h2>
-        <div class="tools-grid">
-          <div class="tool-card">
-            <h3>🔍 Search User</h3>
-            <p>Find user by username or MAC address</p>
-            <input type="text" id="searchInput" placeholder="Enter username or MAC..." onkeyup="searchTable()">
-          </div>
-          <div class="tool-card">
-            <h3>📊 Export Data</h3>
-            <p>Download payment records as CSV</p>
-            <button class="btn btn-primary" onclick="exportCSV()" style="width: 100%;">📥 Download CSV</button>
-          </div>
-          <div class="tool-card">
-            <h3>🧹 Cleanup Expired</h3>
-            <p>Remove expired users from database</p>
-            <a href="/admin?pwd=${pwd}&action=cleanup" class="btn btn-danger" style="width: 100%; justify-content: center;" onclick="return confirm('Delete all expired users?')">🗑️ Delete Expired</a>
-          </div>
-        </div>
-      </div>
-
       <!-- Recent Payments Table -->
       <div class="section">
         <h2>📋 All Users (${recent.rows.length})</h2>
@@ -2024,11 +1802,11 @@ app.get('/admin', async (req, res) => {
             </thead>
             <tbody>
               ${recent.rows.map(row => `
-                <tr data-search="${row.mikrotik_username} ${row.mac_address || ''}">
+                <tr>
                   <td><strong>${row.mikrotik_username}</strong></td>
                   <td><span class="password" onclick="copyText(this)" title="Click to copy">${row.mikrotik_password}</span></td>
                   <td>
-                    <span class="badge badge-${row.plan === '24hr' ? 'daily' : row.plan === '7d' ? 'weekly' : 'monthly'}">
+                    <span class="badge ${row.plan === '24hr' ? 'badge-daily' : row.plan === '7d' ? 'badge-weekly' : 'badge-monthly'}">
                       ${row.plan === '24hr' ? '⚡ Daily' : row.plan === '7d' ? '🚀 Weekly' : '👑 Monthly'}
                     </span>
                   </td>
@@ -2041,7 +1819,7 @@ app.get('/admin', async (req, res) => {
                   <td class="mac">${row.mac_address || 'N/A'}</td>
                   <td class="time">${new Date(row.created_at).toLocaleString('en-NG', { dateStyle: 'short', timeStyle: 'short' })}</td>
                   <td class="actions">
-                    <button class="action-btn extend" onclick="openExtendModal('${row.id}', '${row.mikrotik_username}')" title="Extend Plan">⏰</button>
+                    <a href="/admin?pwd=${pwd}&action=extend&userId=${row.id}&newPlan=30d" class="action-btn extend" title="Extend Plan">⏰</a>
                     <a href="/admin?pwd=${pwd}&action=reset&userId=${row.id}" class="action-btn" onclick="return confirm('Reset this user to pending?')" title="Reset">🔄</a>
                     <a href="/admin?pwd=${pwd}&action=delete&userId=${row.id}" class="action-btn delete" onclick="return confirm('Delete this user permanently?')" title="Delete">🗑️</a>
                   </td>
@@ -2052,18 +1830,9 @@ app.get('/admin', async (req, res) => {
         </div>
       </div>
 
-      <div style="text-align: center; padding: 20px; color: #64748b; font-size: 0.8rem;">
-        <p>Dream Hatcher Tech Admin Dashboard v2.0</p>
-        <p>Last refreshed: ${new Date().toLocaleString('en-NG')}</p>
-      </div>
-
       <script>
-        // ============================================
-        // SESSION TIMEOUT (5 minutes)
-        // ============================================
-        let sessionTime = 5 * 60; // 5 minutes in seconds
-        let lastActivity = Date.now();
-
+        let sessionTime = 5 * 60;
+        
         function updateTimer() {
           const minutes = Math.floor(sessionTime / 60);
           const seconds = sessionTime % 60;
@@ -2071,7 +1840,7 @@ app.get('/admin', async (req, res) => {
             minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
 
           if (sessionTime <= 0) {
-            document.getElementById('logoutOverlay').classList.add('active');
+            window.location.href = '/admin';
             return;
           }
 
@@ -2079,34 +1848,11 @@ app.get('/admin', async (req, res) => {
           setTimeout(updateTimer, 1000);
         }
 
-        // Reset timer on activity
-        document.addEventListener('mousemove', resetTimer);
-        document.addEventListener('keypress', resetTimer);
-        document.addEventListener('click', resetTimer);
-        document.addEventListener('scroll', resetTimer);
-
-        function resetTimer() {
-          sessionTime = 5 * 60;
-        }
-
+        document.addEventListener('mousemove', () => sessionTime = 5 * 60);
+        document.addEventListener('keypress', () => sessionTime = 5 * 60);
+        
         updateTimer();
-
-        // ============================================
-        // SEARCH FUNCTION
-        // ============================================
-        function searchTable() {
-          const input = document.getElementById('searchInput').value.toLowerCase();
-          const rows = document.querySelectorAll('#usersTable tbody tr');
-
-          rows.forEach(row => {
-            const searchData = row.getAttribute('data-search').toLowerCase();
-            row.style.display = searchData.includes(input) ? '' : 'none';
-          });
-        }
-
-        // ============================================
-        // COPY TEXT
-        // ============================================
+        
         function copyText(element) {
           const text = element.textContent;
           navigator.clipboard.writeText(text).then(() => {
@@ -2119,50 +1865,6 @@ app.get('/admin', async (req, res) => {
             }, 1000);
           });
         }
-
-        // ============================================
-        // EXTEND MODAL
-        // ============================================
-        function openExtendModal(userId, username) {
-          document.getElementById('extendUserId').value = userId;
-          document.getElementById('extendUsername').textContent = username;
-          document.getElementById('extendModal').classList.add('active');
-        }
-
-        function closeExtendModal() {
-          document.getElementById('extendModal').classList.remove('active');
-        }
-
-        // Close modal on outside click
-        document.getElementById('extendModal').addEventListener('click', function(e) {
-          if (e.target === this) closeExtendModal();
-        });
-
-        // ============================================
-        // EXPORT CSV
-        // ============================================
-        function exportCSV() {
-          const rows = document.querySelectorAll('#usersTable tr');
-          let csv = [];
-
-          rows.forEach(row => {
-            const cols = row.querySelectorAll('td, th');
-            const rowData = [];
-            cols.forEach((col, index) => {
-              if (index < cols.length - 1) { // Skip actions column
-                rowData.push('"' + col.textContent.trim().replace(/"/g, '""') + '"');
-              }
-            });
-            csv.push(rowData.join(','));
-          });
-
-          const blob = new Blob([csv.join('\\n')], { type: 'text/csv' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = 'dreamhatcher_users_' + new Date().toISOString().slice(0,10) + '.csv';
-          a.click();
-        }
       </script>
     </body>
     </html>
@@ -2174,28 +1876,6 @@ app.get('/admin', async (req, res) => {
     console.error('Dashboard error:', error);
     res.status(500).send('Dashboard error: ' + error.message);
   }
-});
-
-// ========== CLEANUP EXPIRED USERS ==========
-app.get('/admin', async (req, res, next) => {
-  if (req.query.action === 'cleanup' && req.query.pwd === 'dreamhatcher2024') {
-    try {
-      const result = await pool.query(`
-        DELETE FROM payment_queue
-        WHERE status = 'processed'
-        AND (
-          (plan = '24hr' AND created_at + INTERVAL '24 hours' < NOW())
-          OR (plan = '7d' AND created_at + INTERVAL '7 days' < NOW())
-          OR (plan = '30d' AND created_at + INTERVAL '30 days' < NOW())
-        )
-      `);
-      // Redirect back with success message (handled by main route)
-      return res.redirect('/admin?pwd=' + req.query.pwd + '&cleaned=' + result.rowCount);
-    } catch (error) {
-      console.error('Cleanup error:', error);
-    }
-  }
-  next();
 });
 
 // ========== ERROR HANDLER ==========
