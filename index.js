@@ -76,18 +76,64 @@ app.use((req, res, next) => {
   next();
 });
 
-// ========== PAYMENT REDIRECT (With Email & MAC) ==========
+// ========== HELPER: Generate Payment Reference ==========
+const generatePaymentReference = (length = 10) => {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let result = '';
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+};
+
+// ========== HELPER: Initialize Monnify Transaction ==========
+const initializeMonnifyPayment = async ({ email, amount, plan, mac_address, description }) => {
+  const accessToken = await getMonnifyToken();
+  const paymentReference = generatePaymentReference(10); // e.g., "vq490fp113"
+
+  const response = await axios.post(
+    `${process.env.MONNIFY_BASE_URL}/api/v1/merchant/transactions/init-transaction`,
+    {
+      amount: amount,
+      customerName: 'WiFi Customer',
+      customerEmail: email || 'customer@dreamhatcher.com',
+      paymentReference: paymentReference,
+      paymentDescription: description || `Dream Hatcher WiFi - ${plan}`,
+      currencyCode: 'NGN',
+      contractCode: process.env.MONNIFY_CONTRACT_CODE,
+      redirectUrl: 'https://dreamhatcher-backend.onrender.com/monnify-callback',
+      paymentMethods: ['CARD', 'ACCOUNT_TRANSFER', 'USSD', 'PHONE_NUMBER'],
+      metaData: {
+        mac_address: mac_address || 'unknown',
+        plan: plan
+      }
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+
+  return {
+    checkoutUrl: response.data.responseBody.checkoutUrl,
+    paymentReference: paymentReference
+  };
+};
+
+// ========== PLAN CONFIGURATION ==========
+const planConfig = {
+  daily: { amount: 350, code: '24hr', duration: '24 Hours' },
+  weekly: { amount: 2400, code: '7d', duration: '7 Days' },
+  monthly: { amount: 7500, code: '30d', duration: '30 Days' }
+};
+
+// ========== PAYMENT REDIRECT (Captive Portal Flow) ==========
 app.get('/pay/:plan', async (req, res) => {
   const { plan } = req.params;
   const mac = req.query.mac || 'unknown';
   const email = req.query.email || 'customer@dreamhatcher.com';
-
-  // Plan configuration - CHANGE PRICES HERE
-  const planConfig = {
-    daily: { amount: 350, code: '24hr' },
-    weekly: { amount: 2400, code: '7d' },
-    monthly: { amount: 7500, code: '30d' }
-  };
 
   const selectedPlan = planConfig[plan];
 
@@ -96,42 +142,17 @@ app.get('/pay/:plan', async (req, res) => {
   }
 
   try {
-    // Get Monnify access token
-    const accessToken = await getMonnifyToken();
+    const { checkoutUrl, paymentReference } = await initializeMonnifyPayment({
+      email: email,
+      amount: selectedPlan.amount,
+      plan: selectedPlan.code,
+      mac_address: mac,
+      description: `Dream Hatcher WiFi - ${selectedPlan.duration}`
+    });
 
-    // Generate unique payment reference
-    const paymentReference = `DH_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    console.log(`💳 Payment: ${plan} | MAC: ${mac} | Email: ${email} | Ref: ${paymentReference}`);
 
-    // Initialize Monnify transaction
-    const response = await axios.post(
-      `${process.env.MONNIFY_BASE_URL}/api/v1/merchant/transactions/init-transaction`,
-      {
-        amount: selectedPlan.amount, // Monnify uses Naira directly (NOT kobo)
-        customerName: 'WiFi Customer',
-        customerEmail: email,
-        paymentReference: paymentReference,
-        paymentDescription: `Dream Hatcher WiFi - ${getPlanDuration(selectedPlan.code)}`,
-        currencyCode: 'NGN',
-        contractCode: process.env.MONNIFY_CONTRACT_CODE,
-        redirectUrl: 'https://dreamhatcher-backend.onrender.com/monnify-callback',
-        paymentMethods: ['CARD', 'ACCOUNT_TRANSFER', 'USSD', 'PHONE_NUMBER'],
-        metaData: {
-          mac_address: mac,
-          plan: selectedPlan.code
-        }
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
-    console.log(`💳 Monnify payment init: ${plan} | MAC: ${mac} | Email: ${email} | Ref: ${paymentReference}`);
-
-    // Redirect user to Monnify checkout
-    res.redirect(response.data.responseBody.checkoutUrl);
+    res.redirect(checkoutUrl);
 
   } catch (error) {
     console.error('Payment redirect error:', error.response?.data || error.message);
@@ -148,31 +169,7 @@ app.get('/pay/:plan', async (req, res) => {
   }
 });
 
-// ========== REQUEST LOGGING (Skip MikroTik polling endpoints) ==========
-app.use((req, res, next) => {
-  const start = Date.now();
-
-  if (!req.url.includes('/api/mikrotik-queue-text') &&
-      !req.url.includes('/api/expired-users') &&
-      !req.url.includes('/api/check-status') &&
-      !req.url.includes('/health')) {
-    console.log(`📥 ${req.method} ${req.url}`);
-  }
-
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    if (!req.url.includes('/api/mikrotik-queue-text') &&
-        !req.url.includes('/api/expired-users') &&
-        !req.url.includes('/api/check-status') &&
-        !req.url.includes('/health')) {
-      console.log(`📤 ${req.method} ${req.url} ${res.statusCode} - ${duration}ms`);
-    }
-  });
-
-  next();
-});
-
-// ========== INITIALIZE MONNIFY PAYMENT (Dynamic Checkout) ==========
+// ========== INITIALIZE PAYMENT API (Dynamic Checkout) ==========
 app.post('/api/initialize-payment', async (req, res) => {
   try {
     const { email, amount, plan, mac_address } = req.body;
@@ -181,41 +178,18 @@ app.post('/api/initialize-payment', async (req, res) => {
       return res.status(400).json({ error: 'Missing amount or plan' });
     }
 
-    // Get Monnify access token
-    const accessToken = await getMonnifyToken();
+    const { checkoutUrl, paymentReference } = await initializeMonnifyPayment({
+      email: email,
+      amount: amount,
+      plan: plan,
+      mac_address: mac_address
+    });
 
-    // Generate unique payment reference
-    const paymentReference = `DH_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-    // Initialize Monnify transaction
-    const response = await axios.post(
-      `${process.env.MONNIFY_BASE_URL}/api/v1/merchant/transactions/init-transaction`,
-      {
-        amount: amount, // Monnify uses Naira directly (NOT kobo)
-        customerName: 'WiFi Customer',
-        customerEmail: email || 'customer@example.com',
-        paymentReference: paymentReference,
-        paymentDescription: `Dream Hatcher WiFi - ${plan}`,
-        currencyCode: 'NGN',
-        contractCode: process.env.MONNIFY_CONTRACT_CODE,
-        redirectUrl: 'https://dreamhatcher-backend.onrender.com/monnify-callback',
-        paymentMethods: ['CARD', 'ACCOUNT_TRANSFER', 'USSD', 'PHONE_NUMBER'],
-        metaData: {
-          mac_address: mac_address || 'unknown',
-          plan: plan
-        }
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
+    console.log(`💳 API Payment: ${plan} | Amount: ₦${amount} | Ref: ${paymentReference}`);
 
     res.json({
       success: true,
-      checkout_url: response.data.responseBody.checkoutUrl,
+      checkout_url: checkoutUrl,
       payment_reference: paymentReference
     });
 
@@ -2049,6 +2023,7 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
 
