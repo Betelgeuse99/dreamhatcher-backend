@@ -78,9 +78,14 @@ class MonnifyService {
         currencyCode: transactionData.currency || 'NGN',
         contractCode: this.contractCode,
         redirectUrl: transactionData.redirectUrl || process.env.APP_BASE_URL,
-        paymentReference: transactionData.reference || `DHT${Date.now()}${Math.random().toString(36).substr(2, 9)}`,
-        paymentMethods: transactionData.paymentMethods || ["CARD", "ACCOUNT_TRANSFER"]
+        paymentReference: transactionData.reference || `DHT${Date.now()}${Math.random().toString(36).substr(2, 9)}`
+        // REMOVED paymentMethods to use all available methods from contract code
       };
+
+      // Add metadata if provided
+      if (transactionData.metadata) {
+        payload.metadata = transactionData.metadata;
+      }
 
       const response = await axios.post(
         `${this.baseUrl}/api/v1/merchant/transactions/init-transaction`,
@@ -236,7 +241,7 @@ app.get('/monnify-pay/:plan', async (req, res) => {
       currency: 'NGN'
     };
 
-    // Add MAC address to metadata using custom fields
+    // Add MAC address to metadata
     transactionData.metadata = {
       mac_address: mac,
       plan: selectedPlan.code,
@@ -248,12 +253,12 @@ app.get('/monnify-pay/:plan', async (req, res) => {
     const result = await monnify.initializeTransaction(transactionData);
     
     if (result.success) {
-      // Store in database pending transaction
+      // Store in database as pending - NO CREDENTIALS YET
       await pool.query(
         `INSERT INTO payment_queue 
-        (transaction_id, customer_email, plan, mac_address, status, expires_at)
-        VALUES ($1, $2, $3, $4, 'pending', NOW() + INTERVAL '10 minutes')`,
-        [reference, email, selectedPlan.code, mac]
+        (transaction_id, customer_email, plan, mac_address, status, amount, created_at, expires_at)
+        VALUES ($1, $2, $3, $4, 'pending', $5, NOW(), NOW() + INTERVAL '30 minutes')`,
+        [reference, email, selectedPlan.code, mac, selectedPlan.amount]
       );
       
       console.log(`✅ Monnify checkout URL: ${result.data.checkoutUrl}`);
@@ -282,27 +287,33 @@ app.get('/monnify-pay/:plan', async (req, res) => {
 
 // ========== MONNIFY WEBHOOK ==========
 app.post('/api/monnify-webhook', async (req, res) => {
-  console.log('📥 Monnify webhook received');
+  console.log('📥 Monnify webhook received:', JSON.stringify(req.body, null, 2));
   
   try {
     const { eventType, eventData } = req.body;
     
-    console.log(`🔔 Monnify Event: ${eventType}`);
+    console.log(`🔔 Monnify Event Type: ${eventType}`);
+    console.log('🔔 Event Data:', eventData);
     
-    // Only process successful transactions
-    if (eventType !== 'SUCCESS') {
-      return res.status(200).json({ received: true });
+    // Only process successful transactions - CORRECTED EVENT TYPE
+    if (eventType !== 'SUCCESSFUL_TRANSACTION') {
+      console.log(`⚠️ Ignoring event type: ${eventType}`);
+      return res.status(200).json({ received: true, status: 'ignored' });
     }
     
     const { paymentReference, amountPaid, customer, paymentMethod, paidOn } = eventData;
     const amountNaira = amountPaid;
     
-    console.log(`💰 Payment Successful: ${paymentReference} | Amount: ${amountNaira}`);
+    console.log(`💰 Payment Successful: ${paymentReference} | Amount: ${amountNaira} | Email: ${customer?.email}`);
     
     // Extract metadata
     const metadata = eventData.metaData || {};
     const macAddress = metadata.mac_address || 'unknown';
     const plan = metadata.plan;
+    
+    console.log('📦 Metadata:', metadata);
+    console.log('📱 MAC Address:', macAddress);
+    console.log('📋 Plan:', plan);
     
     // Determine plan from amount if not in metadata
     let finalPlan = plan;
@@ -330,52 +341,79 @@ app.post('/api/monnify-webhook', async (req, res) => {
       expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
     }
     
-    // Update existing record or create new one
-    await pool.query(
-      `UPDATE payment_queue 
-       SET status = 'processed',
-           mikrotik_username = $1,
-           mikrotik_password = $2,
-           expires_at = $3,
-           customer_email = COALESCE(customer_email, $4),
-           updated_at = NOW()
-       WHERE transaction_id = $5
-       RETURNING id`,
-      [username, password, expiresAt, customer.email, paymentReference]
-    );
+    console.log(`🔑 Generated Credentials - Username: ${username}, Password: ${password}`);
+    console.log(`⏰ Expires at: ${expiresAt.toISOString()}`);
     
-    // If no record was updated (shouldn't happen), insert new
-    const check = await pool.query(
+    // Check if record already exists
+    const existingRecord = await pool.query(
       `SELECT id FROM payment_queue WHERE transaction_id = $1`,
       [paymentReference]
     );
     
-    if (check.rows.length === 0) {
+    if (existingRecord.rows.length > 0) {
+      // Update existing record - SET STATUS TO 'pending' NOT 'processed'
+      await pool.query(
+        `UPDATE payment_queue 
+         SET status = 'pending',  // CHANGED FROM 'processed' to 'pending'
+             mikrotik_username = $1,
+             mikrotik_password = $2,
+             expires_at = $3,
+             customer_email = COALESCE(customer_email, $4),
+             updated_at = NOW()
+         WHERE transaction_id = $5`,
+        [username, password, expiresAt, customer?.email || 'unknown@example.com', paymentReference]
+      );
+      
+      console.log(`✅ Updated existing record for ${paymentReference}`);
+    } else {
+      // Insert new record with 'pending' status
       await pool.query(
         `INSERT INTO payment_queue
-         (transaction_id, customer_email, customer_phone, plan,
-          mikrotik_username, mikrotik_password, mac_address, status, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'processed', $8)`,
+         (transaction_id, customer_email, customer_phone, plan, amount,
+          mikrotik_username, mikrotik_password, mac_address, status, expires_at, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9, NOW())`,  // CHANGED FROM 'processed' to 'pending'
         [
           paymentReference,
-          customer.email || 'unknown@example.com',
-          customer.phoneNumber || '',
+          customer?.email || 'unknown@example.com',
+          customer?.phoneNumber || '',
           finalPlan,
+          amountNaira,
           username,
           password,
           macAddress,
           expiresAt
         ]
       );
+      
+      console.log(`✅ Created new record for ${paymentReference}`);
     }
     
-    console.log(`✅ Monnify user created: ${username} | Expires: ${expiresAt.toISOString()}`);
+    // Verify the record was created
+    const verifyRecord = await pool.query(
+      `SELECT id, status, mikrotik_username FROM payment_queue WHERE transaction_id = $1`,
+      [paymentReference]
+    );
     
-    return res.status(200).json({ received: true });
+    if (verifyRecord.rows.length > 0) {
+      console.log(`✅ Database record verified: ID=${verifyRecord.rows[0].id}, Status=${verifyRecord.rows[0].status}, Username=${verifyRecord.rows[0].mikrotik_username}`);
+    } else {
+      console.error('❌ Failed to verify record creation');
+    }
+    
+    console.log(`🎉 Monnify webhook processing completed for ${paymentReference}`);
+    
+    return res.status(200).json({ 
+      received: true, 
+      status: 'processed',
+      message: 'Payment processed and credentials generated'
+    });
     
   } catch (error) {
     console.error('❌ Monnify webhook error:', error.message, error.stack);
-    return res.status(500).json({ error: 'Webhook processing failed' });
+    return res.status(500).json({ 
+      error: 'Webhook processing failed',
+      message: error.message
+    });
   }
 });
 
@@ -384,7 +422,7 @@ app.get('/monnify-callback', (req, res) => {
   const { paymentReference, transactionReference } = req.query;
   const ref = paymentReference || transactionReference || 'unknown';
 
-  console.log('🔗 Monnify callback:', ref);
+  console.log('🔗 Monnify callback received, reference:', ref);
 
   const html = ` 
   <!DOCTYPE html>
@@ -556,7 +594,7 @@ app.get('/monnify-callback', (req, res) => {
       </div>
       
       <div class="ref-box">
-        Reference: <strong>${ref || 'N/A'}</strong>
+        Reference: <strong>${ref}</strong>
       </div>
     </div>
     
@@ -619,7 +657,7 @@ app.get('/monnify-callback', (req, res) => {
           clearInterval(timer);
           countdownEl.textContent = '✓';
           statusEl.textContent = 'Redirecting to your credentials...';
-          window.location.href = '/monnify-success?reference=' + encodeURIComponent('${ref || ''}');
+          window.location.href = '/monnify-success?reference=' + encodeURIComponent('${ref}');
         }
       }, 1000);
     </script>
@@ -627,7 +665,7 @@ app.get('/monnify-callback', (req, res) => {
   </html>
   `;
 
-  res.send(html.replace('${ref || \'\'}', ref));
+  res.send(html);
 });
 
 // ========== MONNIFY SUCCESS PAGE ==========
@@ -836,7 +874,7 @@ app.get('/monnify-success', async (req, res) => {
       <script>
         const ref = '${reference}';
         let checkCount = 0;
-        const maxChecks = 20;
+        const maxChecks = 30; // Increased from 20
         let credentials = { username: '', password: '', plan: '', expires_at: '' };
         
         function showState(state) {
@@ -971,7 +1009,7 @@ app.get('/monnify-success', async (req, res) => {
               
             } else {
               if (data.status === 'pending') {
-                statusText.textContent = 'Account queued, waiting for processing...';
+                statusText.textContent = 'Account queued, waiting for MikroTik processing...';
               } else if (data.status === 'processed') {
                 statusText.textContent = 'Account created! Loading credentials...';
               } else {
@@ -1033,21 +1071,28 @@ app.get('/api/monnify-check-status', async (req, res) => {
     if (result.rows.length > 0) {
       const user = result.rows[0];
       
-      if (user.status === 'processed') {
+      // Check if credentials are available
+      if (user.mikrotik_username && user.mikrotik_password) {
         return res.json({
           ready: true,
           username: user.mikrotik_username,
           password: user.mikrotik_password,
           plan: user.plan,
           expires_at: user.expires_at,
+          status: user.status,
           message: 'Credentials ready'
+        });
+      } else if (user.status === 'pending') {
+        return res.json({
+          ready: false,
+          status: user.status,
+          message: 'Payment received, waiting for credential generation...'
         });
       } else {
         return res.json({
           ready: false,
-          status: user.status,
-          expires_at: user.expires_at,
-          message: 'Status: ' + user.status + ' - Please wait...'
+          status: user.status || 'unknown',
+          message: 'Payment processing...'
         });
       }
     } else {
@@ -1067,7 +1112,6 @@ app.get('/api/monnify-check-status', async (req, res) => {
   }
 });
 
-// ========== KEEP ALL EXISTING MIKROTIK ENDPOINTS (NO CHANGES NEEDED) ==========
 // ========== MIKROTIK ENDPOINTS ==========
 app.get('/api/mikrotik-queue-text', async (req, res) => {
   try {
@@ -1082,6 +1126,8 @@ app.get('/api/mikrotik-queue-text', async (req, res) => {
       SELECT id, mikrotik_username, mikrotik_password, plan, mac_address, expires_at
       FROM payment_queue
       WHERE status = 'pending'
+      AND mikrotik_username IS NOT NULL
+      AND mikrotik_password IS NOT NULL
       ORDER BY created_at ASC
       LIMIT 5
     `);
@@ -1143,7 +1189,7 @@ app.post('/api/mark-processed/:id', async (req, res) => {
     }
     
     const result = await pool.query(
-      `UPDATE payment_queue SET status = 'processed' WHERE id = $1 RETURNING id`,
+      `UPDATE payment_queue SET status = 'processed' WHERE id = $1 RETURNING id, mikrotik_username`,
       [idNum]
     );
     
@@ -1155,7 +1201,7 @@ app.post('/api/mark-processed/:id', async (req, res) => {
       });
     }
     
-    console.log(`✅ Successfully marked ${idNum} as processed`);
+    console.log(`✅ Successfully marked ${idNum} (${result.rows[0].mikrotik_username}) as processed`);
     res.json({ 
       success: true,
       id: idNum
@@ -1292,199 +1338,13 @@ app.use((req, res, next) => {
   next();
 });
 
-// ========== MIKROTIK ENDPOINTS (EXACTLY SAME AS BEFORE) ==========
-app.get('/api/mikrotik-queue-text', async (req, res) => {
-  try {
-    const apiKey = req.headers['x-api-key'] || req.query.api_key;
-    
-    if (!apiKey || apiKey !== process.env.MIKROTIK_API_KEY) {
-      console.warn('❌ Invalid or missing API key');
-      return res.status(403).send('FORBIDDEN');
-    }
-
-    const result = await pool.query(`
-      SELECT id, mikrotik_username, mikrotik_password, plan, mac_address, expires_at
-      FROM payment_queue
-      WHERE status = 'pending'
-      ORDER BY created_at ASC
-      LIMIT 5
-    `);
-
-    if (result.rows.length === 0) {
-      return res.send('');
-    }
-
-    console.log(`📤 Preparing ${result.rows.length} users for MikroTik`);
-    
-    const lines = result.rows.map(row => {
-      const expires = row.expires_at ? row.expires_at.toISOString() : '';
-      return [
-        row.mikrotik_username || '',
-        row.mikrotik_password || '',
-        row.plan || '',
-        row.mac_address || 'unknown',
-        expires,
-        row.id
-      ].join('|');
-    });
-
-    const output = lines.join('\n');
-    console.log(`✅ Sending ${result.rows.length} users to MikroTik`);
-    
-    res.set('Content-Type', 'text/plain');
-    res.send(output);
-    
-  } catch (error) {
-    console.error('❌ MikroTik queue error:', error.message, error.stack);
-    res.set('Content-Type', 'text/plain');
-    res.send('');
-  }
-});
-
-app.post('/api/mark-processed/:id', async (req, res) => {
-  try {
-    console.log(`🔄 Processing mark-processed for: ${req.params.id}`);
-    let userId = req.params.id;
-    
-    if (userId.includes('|')) {
-      const parts = userId.split('|');
-      userId = parts[parts.length - 1];
-      console.log(`📝 Extracted ID from string: ${userId} (full: ${req.params.id})`);
-    }
-    
-    const idNum = parseInt(userId);
-    
-    if (isNaN(idNum)) {
-      console.error('❌ Invalid ID format for mark-processed:', userId);
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Invalid user ID format' 
-      });
-    }
-    
-    const result = await pool.query(
-      `UPDATE payment_queue SET status = 'processed' WHERE id = $1 RETURNING id`,
-      [idNum]
-    );
-    
-    if (result.rowCount === 0) {
-      console.warn(`⚠️ No user found with ID: ${idNum}`);
-      return res.status(404).json({ 
-        success: false, 
-        error: 'User not found' 
-      });
-    }
-    
-    console.log(`✅ Successfully marked ${idNum} as processed`);
-    res.json({ 
-      success: true,
-      id: idNum
-    });
-    
-  } catch (error) {
-    console.error('❌ Mark-processed error:', error.message, error.stack);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Database update failed' 
-    });
-  }
-});
-
-app.get('/api/expired-users', async (req, res) => {
-  try {
-    const apiKey = req.headers['x-api-key'] || req.query.api_key;
-    
-    if (!apiKey || apiKey !== process.env.MIKROTIK_API_KEY) {
-      console.warn('❌ Invalid or missing API key for expired users');
-      return res.status(403).send('FORBIDDEN');
-    }
-
-    const result = await pool.query(`
-      SELECT id, mikrotik_username, mac_address, expires_at
-      FROM payment_queue
-      WHERE status = 'processed'
-      AND expires_at IS NOT NULL
-      AND expires_at < NOW()
-      LIMIT 20
-    `);
-
-    if (result.rows.length === 0) {
-      return res.send('');
-    }
-
-    const lines = result.rows.map(row => [
-      row.mikrotik_username || 'unknown',
-      row.mac_address || 'unknown',
-      row.expires_at.toISOString(),
-      row.id
-    ].join('|'));
-
-    const output = lines.join('\n');
-    
-    res.set('Content-Type', 'text/plain');
-    res.send(output);
-
-  } catch (error) {
-    console.error('❌ Expired users query error:', error.message, error.stack);
-    res.set('Content-Type', 'text/plain');
-    res.send('');
-  }
-});
-
-app.post('/api/mark-expired/:id', async (req, res) => {
-  try {
-    console.log(`🔄 Processing mark-expired for: ${req.params.id}`);
-    let userId = req.params.id;
-    
-    if (userId.includes('|')) {
-      const parts = userId.split('|');
-      userId = parts[parts.length - 1];
-      console.log(`📝 Extracted expired ID from string: ${userId} (full: ${req.params.id})`);
-    }
-    
-    const idNum = parseInt(userId);
-    
-    if (isNaN(idNum) || idNum <= 0) {
-      console.error('❌ Invalid ID format for mark-expired:', userId);
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Invalid user ID' 
-      });
-    }
-    
-    const result = await pool.query(
-      `UPDATE payment_queue SET status = 'expired' WHERE id = $1 RETURNING id`,
-      [idNum]
-    );
-    
-    if (result.rowCount === 0) {
-      console.warn(`⚠️ No user found with ID for mark-expired: ${idNum}`);
-      return res.status(404).json({ 
-        success: false, 
-        error: 'User not found' 
-      });
-    }
-    
-    console.log(`⏰ Successfully marked ${idNum} as expired`);
-    res.json({ 
-      success: true,
-      id: idNum
-    });
-    
-  } catch (error) {
-    console.error('❌ Mark-expired error:', error.message, error.stack);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to mark as expired' 
-    });
-  }
-});
-
 // ========== HEALTH CHECK ==========
 app.get('/health', async (req, res) => {
   try {
     const dbResult = await pool.query('SELECT NOW()');
     const queueResult = await pool.query('SELECT COUNT(*) FROM payment_queue');
+    const pendingResult = await pool.query(`SELECT COUNT(*) FROM payment_queue WHERE status = 'pending'`);
+    const processedResult = await pool.query(`SELECT COUNT(*) FROM payment_queue WHERE status = 'processed'`);
     
     res.json({ 
       status: 'OK', 
@@ -1492,6 +1352,8 @@ app.get('/health', async (req, res) => {
       database: 'connected',
       db_time: dbResult.rows[0].now,
       total_payments: queueResult.rows[0].count,
+      pending: pendingResult.rows[0].count,
+      processed: processedResult.rows[0].count,
       uptime: process.uptime()
     });
   } catch (error) {
@@ -1697,21 +1559,14 @@ app.get('/', (req, res) => {
   res.send(html);
 });
 
-// ========== KEEP ALL EXISTING ADMIN ROUTES (NO CHANGES) ==========
-// ============================================
-// ADMIN DASHBOARD v2.0 - ENHANCED VERSION
-// Add this to your index.js (replace old /admin route)
-// ============================================
-
-// Admin configuration
-const ADMIN_PASSWORD = 'dreamhatcher2024'; // CHANGE THIS!
-const SESSION_TIMEOUT = 5 * 60 * 1000; // 5 minutes in milliseconds
-
 // ========== ADMIN DASHBOARD ==========
+// (Keep your existing admin dashboard code as is)
 app.get('/admin', async (req, res) => {
   const { pwd, action, userId, newPlan } = req.query;
 
   // Password check
+  const ADMIN_PASSWORD = 'dreamhatcher2024'; // CHANGE THIS!
+  
   if (pwd !== ADMIN_PASSWORD) {
     return res.send(`
       <!DOCTYPE html>
@@ -2323,7 +2178,7 @@ app.get('/admin', async (req, res) => {
 
 // ========== CLEANUP EXPIRED USERS ==========
 app.get('/admin', async (req, res, next) => {
-  if (req.query.action === 'cleanup' && req.query.pwd === ADMIN_PASSWORD) {
+  if (req.query.action === 'cleanup' && req.query.pwd === 'dreamhatcher2024') {
     try {
       const result = await pool.query(`
         DELETE FROM payment_queue
