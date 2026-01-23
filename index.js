@@ -20,15 +20,148 @@ pool.query('SELECT NOW()', (err, res) => {
   else console.log('✅ Connected to Supabase');
 });
 
+// ========== MONNIFY SERVICE CLASS ==========
+class MonnifyService {
+  constructor() {
+    this.apiKey = process.env.MONNIFY_API_KEY;
+    this.secretKey = process.env.MONNIFY_SECRET_KEY;
+    this.contractCode = process.env.MONNIFY_CONTRACT_CODE;
+    this.baseUrl = process.env.MONNIFY_BASE_URL || 'https://api.monnify.com';
+    
+    this.accessToken = null;
+    this.tokenExpiry = null;
+  }
+
+  async getAuthToken() {
+    try {
+      // Check if token is still valid
+      if (this.accessToken && this.tokenExpiry && Date.now() < this.tokenExpiry) {
+        return this.accessToken;
+      }
+
+      const authString = Buffer.from(`${this.apiKey}:${this.secretKey}`).toString('base64');
+      
+      const response = await axios.post(
+        `${this.baseUrl}/api/v1/auth/login`,
+        {},
+        {
+          headers: {
+            'Authorization': `Basic ${authString}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      if (response.data.responseBody) {
+        this.accessToken = response.data.responseBody.accessToken;
+        this.tokenExpiry = Date.now() + (55 * 60 * 1000); // 55 minutes for safety
+        return this.accessToken;
+      } else {
+        throw new Error('Failed to get authentication token');
+      }
+    } catch (error) {
+      console.error('Monnify Auth Error:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  async initializeTransaction(transactionData) {
+    try {
+      const token = await this.getAuthToken();
+      
+      const payload = {
+        amount: transactionData.amount,
+        customerName: transactionData.customerName || '',
+        customerEmail: transactionData.customerEmail,
+        customerPhoneNumber: transactionData.customerPhoneNumber || '',
+        paymentDescription: transactionData.description || 'WiFi Access Payment',
+        currencyCode: transactionData.currency || 'NGN',
+        contractCode: this.contractCode,
+        redirectUrl: transactionData.redirectUrl || process.env.APP_BASE_URL,
+        paymentReference: transactionData.reference || `DHT${Date.now()}${Math.random().toString(36).substr(2, 9)}`,
+        paymentMethods: transactionData.paymentMethods || ["CARD", "ACCOUNT_TRANSFER"]
+      };
+
+      const response = await axios.post(
+        `${this.baseUrl}/api/v1/merchant/transactions/init-transaction`,
+        payload,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      if (response.data.responseBody) {
+        return {
+          success: true,
+          message: 'Transaction initialized successfully',
+          data: {
+            transactionReference: response.data.responseBody.transactionReference,
+            paymentReference: response.data.responseBody.paymentReference,
+            checkoutUrl: response.data.responseBody.checkoutUrl,
+            amount: response.data.responseBody.amount,
+            currency: response.data.responseBody.currencyCode
+          }
+        };
+      } else {
+        throw new Error(response.data.responseMessage || 'Failed to initialize transaction');
+      }
+    } catch (error) {
+      console.error('Monnify Initialize Error:', error.response?.data || error.message);
+      return {
+        success: false,
+        message: error.response?.data?.responseMessage || error.message,
+        error: error.response?.data
+      };
+    }
+  }
+
+  async verifyTransaction(transactionReference) {
+    try {
+      const token = await this.getAuthToken();
+      
+      const response = await axios.get(
+        `${this.baseUrl}/api/v2/transactions/${encodeURIComponent(transactionReference)}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      if (response.data.responseBody) {
+        return {
+          success: true,
+          data: response.data.responseBody,
+          status: response.data.responseBody.paymentStatus,
+          amountPaid: response.data.responseBody.amountPaid,
+          settlementAmount: response.data.responseBody.settlementAmount
+        };
+      } else {
+        throw new Error(response.data.responseMessage || 'Failed to verify transaction');
+      }
+    } catch (error) {
+      console.error('Monnify Verify Error:', error.response?.data || error.message);
+      return {
+        success: false,
+        message: error.response?.data?.responseMessage || error.message
+      };
+    }
+  }
+}
+
+const monnify = new MonnifyService();
+
 // ========== GLOBAL ERROR HANDLERS ==========
 process.on('uncaughtException', (error) => {
   console.error('💥 UNCAUGHT EXCEPTION:', error);
-  // Don't exit in production, log and continue
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('💥 UNHANDLED REJECTION at:', promise, 'reason:', reason);
-  // Don't exit in production, log and continue
 });
 
 // Helper functions
@@ -63,57 +196,82 @@ app.use((req, res, next) => {
   next();
 });
 
-// ========== PAYMENT REDIRECT (With Email & MAC) ==========
-app.get('/pay/:plan', async (req, res) => {
+// ========== MONNIFY PAYMENT REDIRECT ==========
+app.get('/monnify-pay/:plan', async (req, res) => {
   const { plan } = req.params;
   const mac = req.query.mac || 'unknown';
   const email = req.query.email || 'customer@dreamhatcher.com';
   
-  // Plan configuration - CHANGE PRICES HERE
+  // Plan configuration - SAME PRICES AS PAYSTACK
   const planConfig = {
-    daily: { amount: 350, code: '24hr' },
-    weekly: { amount: 2400, code: '7d' },
-    monthly: { amount: 7500, code: '30d' }
+    daily: { amount: 350, code: '24hr', description: '24 Hours WiFi Access' },
+    weekly: { amount: 2400, code: '7d', description: '7 Days WiFi Access' },
+    monthly: { amount: 7500, code: '30d', description: '30 Days WiFi Access' }
   };
   
   const selectedPlan = planConfig[plan];
   
   if (!selectedPlan) {
-    return res.status(400).send('Invalid plan selected');
+    return res.status(400).send(`
+      <html>
+        <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
+          <h2>⚠️ Invalid Plan</h2>
+          <p>Please select a valid plan.</p>
+          <a href="javascript:history.back()" style="color: #00d4ff;">← Go Back</a>
+        </body>
+      </html>
+    `);
   }
   
   try {
-    const response = await axios.post(
-      'https://api.paystack.co/transaction/initialize',
-      {
-        email: email,
-        amount: selectedPlan.amount * 100,
-        callback_url: 'https://dreamhatcher-backend.onrender.com/paystack-callback',
-        metadata: {
-          mac_address: mac,
-          plan: selectedPlan.code
-        }
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
+    const reference = `DHT${Date.now()}${Math.random().toString(36).substr(2, 9)}`;
     
-    console.log(`💳 Payment init: ${plan} | MAC: ${mac} | Email: ${email}`);
+    const transactionData = {
+      amount: selectedPlan.amount.toString(),
+      customerEmail: email,
+      customerName: `WiFi User ${mac.slice(-6)}`,
+      description: selectedPlan.description,
+      reference: reference,
+      redirectUrl: 'https://dreamhatcher-backend.onrender.com/monnify-callback',
+      currency: 'NGN'
+    };
+
+    // Add MAC address to metadata using custom fields
+    transactionData.metadata = {
+      mac_address: mac,
+      plan: selectedPlan.code,
+      reference: reference
+    };
+
+    console.log(`💳 Monnify Payment Init: ${plan} | MAC: ${mac} | Email: ${email} | Ref: ${reference}`);
     
-    // Redirect user directly to Paystack checkout
-    res.redirect(response.data.data.authorization_url);
+    const result = await monnify.initializeTransaction(transactionData);
+    
+    if (result.success) {
+      // Store in database pending transaction
+      await pool.query(
+        `INSERT INTO payment_queue 
+        (transaction_id, customer_email, plan, mac_address, status, expires_at)
+        VALUES ($1, $2, $3, $4, 'pending', NOW() + INTERVAL '10 minutes')`,
+        [reference, email, selectedPlan.code, mac]
+      );
+      
+      console.log(`✅ Monnify checkout URL: ${result.data.checkoutUrl}`);
+      
+      // Redirect to Monnify checkout
+      res.redirect(result.data.checkoutUrl);
+    } else {
+      throw new Error(result.message || 'Failed to initialize Monnify transaction');
+    }
     
   } catch (error) {
-    console.error('Payment redirect error:', error.response?.data || error.message);
+    console.error('Monnify payment redirect error:', error.message);
     res.send(`
       <html>
         <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
           <h2>⚠️ Payment Error</h2>
-          <p>Could not initialize payment. Please try again.</p>
+          <p>Could not initialize Monnify payment. Please try again.</p>
+          <p><strong>Error:</strong> ${error.message}</p>
           <a href="javascript:history.back()" style="color: #00d4ff;">← Go Back</a>
           <p style="margin-top: 20px;">Support: 07037412314</p>
         </body>
@@ -122,153 +280,111 @@ app.get('/pay/:plan', async (req, res) => {
   }
 });
 
-// ========== REQUEST LOGGING (Skip MikroTik polling endpoints) ==========
-app.use((req, res, next) => {
-  const start = Date.now();
+// ========== MONNIFY WEBHOOK ==========
+app.post('/api/monnify-webhook', async (req, res) => {
+  console.log('📥 Monnify webhook received');
   
-  // Skip logging for MikroTik polling endpoints to reduce noise
-  if (!req.url.includes('/api/mikrotik-queue-text') && 
-      !req.url.includes('/api/expired-users') &&
-      !req.url.includes('/api/check-status') &&
-      !req.url.includes('/health')) {
-    console.log(`📥 ${req.method} ${req.url}`);
-  }
-  
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    // Skip logging for MikroTik polling endpoints
-    if (!req.url.includes('/api/mikrotik-queue-text') && 
-        !req.url.includes('/api/expired-users') &&
-        !req.url.includes('/api/check-status') &&
-        !req.url.includes('/health')) {
-      console.log(`📤 ${req.method} ${req.url} ${res.statusCode} - ${duration}ms`);
-    }
-  });
-  
-  next();
-});
-
-// ========== NEW: INITIALIZE PAYSTACK PAYMENT (Dynamic Checkout) ==========
-app.post('/api/initialize-payment', async (req, res) => {
   try {
-    const { email, amount, plan, mac_address } = req.body;
-
-    if (!amount || !plan) {
-      return res.status(400).json({ error: 'Missing amount or plan' });
-    }
-
-    const response = await axios.post(
-      'https://api.paystack.co/transaction/initialize',
-      {
-        email: email || 'customer@example.com',
-        amount: amount * 100, // Paystack uses kobo
-        callback_url: 'https://dreamhatcher-backend.onrender.com/paystack-callback',
-        metadata: {
-          mac_address: mac_address || 'unknown',
-          plan: plan
-        }
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
-    res.json({
-      success: true,
-      authorization_url: response.data.data.authorization_url
-    });
-
-  } catch (error) {
-    console.error('❌ Paystack initialize error:', error.response?.data || error.message);
-    res.status(500).json({ error: 'Failed to initialize payment' });
-  }
-});
-
-// ========== PAYSTACK WEBHOOK ==========
-app.post('/api/paystack-webhook', async (req, res) => {
-  console.log('📥 Paystack webhook received');
-
-  // Verify webhook signature (recommended)
-  const secret = process.env.PAYSTACK_SECRET_KEY;
-  const hash = crypto.createHmac('sha512', secret).update(req.rawBody).digest('hex');
-  if (hash !== req.headers['x-paystack-signature']) {
-    console.log('❌ Invalid webhook signature');
-    return res.status(400).send('Invalid signature');
-  }
-
-  try {
-    const { event, data } = req.body;
-
-    if (event !== 'charge.success') {
+    const { eventType, eventData } = req.body;
+    
+    console.log(`🔔 Monnify Event: ${eventType}`);
+    
+    // Only process successful transactions
+    if (eventType !== 'SUCCESS') {
       return res.status(200).json({ received: true });
     }
-
-    const { reference, amount, metadata } = data;
-    const amountNaira = amount / 100;
-    const macAddress = metadata?.mac_address || 'unknown';
-    const planFromMetadata = metadata?.plan;
-
-    // Determine plan: prefer metadata, fallback to amount
-    let plan = planFromMetadata;
-    if (!plan) {
-      if (amountNaira === 350) plan = '24hr';
-      else if (amountNaira === 2400) plan = '7d';
-      else if (amountNaira === 7500) plan = '30d';
+    
+    const { paymentReference, amountPaid, customer, paymentMethod, paidOn } = eventData;
+    const amountNaira = amountPaid;
+    
+    console.log(`💰 Payment Successful: ${paymentReference} | Amount: ${amountNaira}`);
+    
+    // Extract metadata
+    const metadata = eventData.metaData || {};
+    const macAddress = metadata.mac_address || 'unknown';
+    const plan = metadata.plan;
+    
+    // Determine plan from amount if not in metadata
+    let finalPlan = plan;
+    if (!finalPlan) {
+      if (amountNaira === 350) finalPlan = '24hr';
+      else if (amountNaira === 2400) finalPlan = '7d';
+      else if (amountNaira === 7500) finalPlan = '30d';
       else {
-        console.error('❌ Invalid amount:', amountNaira);
+        console.error('❌ Invalid amount in webhook:', amountNaira);
         return res.status(400).json({ error: 'Invalid amount' });
       }
     }
-
+    
     const username = `user_${Date.now().toString().slice(-6)}`;
     const password = generatePassword();
-
+    
     // Calculate exact expiry timestamp based on plan
     let expiresAt;
     const now = new Date();
-    if (plan === '24hr') {
-      expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000); // +24 hours
-    } else if (plan === '7d') {
-      expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // +7 days
-    } else if (plan === '30d') {
-      expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // +30 days
+    if (finalPlan === '24hr') {
+      expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    } else if (finalPlan === '7d') {
+      expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    } else if (finalPlan === '30d') {
+      expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
     }
-
+    
+    // Update existing record or create new one
     await pool.query(
-      `INSERT INTO payment_queue
-       (transaction_id, customer_email, customer_phone, plan,
-        mikrotik_username, mikrotik_password, mac_address, status, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8)`,
-      [
-        reference,
-        data.customer?.email || 'unknown@example.com',
-        data.customer?.phone || '',
-        plan,
-        username,
-        password,
-        macAddress,
-        expiresAt
-      ]
+      `UPDATE payment_queue 
+       SET status = 'processed',
+           mikrotik_username = $1,
+           mikrotik_password = $2,
+           expires_at = $3,
+           customer_email = COALESCE(customer_email, $4),
+           updated_at = NOW()
+       WHERE transaction_id = $5
+       RETURNING id`,
+      [username, password, expiresAt, customer.email, paymentReference]
     );
-
-    console.log(`✅ Queued user ${username} | Expires: ${expiresAt.toISOString()}`);
+    
+    // If no record was updated (shouldn't happen), insert new
+    const check = await pool.query(
+      `SELECT id FROM payment_queue WHERE transaction_id = $1`,
+      [paymentReference]
+    );
+    
+    if (check.rows.length === 0) {
+      await pool.query(
+        `INSERT INTO payment_queue
+         (transaction_id, customer_email, customer_phone, plan,
+          mikrotik_username, mikrotik_password, mac_address, status, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'processed', $8)`,
+        [
+          paymentReference,
+          customer.email || 'unknown@example.com',
+          customer.phoneNumber || '',
+          finalPlan,
+          username,
+          password,
+          macAddress,
+          expiresAt
+        ]
+      );
+    }
+    
+    console.log(`✅ Monnify user created: ${username} | Expires: ${expiresAt.toISOString()}`);
+    
     return res.status(200).json({ received: true });
-
+    
   } catch (error) {
-    console.error('❌ Webhook error:', error.message);
+    console.error('❌ Monnify webhook error:', error.message, error.stack);
     return res.status(500).json({ error: 'Webhook processing failed' });
   }
 });
 
-// ========== PAYSTACK CALLBACK (20-second waiting page) ==========
-app.get('/paystack-callback', (req, res) => {
-  const { reference, trxref } = req.query;
-  const ref = reference || trxref || 'unknown';
+// ========== MONNIFY CALLBACK (20-second waiting page) ==========
+app.get('/monnify-callback', (req, res) => {
+  const { paymentReference, transactionReference } = req.query;
+  const ref = paymentReference || transactionReference || 'unknown';
 
-  console.log('🔗 Paystack callback:', ref);
+  console.log('🔗 Monnify callback:', ref);
 
   const html = ` 
   <!DOCTYPE html>
@@ -418,7 +534,7 @@ app.get('/paystack-callback', (req, res) => {
       <div class="steps">
         <div class="step" id="step1">
           <div class="step-icon step-active" id="icon1">1</div>
-          <span>Verifying payment with Paystack...</span>
+          <span>Verifying payment with Monnify...</span>
         </div>
         <div class="step" id="step2">
           <div class="step-icon step-pending" id="icon2">2</div>
@@ -503,7 +619,7 @@ app.get('/paystack-callback', (req, res) => {
           clearInterval(timer);
           countdownEl.textContent = '✓';
           statusEl.textContent = 'Redirecting to your credentials...';
-          window.location.href = '/success?reference=' + encodeURIComponent('${ref || ''}');
+          window.location.href = '/monnify-success?reference=' + encodeURIComponent('${ref || ''}');
         }
       }, 1000);
     </script>
@@ -514,15 +630,14 @@ app.get('/paystack-callback', (req, res) => {
   res.send(html.replace('${ref || \'\'}', ref));
 });
 
-// ========== SUCCESS PAGE - PATIENT POLLING ==========
-app.get('/success', async (req, res) => {
+// ========== MONNIFY SUCCESS PAGE ==========
+app.get('/monnify-success', async (req, res) => {
   try {
-    const { reference, trxref } = req.query;
-    const ref = reference || trxref;
+    const { reference } = req.query;
     
-    console.log('📄 Success page accessed, ref:', ref);
+    console.log('📄 Monnify success page accessed, ref:', reference);
     
-    if (!ref) {
+    if (!reference) {
       return res.send(`
         <!DOCTYPE html>
         <html>
@@ -661,7 +776,7 @@ app.get('/success', async (req, res) => {
             <div class="spinner"></div>
             <p id="status-text">Creating your WiFi account...</p>
             <p class="attempt-info" id="attempt-info">This usually takes 30-60 seconds</p>
-            <p style="font-size: 12px; margin-top: 10px;">Reference: ${ref}</p>
+            <p style="font-size: 12px; margin-top: 10px;">Reference: ${reference}</p>
           </div>
         </div>
         
@@ -692,7 +807,7 @@ app.get('/success', async (req, res) => {
             </ol>
           </div>
           
-         <button class="btn" onclick="copyCredentials()">📋 Copy Credentials</button>
+          <button class="btn" onclick="copyCredentials()">📋 Copy Credentials</button>
           <button class="btn" id="autoLoginBtn" onclick="autoLogin()" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">🚀 Auto-Login Now</button>
 
           <div id="autoLoginStatus" style="margin-top: 15px; padding: 15px; background: rgba(0,0,0,0.3); border-radius: 10px; display: none;">
@@ -707,7 +822,7 @@ app.get('/success', async (req, res) => {
             <p id="error-text">Your account is being created. This may take a bit longer.</p>
             <button class="btn" onclick="checkStatus()" style="margin-top: 15px;">🔄 Check Again</button>
             <p style="margin-top: 15px; font-size: 12px;">
-              Reference: <strong>${ref}</strong><br>
+              Reference: <strong>${reference}</strong><br>
               Save this reference and contact support if needed.
             </p>
           </div>
@@ -719,7 +834,7 @@ app.get('/success', async (req, res) => {
       </div>
       
       <script>
-        const ref = '${ref}';
+        const ref = '${reference}';
         let checkCount = 0;
         const maxChecks = 20;
         let credentials = { username: '', password: '', plan: '', expires_at: '' };
@@ -736,7 +851,8 @@ app.get('/success', async (req, res) => {
           navigator.clipboard.writeText(text).then(function() {
             const original = element.textContent;
             element.textContent = '✓ Copied!';
-            setTimeout(function() { element.textContent = original; }, 1000);
+            element.style.color = '#10b981';
+            setTimeout(function() { element.textContent = original; element.style.color = ''; }, 1000);
           });
         }
         
@@ -820,7 +936,7 @@ app.get('/success', async (req, res) => {
           attemptInfo.textContent = 'Attempt ' + checkCount + ' of ' + maxChecks + ' (checking every 5 seconds)';
           
           try {
-            const response = await fetch('/api/check-status?ref=' + encodeURIComponent(ref));
+            const response = await fetch('/api/monnify-check-status?ref=' + encodeURIComponent(ref));
             const data = await response.json();
             
             console.log('Status check #' + checkCount + ':', data);
@@ -855,7 +971,7 @@ app.get('/success', async (req, res) => {
               
             } else {
               if (data.status === 'pending') {
-                statusText.textContent = 'Account queued, waiting for MikroTik to create user...';
+                statusText.textContent = 'Account queued, waiting for processing...';
               } else if (data.status === 'processed') {
                 statusText.textContent = 'Account created! Loading credentials...';
               } else {
@@ -892,13 +1008,13 @@ app.get('/success', async (req, res) => {
     res.send(html);
     
   } catch (error) {
-    console.error('Success page error:', error.message);
+    console.error('Monnify success page error:', error.message);
     res.status(500).send('Error loading page. Please contact support: 07037412314');
   }
 });
 
-// ========== SIMPLE STATUS CHECK ==========
-app.get('/api/check-status', async (req, res) => {
+// ========== MONNIFY STATUS CHECK ==========
+app.get('/api/monnify-check-status', async (req, res) => {
   try {
     const { ref } = req.query;
     
@@ -942,7 +1058,7 @@ app.get('/api/check-status', async (req, res) => {
     }
     
   } catch (error) {
-    console.error('Check status error:', error.message);
+    console.error('Monnify check status error:', error.message);
     return res.json({ 
       ready: false, 
       error: 'Server error',
@@ -951,6 +1067,7 @@ app.get('/api/check-status', async (req, res) => {
   }
 });
 
+// ========== KEEP ALL EXISTING MIKROTIK ENDPOINTS (NO CHANGES NEEDED) ==========
 // ========== MIKROTIK ENDPOINTS ==========
 app.get('/api/mikrotik-queue-text', async (req, res) => {
   try {
@@ -1149,6 +1266,220 @@ app.post('/api/mark-expired/:id', async (req, res) => {
   }
 });
 
+// ========== REQUEST LOGGING ==========
+app.use((req, res, next) => {
+  const start = Date.now();
+  
+  if (!req.url.includes('/api/mikrotik-queue-text') && 
+      !req.url.includes('/api/expired-users') &&
+      !req.url.includes('/api/check-status') &&
+      !req.url.includes('/health') &&
+      !req.url.includes('/api/monnify-check-status')) {
+    console.log(`📥 ${req.method} ${req.url}`);
+  }
+  
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    if (!req.url.includes('/api/mikrotik-queue-text') && 
+        !req.url.includes('/api/expired-users') &&
+        !req.url.includes('/api/check-status') &&
+        !req.url.includes('/health') &&
+        !req.url.includes('/api/monnify-check-status')) {
+      console.log(`📤 ${req.method} ${req.url} ${res.statusCode} - ${duration}ms`);
+    }
+  });
+  
+  next();
+});
+
+// ========== MIKROTIK ENDPOINTS (EXACTLY SAME AS BEFORE) ==========
+app.get('/api/mikrotik-queue-text', async (req, res) => {
+  try {
+    const apiKey = req.headers['x-api-key'] || req.query.api_key;
+    
+    if (!apiKey || apiKey !== process.env.MIKROTIK_API_KEY) {
+      console.warn('❌ Invalid or missing API key');
+      return res.status(403).send('FORBIDDEN');
+    }
+
+    const result = await pool.query(`
+      SELECT id, mikrotik_username, mikrotik_password, plan, mac_address, expires_at
+      FROM payment_queue
+      WHERE status = 'pending'
+      ORDER BY created_at ASC
+      LIMIT 5
+    `);
+
+    if (result.rows.length === 0) {
+      return res.send('');
+    }
+
+    console.log(`📤 Preparing ${result.rows.length} users for MikroTik`);
+    
+    const lines = result.rows.map(row => {
+      const expires = row.expires_at ? row.expires_at.toISOString() : '';
+      return [
+        row.mikrotik_username || '',
+        row.mikrotik_password || '',
+        row.plan || '',
+        row.mac_address || 'unknown',
+        expires,
+        row.id
+      ].join('|');
+    });
+
+    const output = lines.join('\n');
+    console.log(`✅ Sending ${result.rows.length} users to MikroTik`);
+    
+    res.set('Content-Type', 'text/plain');
+    res.send(output);
+    
+  } catch (error) {
+    console.error('❌ MikroTik queue error:', error.message, error.stack);
+    res.set('Content-Type', 'text/plain');
+    res.send('');
+  }
+});
+
+app.post('/api/mark-processed/:id', async (req, res) => {
+  try {
+    console.log(`🔄 Processing mark-processed for: ${req.params.id}`);
+    let userId = req.params.id;
+    
+    if (userId.includes('|')) {
+      const parts = userId.split('|');
+      userId = parts[parts.length - 1];
+      console.log(`📝 Extracted ID from string: ${userId} (full: ${req.params.id})`);
+    }
+    
+    const idNum = parseInt(userId);
+    
+    if (isNaN(idNum)) {
+      console.error('❌ Invalid ID format for mark-processed:', userId);
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Invalid user ID format' 
+      });
+    }
+    
+    const result = await pool.query(
+      `UPDATE payment_queue SET status = 'processed' WHERE id = $1 RETURNING id`,
+      [idNum]
+    );
+    
+    if (result.rowCount === 0) {
+      console.warn(`⚠️ No user found with ID: ${idNum}`);
+      return res.status(404).json({ 
+        success: false, 
+        error: 'User not found' 
+      });
+    }
+    
+    console.log(`✅ Successfully marked ${idNum} as processed`);
+    res.json({ 
+      success: true,
+      id: idNum
+    });
+    
+  } catch (error) {
+    console.error('❌ Mark-processed error:', error.message, error.stack);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Database update failed' 
+    });
+  }
+});
+
+app.get('/api/expired-users', async (req, res) => {
+  try {
+    const apiKey = req.headers['x-api-key'] || req.query.api_key;
+    
+    if (!apiKey || apiKey !== process.env.MIKROTIK_API_KEY) {
+      console.warn('❌ Invalid or missing API key for expired users');
+      return res.status(403).send('FORBIDDEN');
+    }
+
+    const result = await pool.query(`
+      SELECT id, mikrotik_username, mac_address, expires_at
+      FROM payment_queue
+      WHERE status = 'processed'
+      AND expires_at IS NOT NULL
+      AND expires_at < NOW()
+      LIMIT 20
+    `);
+
+    if (result.rows.length === 0) {
+      return res.send('');
+    }
+
+    const lines = result.rows.map(row => [
+      row.mikrotik_username || 'unknown',
+      row.mac_address || 'unknown',
+      row.expires_at.toISOString(),
+      row.id
+    ].join('|'));
+
+    const output = lines.join('\n');
+    
+    res.set('Content-Type', 'text/plain');
+    res.send(output);
+
+  } catch (error) {
+    console.error('❌ Expired users query error:', error.message, error.stack);
+    res.set('Content-Type', 'text/plain');
+    res.send('');
+  }
+});
+
+app.post('/api/mark-expired/:id', async (req, res) => {
+  try {
+    console.log(`🔄 Processing mark-expired for: ${req.params.id}`);
+    let userId = req.params.id;
+    
+    if (userId.includes('|')) {
+      const parts = userId.split('|');
+      userId = parts[parts.length - 1];
+      console.log(`📝 Extracted expired ID from string: ${userId} (full: ${req.params.id})`);
+    }
+    
+    const idNum = parseInt(userId);
+    
+    if (isNaN(idNum) || idNum <= 0) {
+      console.error('❌ Invalid ID format for mark-expired:', userId);
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Invalid user ID' 
+      });
+    }
+    
+    const result = await pool.query(
+      `UPDATE payment_queue SET status = 'expired' WHERE id = $1 RETURNING id`,
+      [idNum]
+    );
+    
+    if (result.rowCount === 0) {
+      console.warn(`⚠️ No user found with ID for mark-expired: ${idNum}`);
+      return res.status(404).json({ 
+        success: false, 
+        error: 'User not found' 
+      });
+    }
+    
+    console.log(`⏰ Successfully marked ${idNum} as expired`);
+    res.json({ 
+      success: true,
+      id: idNum
+    });
+    
+  } catch (error) {
+    console.error('❌ Mark-expired error:', error.message, error.stack);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to mark as expired' 
+    });
+  }
+});
+
 // ========== HEALTH CHECK ==========
 app.get('/health', async (req, res) => {
   try {
@@ -1171,7 +1502,7 @@ app.get('/health', async (req, res) => {
   }
 });
 
-// ========== ROOT PAGE - CUSTOMER FACING ==========
+// ========== ROOT PAGE (UPDATED WITH MONNIFY) ==========
 app.get('/', (req, res) => {
   const html = `
   <!DOCTYPE html>
@@ -1268,6 +1599,19 @@ app.get('/', (req, res) => {
         background: rgba(0,0,0,0.2);
         border-radius: 15px;
       }
+      .payment-badges {
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+        margin: 15px 0;
+      }
+      .payment-badge {
+        background: rgba(0,201,255,0.1);
+        border: 1px solid rgba(0,201,255,0.3);
+        padding: 5px 10px;
+        border-radius: 20px;
+        font-size: 12px;
+      }
     </style>
   </head>
   <body>
@@ -1277,6 +1621,11 @@ app.get('/', (req, res) => {
       <p>High-Speed Business WiFi Solutions</p>
       
       <div class="status-badge">✅ SYSTEM OPERATIONAL</div>
+      
+      <div class="payment-badges">
+        <span class="payment-badge">💳 Monnify Payments</span>
+        <span class="payment-badge">🔒 Secure Processing</span>
+      </div>
       
       <div class="option-card">
         <h3>📱 <span>Already on our WiFi?</span></h3>
@@ -1290,13 +1639,16 @@ app.get('/', (req, res) => {
       <div class="option-card">
         <h3>💰 <span>Need WiFi Access?</span></h3>
         <p>Purchase WiFi packages starting at ₦350/day:</p>
-        <a href="http://192.168.88.1/hotspotlogin.html" class="btn">View WiFi Plans & Pricing</a>
+        <a href="http://192.168.88.1/hotspotlogin-monnify.html" class="btn">View WiFi Plans & Pricing</a>
+        <p style="margin-top: 10px; font-size: 12px; color: #aaa;">
+          Secure payments via Monnify
+        </p>
       </div>
       
       <div class="option-card">
         <h3>✅ <span>Already Paid?</span></h3>
         <p>Check your payment status and get credentials:</p>
-        <a href="/success" class="btn">Check Payment Status</a>
+        <a href="/monnify-success" class="btn">Check Payment Status</a>
       </div>
       
       <div class="qr-section">
@@ -1322,7 +1674,7 @@ app.get('/', (req, res) => {
       
       <p style="margin-top: 20px; font-size: 12px; color: #888;">
         © 2024 Dream Hatcher Tech. All rights reserved.<br>
-        Secure Payment Processing via Paystack
+        Secure Payment Processing via Monnify
       </p>
     </div>
     
@@ -1345,6 +1697,7 @@ app.get('/', (req, res) => {
   res.send(html);
 });
 
+// ========== KEEP ALL EXISTING ADMIN ROUTES (NO CHANGES) ==========
 // ============================================
 // ADMIN DASHBOARD v2.0 - ENHANCED VERSION
 // Add this to your index.js (replace old /admin route)
@@ -1999,17 +2352,11 @@ app.use((err, req, res, next) => {
 // ========== START SERVER ==========
 const PORT = process.env.PORT || 10000;
 const server = app.listen(PORT, () => {
-  console.log(`🚀 Backend running on port ${PORT}`);
-  console.log(`🌐 Initialize: https://dreamhatcher-backend.onrender.com/api/initialize-payment`);
-  console.log(`🔗 Callback: https://dreamhatcher-backend.onrender.com/paystack-callback`);
-  console.log(`👑 Admin: https://dreamhatcher-backend.onrender.com/admin?pwd=Huda2024@`);
+  console.log(`🚀 Monnify Backend running on port ${PORT}`);
+  console.log(`🌐 Monnify Pay: https://dreamhatcher-backend.onrender.com/monnify-pay/:plan`);
+  console.log(`🔗 Monnify Callback: https://dreamhatcher-backend.onrender.com/monnify-callback`);
+  console.log(`📨 Monnify Webhook: https://dreamhatcher-backend.onrender.com/api/monnify-webhook`);
+  console.log(`👑 Admin: https://dreamhatcher-backend.onrender.com/admin?pwd=dreamhatcher2024`);
 });
 
 server.setTimeout(30000);
-
-
-
-
-
-
-
