@@ -83,7 +83,7 @@ app.get('/pay/:plan', async (req, res) => {
   }
   
   try {
-    / First get access token
+  // First get access token
 const authString = Buffer.from(
   `${process.env.MONNIFY_API_KEY}:${process.env.MONNIFY_SECRET_KEY}`
 ).toString('base64');
@@ -2041,3 +2041,4 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
