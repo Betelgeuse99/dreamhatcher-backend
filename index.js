@@ -102,15 +102,16 @@ app.get('/pay/:plan', async (req, res) => {
   try {
     const token = await getMonnifyToken();
 
-    const paymentReference = `dh-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+    // Generate a Monnify-compatible reference
+    const paymentReference = `DHT${Date.now()}${crypto.randomBytes(4).toString('hex')}`;
 
     const payload = {
-      amount: selectedPlan.amount,
+      amount: selectedPlan.amount.toString(), // Monnify expects string
       currencyCode: "NGN",
       paymentReference: paymentReference,
       customerEmail: email,
       customerName: "Dream Hatcher Customer",
-      customerMobileNumber: "",
+      customerMobileNumber: "", // Optional, can be empty
       contractCode: process.env.MONNIFY_CONTRACT_CODE,
       redirectUrl: 'https://dreamhatcher-backend.onrender.com/monnify-callback',
       paymentMethods: ["CARD", "ACCOUNT_TRANSFER", "USSD", "BANK_TRANSFER"],
@@ -119,6 +120,8 @@ app.get('/pay/:plan', async (req, res) => {
         plan: selectedPlan.code
       }
     };
+
+    console.log('📤 Monnify payload:', JSON.stringify(payload, null, 2));
 
     const response = await axios.post(
       `${process.env.MONNIFY_BASE_URL}/api/v1/merchant/transactions/init-transaction`,
@@ -142,12 +145,15 @@ app.get('/pay/:plan', async (req, res) => {
     res.redirect(checkoutUrl);
 
   } catch (error) {
-    console.error('Monnify redirect error:', error.response?.data || error.message);
+    console.error('❌ Monnify redirect error:', error.response?.data || error.message);
     res.send(`
       <html>
         <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
           <h2>⚠️ Payment Error</h2>
           <p>Could not initialize payment. Please try again.</p>
+          <p style="color: #ff6b6b; font-size: 14px; margin: 20px 0; background: rgba(255,0,0,0.1); padding: 10px; border-radius: 5px;">
+            ${error.response?.data?.responseMessage || error.message}
+          </p>
           <a href="javascript:history.back()" style="color: #00d4ff;">← Go Back</a>
           <p style="margin-top: 20px;">Support: 07037412314</p>
         </body>
@@ -216,7 +222,7 @@ app.post('/api/initialize-payment', async (req, res) => {
   }
 });
 
-// ========== MONNIFY IPN (replaces Paystack webhook) ==========
+// ========== MONNIFY IPN (FIXED - NO SQL COMMENTS) ==========
 app.post('/api/monnify-ipn', async (req, res) => {
   console.log('📥 Monnify IPN received');
 
@@ -228,7 +234,7 @@ app.post('/api/monnify-ipn', async (req, res) => {
       return res.status(200).send('OK');
     }
 
-    if (event.eventType !== 'TRANSACTION_COMPLETED') {
+    if (event.eventType !== 'SUCCESSFUL_TRANSACTION') {
       return res.status(200).send('OK');
     }
 
@@ -270,10 +276,7 @@ app.post('/api/monnify-ipn', async (req, res) => {
     }
 
     await pool.query(
-      `INSERT INTO payment_queue
-       (transaction_id, customer_email, customer_phone, plan,
-        mikrotik_username, mikrotik_password, mac_address, status, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8)`,
+      `INSERT INTO payment_queue (transaction_id, customer_email, customer_phone, plan, mikrotik_username, mikrotik_password, mac_address, status, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8)`,
       [
         reference,
         data.customer?.email || data.payerInfo?.email || 'unknown@example.com',
@@ -309,7 +312,6 @@ app.get('/monnify-callback', (req, res) => {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Creating Your Account...</title>
     <style>
-      /* same style as original Paystack callback page */
       * { margin: 0; padding: 0; box-sizing: border-box; }
       body { font-family: Arial, sans-serif; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; color: white; }
       .container { background: rgba(255,255,255,0.05); padding: 40px; border-radius: 20px; max-width: 420px; width: 100%; text-align: center; border: 1px solid rgba(255,255,255,0.1); }
@@ -1864,7 +1866,7 @@ const server = app.listen(PORT, () => {
   console.log(`🌐 Init example:    https://dreamhatcher-backend.onrender.com/pay/daily`);
   console.log(`🔗 Callback:        https://dreamhatcher-backend.onrender.com/monnify-callback`);
   console.log(`📡 IPN should point to: https://dreamhatcher-backend.onrender.com/api/monnify-ipn`);
-  console.log(`👑 Admin:           https://dreamhatcher-backend.onrender.com/admin?pwd=Huda2024@`);
+  console.log(`👑 Admin:           https://dreamhatcher-backend.onrender.com/admin?pwd=dreamhatcher2024`);
 });
 
 server.setTimeout(30000);
