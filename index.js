@@ -1086,13 +1086,15 @@ app.get('/api/expired-users', async (req, res) => {
     }
 
     const result = await pool.query(`
-      SELECT id, mikrotik_username, mac_address, expires_at
-      FROM payment_queue
-      WHERE status = 'processed'
-      AND expires_at IS NOT NULL
-      AND expires_at < NOW()
-      LIMIT 20
-    `);
+  SELECT id, mikrotik_username, mac_address, expires_at
+  FROM payment_queue
+  WHERE status = 'processed'
+  AND expires_at IS NOT NULL
+  AND expires_at < NOW() - INTERVAL '10 minutes'  -- Add buffer to avoid race conditions
+  AND mikrotik_username IS NOT NULL
+  AND mikrotik_username != ''
+  LIMIT 50
+`);
 
     if (result.rows.length === 0) {
       return res.send('');
@@ -2010,6 +2012,7 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
 
