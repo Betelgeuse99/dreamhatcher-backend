@@ -1073,95 +1073,73 @@ app.post('/api/mark-processed/:id', async (req, res) => {
   }
 });
 
-// ========== GET EXPIRED USERS (for MikroTik to disable) ==========
+const { createClient } = require('@supabase/supabase-js');
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY // Use service key for backend
+);
+
+// ========== GET EXPIRED USERS (Silent) ==========
 app.get('/api/expired-users', async (req, res) => {
+  const { api_key } = req.query;
+
+  if (api_key !== process.env.MIKROTIK_API_KEY) {
+    return res.status(401).send('');
+  }
+
   try {
-    const apiKey = req.headers['x-api-key'] || req.query.api_key;
+    const now = new Date().toISOString();
 
-    if (!apiKey || apiKey !== process.env.MIKROTIK_API_KEY) {
-      console.warn('❌ Invalid or missing API key for expired users');
-      return res.status(403).send('FORBIDDEN');
-    }
+    const { data: expiredUsers, error } = await supabase
+      .from('users')
+      .select('id, username, mac_address, expires_at')
+      .lte('expires_at', now)
+      .or('is_expired.is.null,is_expired.eq.false');
 
-    const result = await pool.query(`
-      SELECT id, mikrotik_username, mac_address, expires_at
-      FROM payment_queue
-      WHERE status = 'processed'
-      AND expires_at IS NOT NULL
-      AND expires_at < NOW()
-      LIMIT 20
-    `);
-
-    if (result.rows.length === 0) {
+    if (error || !expiredUsers || expiredUsers.length === 0) {
       return res.send('');
     }
 
-    const lines = result.rows.map(row => [
-      row.mikrotik_username || 'unknown',
-      row.mac_address || 'unknown',
-      row.expires_at.toISOString(),
-      row.id
-    ].join('|'));
+    // Format: username|mac_address|expires_at|id
+    const lines = expiredUsers.map(user => 
+      `${user.username}|${user.mac_address || 'unknown'}|${user.expires_at}|${user.id}`
+    ).join('\n');
 
-    const output = lines.join('\n');
-
-    res.set('Content-Type', 'text/plain');
-    res.send(output);
+    res.send(lines);
 
   } catch (error) {
-    console.error('❌ Expired users query error:', error.message, error.stack);
-    res.set('Content-Type', 'text/plain');
     res.send('');
   }
 });
 
-// ========== MARK USER AS EXPIRED ==========
+// ========== MARK EXPIRED (Silent, Integer ID) ==========
 app.post('/api/mark-expired/:id', async (req, res) => {
+  const { id } = req.params;
+
+  // Validate it's a number
+  const numericId = parseInt(id, 10);
+  if (isNaN(numericId)) {
+    return res.json({ success: false });
+  }
+
   try {
-    console.log(`🔄 Processing mark-expired for: ${req.params.id}`);
-    let userId = req.params.id;
+    const { data, error } = await supabase
+      .from('users')
+      .update({
+        is_expired: true,
+        expired_at: new Date().toISOString()
+      })
+      .eq('id', numericId);
 
-    if (userId.includes('|')) {
-      const parts = userId.split('|');
-      userId = parts[parts.length - 1];
-      console.log(`📝 Extracted expired ID from string: ${userId} (full: ${req.params.id})`);
+    if (error) {
+      return res.json({ success: false });
     }
 
-    const idNum = parseInt(userId);
-
-    if (isNaN(idNum) || idNum <= 0) {
-      console.error('❌ Invalid ID format for mark-expired:', userId);
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid user ID'
-      });
-    }
-
-    const result = await pool.query(
-      `UPDATE payment_queue SET status = 'expired' WHERE id = $1 RETURNING id`,
-      [idNum]
-    );
-
-    if (result.rowCount === 0) {
-      console.warn(`⚠️ No user found with ID for mark-expired: ${idNum}`);
-      return res.status(404).json({
-        success: false,
-        error: 'User not found'
-      });
-    }
-
-    console.log(`⏰ Successfully marked ${idNum} as expired`);
-    res.json({
-      success: true,
-      id: idNum
-    });
+    res.json({ success: true });
 
   } catch (error) {
-    console.error('❌ Mark-expired error:', error.message, error.stack);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to mark as expired'
-    });
+    res.json({ success: false });
   }
 });
 
@@ -2023,6 +2001,7 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
 
