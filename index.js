@@ -8,6 +8,9 @@ const axios = require('axios');
 const app = express();
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 
+process.env.TZ = 'Africa/Lagos';  // Force Nigerian timezone
+require('dotenv').config();
+
 // Database connection to Supabase
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -1073,73 +1076,83 @@ app.post('/api/mark-processed/:id', async (req, res) => {
   }
 });
 
-const { createClient } = require('@supabase/supabase-js');
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY // Use service key for backend
-);
-
-// ========== GET EXPIRED USERS (Silent) ==========
+// ========== GET EXPIRED USERS (SILENT - for MikroTik) ==========
 app.get('/api/expired-users', async (req, res) => {
-  const { api_key } = req.query;
-
-  if (api_key !== process.env.MIKROTIK_API_KEY) {
-    return res.status(401).send('');
-  }
-
   try {
-    const now = new Date().toISOString();
+    const apiKey = req.headers['x-api-key'] || req.query.api_key;
 
-    const { data: expiredUsers, error } = await supabase
-      .from('users')
-      .select('id, username, mac_address, expires_at')
-      .lte('expires_at', now)
-      .or('is_expired.is.null,is_expired.eq.false');
+    if (!apiKey || apiKey !== process.env.MIKROTIK_API_KEY) {
+      return res.status(403).send('');
+    }
 
-    if (error || !expiredUsers || expiredUsers.length === 0) {
+    const result = await pool.query(`
+      SELECT id, mikrotik_username, mac_address, expires_at
+      FROM payment_queue
+      WHERE status = 'processed'
+      AND expires_at IS NOT NULL
+      AND expires_at < NOW()
+      LIMIT 20
+    `);
+
+    if (result.rows.length === 0) {
       return res.send('');
     }
 
-    // Format: username|mac_address|expires_at|id
-    const lines = expiredUsers.map(user => 
-      `${user.username}|${user.mac_address || 'unknown'}|${user.expires_at}|${user.id}`
-    ).join('\n');
+    // Only log when there ARE expired users to process
+    console.log(`⏰ Found ${result.rows.length} expired user(s)`);
 
-    res.send(lines);
+    const lines = result.rows.map(row => [
+      row.mikrotik_username || 'unknown',
+      row.mac_address || 'unknown',
+      row.expires_at.toISOString(),
+      row.id
+    ].join('|'));
+
+    res.set('Content-Type', 'text/plain');
+    res.send(lines.join('\n'));
 
   } catch (error) {
+    // Silent fail - just return empty
+    res.set('Content-Type', 'text/plain');
     res.send('');
   }
 });
 
-// ========== MARK EXPIRED (Silent, Integer ID) ==========
+// ========== MARK USER AS EXPIRED (SILENT) ==========
 app.post('/api/mark-expired/:id', async (req, res) => {
-  const { id } = req.params;
-
-  // Validate it's a number
-  const numericId = parseInt(id, 10);
-  if (isNaN(numericId)) {
-    return res.json({ success: false });
-  }
-
   try {
-    const { data, error } = await supabase
-      .from('users')
-      .update({
-        is_expired: true,
-        expired_at: new Date().toISOString()
-      })
-      .eq('id', numericId);
+    let userId = req.params.id;
 
-    if (error) {
+    // Extract ID from pipe-separated string if needed
+    if (userId.includes('|')) {
+      const parts = userId.split('|');
+      userId = parts[parts.length - 1];
+    }
+
+    const idNum = parseInt(userId);
+
+    // Silent validation fail
+    if (isNaN(idNum) || idNum <= 0) {
       return res.json({ success: false });
     }
 
-    res.json({ success: true });
+    const result = await pool.query(
+      `UPDATE payment_queue SET status = 'expired' WHERE id = $1 AND status = 'processed' RETURNING mikrotik_username`,
+      [idNum]
+    );
+
+    // Only log successful expirations
+    if (result.rowCount > 0) {
+      console.log(`⏰ Expired: ${result.rows[0].mikrotik_username} (ID: ${idNum})`);
+      return res.json({ success: true, id: idNum });
+    }
+
+    // Silent return if not found or already expired - no logging
+    return res.json({ success: false });
 
   } catch (error) {
-    res.json({ success: false });
+    // Silent fail
+    return res.json({ success: false });
   }
 });
 
@@ -2001,6 +2014,7 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
 
