@@ -1451,23 +1451,19 @@ app.get('/admin', async (req, res) => {
 
     // Recent payments with expiry
     const recent = await pool.query(`
-      SELECT
-        id, mikrotik_username, mikrotik_password, plan, status, mac_address, customer_email, created_at,
-        CASE
-          WHEN status != 'processed' THEN 'pending'
-          WHEN plan = '24hr' AND created_at + INTERVAL '24 hours' < NOW() THEN 'expired'
-          WHEN plan = '7d' AND created_at + INTERVAL '7 days' < NOW() THEN 'expired'
-          WHEN plan = '30d' AND created_at + INTERVAL '30 days' < NOW() THEN 'expired'
-          ELSE 'active'
-        END as real_status,
-        CASE
-          WHEN plan = '24hr' THEN created_at + INTERVAL '24 hours'
-          WHEN plan = '7d' THEN created_at + INTERVAL '7 days'
-          WHEN plan = '30d' THEN created_at + INTERVAL '30 days'
-        END as expires_at
-      FROM payment_queue
-      ORDER BY created_at DESC
-      LIMIT 50
+    SELECT
+  id, mikrotik_username, mikrotik_password, plan, status, mac_address, customer_email, created_at, expires_at,
+  CASE
+    WHEN status = 'expired' THEN 'expired'
+    WHEN status = 'pending' THEN 'pending'
+    WHEN status = 'processed' AND expires_at IS NOT NULL AND expires_at < NOW() THEN 'expired'
+    WHEN status = 'processed' THEN 'active'
+    ELSE 'pending'
+  END as real_status
+FROM payment_queue
+ORDER BY created_at DESC
+LIMIT 50
+
     `);
 
     const s = stats.rows[0];
@@ -2014,6 +2010,7 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
 
