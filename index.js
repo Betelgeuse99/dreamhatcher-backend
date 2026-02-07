@@ -2582,23 +2582,7 @@ function getDashboardHTML(data) {
 '            <div class="stat-card">' +
 '                <div class="stat-header">' +
 '                    <div class="stat-icon revenue">' +
-'                        💰' +
-'                    </div>' +
-'                    <div class="stat-trend trend-up">' +
-'                        ALL-TIME' +
-'                    </div>' +
-'                </div>' +
-'                <div class="stat-value">' + formatCurrency(stats.total_revenue_lifetime) + '</div>' +
-'                <div class="stat-label">Total Lifetime Revenue (Never Expires)</div>' +
-'                <div style="margin-top: 15px; font-size: 13px; color: var(--success);">' +
-'                    ℹ️ Includes all historical payments' +
-'                </div>' +
-'            </div>' +
-'            ' +
-'            <div class="stat-card">' +
-'                <div class="stat-header">' +
-'                    <div class="stat-icon revenue">' +
-'                        📅' +
+'                      📅' +
 '                    </div>' +
 '                    <div class="stat-trend trend-up">' +
 '                        TODAY' +
@@ -2608,6 +2592,22 @@ function getDashboardHTML(data) {
 '                <div class="stat-label">Today\'s Revenue</div>' +
 '                <div style="margin-top: 15px; font-size: 13px; color: var(--gray);">' +
 '                    👥 ' + stats.signups_today + ' signups today' +
+'                </div>' +
+'            </div>' +
+'            ' + 
+'            <div class="stat-card">' +
+'                <div class="stat-header">' +
+'                    <div class="stat-icon revenue">' +
+'                         💰' +
+'                    </div>' +
+'                    <div class="stat-trend trend-up">' +
+'                        ALL-TIME' +
+'                    </div>' +
+'                </div>' +
+'                <div class="stat-value">' + formatCurrency(stats.total_revenue_lifetime) + '</div>' +
+'                <div class="stat-label">Total Lifetime Revenue (Never Expires)</div>' +
+'                <div style="margin-top: 15px; font-size: 13px; color: var(--success);">' +
+'                    ℹ️ Includes all historical payments' +
 '                </div>' +
 '            </div>' +
 '            ' +
@@ -3052,4 +3052,5 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
