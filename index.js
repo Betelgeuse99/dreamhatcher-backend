@@ -2737,8 +2737,8 @@ function renderDashboard(data) {
         <div class="brand">
             <div class="brand-mark">DH</div>
             <div>
-                <div class="brand-name">Dream Hatcher</div>
-                <div class="brand-tag">Admin Console</div>
+                <div class="brand-name">Dream Hatcher Tech</div>
+                <div class="brand-tag">Admin Console For High Speed Internet Connectivity</div>
             </div>
         </div>
         <div class="nav-actions">
@@ -2990,7 +2990,7 @@ function renderDashboard(data) {
 
         <!-- Footer -->
         <div class="page-footer">
-            <p>Dream Hatcher Admin Dashboard v3.1 — Corrected Build</p>
+            <p>Dream Hatcher Tech ⓒ 2026</p>
             <div class="footer-stats" id="footerStats">
                 <span><i class="fa-solid fa-database"></i> ${stats.total_users} Total Users</span>
                 <span><i class="fa-solid fa-vault"></i> ${naira(stats.total_revenue_lifetime)} Lifetime Revenue</span>
@@ -3117,6 +3117,7 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
 
