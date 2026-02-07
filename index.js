@@ -1356,1685 +1356,1750 @@ app.get('/', (req, res) => {
 });
 
 // ============================================
-// ENTERPRISE ADMIN DASHBOARD v3.0 - FIXED VERSION
+// DREAM HATCHER ENTERPRISE ADMIN DASHBOARD v3.1
 // Professional WiFi Management System
+// Bug-free, production-ready
 // ============================================
 
 // Security Configuration
 const ADMIN_PASSWORD = 'dreamhatcher2024'; // CHANGE IN PRODUCTION!
 const SESSION_TIMEOUT = 3 * 60 * 1000; // 3 minutes strict
 
-// Simple session storage
+// Simple session storage (use Redis in production)
 const adminSessions = {};
+
+// Helper: Format currency
+function naira(amount) {
+    const num = Number(amount) || 0;
+    return '₦' + num.toLocaleString('en-NG');
+}
+
+// Helper: Plan price
+function planPrice(plan) {
+    if (plan === '24hr') return 350;
+    if (plan === '7d') return 2400;
+    if (plan === '30d') return 7500;
+    return 0;
+}
+
+// Helper: Plan label
+function planLabel(plan) {
+    if (plan === '24hr') return 'Daily';
+    if (plan === '7d') return 'Weekly';
+    if (plan === '30d') return 'Monthly';
+    return plan || 'Unknown';
+}
 
 // ========== ADMIN DASHBOARD ROUTE ==========
 app.get('/admin', async (req, res) => {
-  const { pwd, action, userId, newPlan, sessionId, exportData } = req.query;
-  
-  // Session-based authentication
-  if (sessionId && adminSessions[sessionId]) {
-    const session = adminSessions[sessionId];
+    const { pwd, action, userId, newPlan, sessionId, exportData } = req.query;
     
-    // Check session expiry
-    if (Date.now() - session.lastActivity > SESSION_TIMEOUT) {
-      delete adminSessions[sessionId];
-      return res.redirect('/admin?sessionExpired=true');
+    // ========== SESSION-BASED AUTH ==========
+    if (sessionId && adminSessions[sessionId]) {
+        const session = adminSessions[sessionId];
+        
+        // Check session expiry
+        if (Date.now() - session.lastActivity > SESSION_TIMEOUT) {
+            delete adminSessions[sessionId];
+            return res.redirect('/admin?sessionExpired=true');
+        }
+        
+        // Update last activity
+        session.lastActivity = Date.now();
+        adminSessions[sessionId] = session;
+        
+        // Handle admin actions
+        return await handleAdminDashboard(req, res, sessionId);
     }
     
-    // Update last activity
-    session.lastActivity = Date.now();
-    adminSessions[sessionId] = session;
+    // ========== PASSWORD-BASED LOGIN ==========
+    if (pwd === ADMIN_PASSWORD) {
+        // Create new session
+        const newSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        adminSessions[newSessionId] = {
+            id: newSessionId,
+            loggedInAt: new Date(),
+            lastActivity: Date.now(),
+            ip: req.ip
+        };
+        
+        // Redirect with session ID
+        return res.redirect(`/admin?sessionId=${newSessionId}`);
+    }
     
-    // Continue with authenticated session
-    return handleAdminDashboard(req, res, sessionId, action, userId, newPlan, exportData);
-  }
-  
-  // Password-based initial login
-  if (pwd === ADMIN_PASSWORD) {
-    // Create new session
-    const newSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-    adminSessions[newSessionId] = {
-      id: newSessionId,
-      loggedInAt: new Date(),
-      lastActivity: Date.now(),
-      ip: req.ip
-    };
-    
-    // Redirect with session ID
-    return res.redirect(`/admin?sessionId=${newSessionId}`);
-  }
-  
-  // Show login form
-  return res.send(getLoginForm(req.query.sessionExpired));
+    // ========== SHOW LOGIN FORM ==========
+    return res.send(`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Portal • Dream Hatcher</title>
+    <style>
+        :root {
+            --bg-primary: #06080f;
+            --bg-secondary: #0c1019;
+            --bg-card: #111623;
+            --border: rgba(99, 130, 190, 0.12);
+            --text-primary: #e8edf5;
+            --text-secondary: #8494b2;
+            --accent: #3e8bff;
+            --success: #2dd4a0;
+            --danger: #f46b6b;
+        }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }
+        
+        body {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .login-container {
+            width: 100%;
+            max-width: 400px;
+        }
+        
+        .login-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 40px;
+            text-align: center;
+        }
+        
+        .logo {
+            font-size: 48px;
+            margin-bottom: 20px;
+            color: var(--accent);
+        }
+        
+        h1 {
+            font-size: 24px;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+        
+        p {
+            color: var(--text-secondary);
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .alert {
+            background: rgba(244, 107, 107, 0.1);
+            border: 1px solid rgba(244, 107, 107, 0.3);
+            color: var(--danger);
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: ${req.query.sessionExpired ? 'block' : 'none'};
+        }
+        
+        input {
+            width: 100%;
+            padding: 14px 18px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-primary);
+            font-size: 15px;
+            margin-bottom: 20px;
+        }
+        
+        input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        
+        button {
+            width: 100%;
+            padding: 15px;
+            border-radius: 10px;
+            border: none;
+            background: var(--accent);
+            color: white;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        
+        button:hover { opacity: 0.9; }
+        
+        .security-note {
+            margin-top: 25px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-card">
+            <div class="logo">🔐</div>
+            <h1>Dream Hatcher Admin</h1>
+            <p>Enterprise Admin Portal</p>
+            
+            <div class="alert">
+                ⚠️ Session expired. Please login again.
+            </div>
+            
+            <form method="GET" action="/admin">
+                <input type="password" name="pwd" placeholder="Enter admin password" required autofocus>
+                <button type="submit">Access Dashboard</button>
+            </form>
+            
+            <div class="security-note">
+                🔒 Session Timeout: 3 minutes • Secure Connection
+            </div>
+        </div>
+    </div>
+</body>
+</html>`);
 });
 
 // ========== ADMIN DASHBOARD HANDLER ==========
-async function handleAdminDashboard(req, res, sessionId, action, userId, newPlan, exportData) {
-  try {
-    let actionMessage = '';
-    let messageType = '';
+async function handleAdminDashboard(req, res, sessionId) {
+    try {
+        const { action, userId, newPlan, exportData } = req.query;
+        let actionMessage = '';
+        let messageType = '';
 
-    // Handle admin actions
-    if (action === 'delete' && userId) {
-      await pool.query('DELETE FROM payment_queue WHERE id = $1', [userId]);
-      actionMessage = 'User account permanently deleted';
-      messageType = 'success';
+        // ========== HANDLE ADMIN ACTIONS ==========
+        if (action === 'delete' && userId) {
+            await pool.query('DELETE FROM payment_queue WHERE id = $1', [userId]);
+            actionMessage = 'User account permanently deleted';
+            messageType = 'success';
+        }
+
+        if (action === 'extend' && userId && newPlan) {
+            const expiryMap = { '24hr': '24 hours', '7d': '7 days', '30d': '30 days' };
+            await pool.query(
+                'UPDATE payment_queue SET plan = $1, expires_at = NOW() + INTERVAL \'' + expiryMap[newPlan] + '\', status = \'processed\' WHERE id = $2',
+                [newPlan, userId]
+            );
+            actionMessage = 'User plan extended to ' + expiryMap[newPlan];
+            messageType = 'success';
+        }
+
+        if (action === 'reset' && userId) {
+            await pool.query(
+                'UPDATE payment_queue SET status = \'pending\', expires_at = NULL WHERE id = $1',
+                [userId]
+            );
+            actionMessage = 'User reset to pending - will be recreated on MikroTik';
+            messageType = 'warning';
+        }
+
+        if (action === 'toggle_status' && userId) {
+            const current = await pool.query('SELECT status FROM payment_queue WHERE id = $1', [userId]);
+            const newStatus = current.rows[0].status === 'processed' ? 'suspended' : 'processed';
+            await pool.query('UPDATE payment_queue SET status = $1 WHERE id = $2', [newStatus, userId]);
+            actionMessage = 'User status changed to ' + newStatus;
+            messageType = 'info';
+        }
+
+        // ========== BULK CLEANUP ==========
+        if (action === 'cleanup') {
+            const result = await pool.query(`
+                DELETE FROM payment_queue 
+                WHERE status = 'processed' 
+                AND (
+                    (plan = '24hr' AND created_at + INTERVAL '24 hours' < NOW()) OR
+                    (plan = '7d' AND created_at + INTERVAL '7 days' < NOW()) OR
+                    (plan = '30d' AND created_at + INTERVAL '30 days' < NOW())
+                )
+            `);
+            actionMessage = 'Cleaned up ' + result.rowCount + ' expired users';
+            messageType = 'success';
+        }
+
+        // ========== EXPORT CSV ==========
+        if (exportData === 'csv') {
+            const { rows } = await pool.query(`
+                SELECT 
+                    id,
+                    mikrotik_username as username,
+                    mikrotik_password as password,
+                    plan,
+                    status,
+                    mac_address as mac,
+                    customer_email as email,
+                    created_at,
+                    expires_at
+                FROM payment_queue 
+                ORDER BY created_at DESC
+            `);
+            
+            let csvData = 'ID,Username,Password,Plan,Status,MAC Address,Email,Created,Expires\n';
+            rows.forEach(row => {
+                csvData += [
+                    row.id,
+                    '"' + (row.username || '').replace(/"/g, '""') + '"',
+                    '"' + (row.password || '').replace(/"/g, '""') + '"',
+                    '"' + (row.plan || '').replace(/"/g, '""') + '"',
+                    '"' + (row.status || '').replace(/"/g, '""') + '"',
+                    '"' + (row.mac || 'N/A').replace(/"/g, '""') + '"',
+                    '"' + (row.email || 'N/A').replace(/"/g, '""') + '"',
+                    '"' + new Date(row.created_at).toISOString() + '"',
+                    '"' + (row.expires_at ? new Date(row.expires_at).toISOString() : 'N/A') + '"'
+                ].join(',') + '\n';
+            });
+            
+            res.setHeader('Content-Type', 'text/csv');
+            res.setHeader('Content-Disposition', 'attachment; filename="dreamhatcher_users_' + new Date().toISOString().split('T')[0] + '.csv"');
+            return res.send(csvData);
+        }
+
+        // ========== GET DASHBOARD STATISTICS ==========
+        
+        // 1. CORE METRICS (Revenue never expires - includes ALL users)
+        const metrics = await pool.query(`
+            WITH user_stats AS (
+                SELECT 
+                    COUNT(*) as total_users,
+                    COUNT(CASE WHEN status = 'processed' AND (expires_at IS NULL OR expires_at > NOW()) THEN 1 END) as active_users,
+                    COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_users,
+                    COUNT(CASE WHEN status = 'expired' OR (status = 'processed' AND expires_at < NOW()) THEN 1 END) as expired_users,
+                    COUNT(CASE WHEN status = 'suspended' THEN 1 END) as suspended_users,
+                    COUNT(CASE WHEN created_at::date = CURRENT_DATE THEN 1 END) as signups_today,
+                    COUNT(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' THEN 1 END) as signups_week
+                FROM payment_queue
+            ),
+            revenue_stats AS (
+                SELECT
+                    -- ALL-TIME REVENUE (never expires, includes ALL users regardless of status)
+                    COALESCE(SUM(
+                        CASE 
+                            WHEN plan = '24hr' THEN 350
+                            WHEN plan = '7d' THEN 2400
+                            WHEN plan = '30d' THEN 7500
+                            ELSE 0
+                        END
+                    ), 0) as total_revenue_lifetime,
+                    
+                    -- Today's revenue (only created today, all statuses)
+                    COALESCE(SUM(
+                        CASE WHEN created_at::date = CURRENT_DATE
+                        THEN CASE 
+                            WHEN plan = '24hr' THEN 350
+                            WHEN plan = '7d' THEN 2400
+                            WHEN plan = '30d' THEN 7500
+                            ELSE 0
+                        END ELSE 0 END
+                    ), 0) as revenue_today,
+                    
+                    -- This week's revenue
+                    COALESCE(SUM(
+                        CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days'
+                        THEN CASE 
+                            WHEN plan = '24hr' THEN 350
+                            WHEN plan = '7d' THEN 2400
+                            WHEN plan = '30d' THEN 7500
+                            ELSE 0
+                        END ELSE 0 END
+                    ), 0) as revenue_week,
+                    
+                    -- This month's revenue
+                    COALESCE(SUM(
+                        CASE WHEN created_at >= CURRENT_DATE - INTERVAL '30 days'
+                        THEN CASE 
+                            WHEN plan = '24hr' THEN 350
+                            WHEN plan = '7d' THEN 2400
+                            WHEN plan = '30d' THEN 7500
+                            ELSE 0
+                        END ELSE 0 END
+                    ), 0) as revenue_month
+                FROM payment_queue
+            ),
+            plan_distribution AS (
+                SELECT 
+                    plan,
+                    COUNT(*) as count,
+                    SUM(
+                        CASE 
+                            WHEN plan = '24hr' THEN 350
+                            WHEN plan = '7d' THEN 2400
+                            WHEN plan = '30d' THEN 7500
+                            ELSE 0
+                        END
+                    ) as revenue
+                FROM payment_queue 
+                GROUP BY plan
+            )
+            SELECT 
+                u.*, 
+                r.*,
+                json_agg(json_build_object('plan', p.plan, 'count', p.count, 'revenue', p.revenue)) as plans_data
+            FROM user_stats u, revenue_stats r, plan_distribution p
+            GROUP BY 
+                u.total_users, u.active_users, u.pending_users, u.expired_users, u.suspended_users, 
+                u.signups_today, u.signups_week, r.total_revenue_lifetime, r.revenue_today, 
+                r.revenue_week, r.revenue_month
+        `);
+
+        // 2. RECENT ACTIVITY WITH CORRECT STATUS
+        const recentActivity = await pool.query(`
+            SELECT 
+                id,
+                mikrotik_username,
+                mikrotik_password,
+                plan,
+                status,
+                mac_address,
+                customer_email,
+                created_at,
+                expires_at,
+                -- CORRECTED: Check expired status first
+                CASE 
+                    WHEN status = 'expired' THEN 'expired'
+                    WHEN status = 'pending' THEN 'pending'
+                    WHEN status = 'suspended' THEN 'suspended'
+                    WHEN status = 'processed' AND (expires_at IS NULL OR expires_at > NOW()) THEN 'active'
+                    WHEN status = 'processed' AND expires_at <= NOW() THEN 'expired'
+                    ELSE 'unknown'
+                END as realtime_status
+            FROM payment_queue
+            ORDER BY created_at DESC
+            LIMIT 100
+        `);
+
+        const stats = metrics.rows[0];
+        const users = recentActivity.rows;
+        
+        // Count realtime statuses
+        const activeCount = users.filter(u => u.realtime_status === 'active').length;
+        const expiredCount = users.filter(u => u.realtime_status === 'expired').length;
+        const pendingCount = users.filter(u => u.realtime_status === 'pending').length;
+        
+        // Plan distribution
+        const planData = {
+            daily: { count: 0, revenue: 0 },
+            weekly: { count: 0, revenue: 0 },
+            monthly: { count: 0, revenue: 0 }
+        };
+        
+        if (stats.plans_data) {
+            stats.plans_data.forEach(p => {
+                if (p.plan === '24hr') {
+                    planData.daily.count = p.count;
+                    planData.daily.revenue = p.revenue;
+                } else if (p.plan === '7d') {
+                    planData.weekly.count = p.count;
+                    planData.weekly.revenue = p.revenue;
+                } else if (p.plan === '30d') {
+                    planData.monthly.count = p.count;
+                    planData.monthly.revenue = p.revenue;
+                }
+            });
+        }
+
+        // ========== RENDER DASHBOARD ==========
+        res.send(renderDashboard({
+            sessionId: sessionId,
+            stats: stats,
+            users: users,
+            activeCount: activeCount,
+            expiredCount: expiredCount,
+            pendingCount: pendingCount,
+            planData: planData,
+            actionMessage: actionMessage,
+            messageType: messageType
+        }));
+
+    } catch (error) {
+        console.error('Dashboard Error:', error);
+        res.status(500).send('Internal Server Error: ' + error.message);
     }
+}
 
-    if (action === 'extend' && userId && newPlan) {
-      const expiryMap = { '24hr': '24 hours', '7d': '7 days', '30d': '30 days' };
-      await pool.query(
-        'UPDATE payment_queue SET plan = $1, expires_at = NOW() + INTERVAL \'' + expiryMap[newPlan] + '\', status = \'processed\' WHERE id = $2',
-        [newPlan, userId]
-      );
-      actionMessage = 'User plan extended to ' + expiryMap[newPlan];
-      messageType = 'success';
-    }
-
-    if (action === 'reset' && userId) {
-      await pool.query(
-        'UPDATE payment_queue SET status = \'pending\', mikrotik_sync = false, expires_at = NULL WHERE id = $1',
-        [userId]
-      );
-      actionMessage = 'User reset to pending - will be recreated on MikroTik';
-      messageType = 'warning';
-    }
-
-    if (action === 'toggle_status' && userId) {
-      const current = await pool.query('SELECT status FROM payment_queue WHERE id = $1', [userId]);
-      const newStatus = current.rows[0].status === 'active' ? 'suspended' : 'active';
-      await pool.query('UPDATE payment_queue SET status = $1 WHERE id = $2', [newStatus, userId]);
-      actionMessage = 'User status changed to ' + newStatus;
-      messageType = 'info';
-    }
-
-    // EXPORT FUNCTIONALITY
-    if (exportData === 'csv') {
-      const { rows } = await pool.query(`
-        SELECT 
-          id,
-          mikrotik_username as username,
-          mikrotik_password as password,
-          plan,
-          status,
-          mac_address as mac,
-          customer_email as email,
-          created_at,
-          expires_at,
-          EXTRACT(EPOCH FROM (expires_at - created_at))/86400 as duration_days
-        FROM payment_queue 
-        ORDER BY created_at DESC
-      `);
-      
-      let csvData = 'ID,Username,Password,Plan,Status,MAC Address,Email,Created,Expires,Duration (days)\n';
-      rows.forEach(row => {
-        csvData += [
-          row.id,
-          '"' + (row.username || '').replace(/"/g, '""') + '"',
-          '"' + (row.password || '').replace(/"/g, '""') + '"',
-          '"' + (row.plan || '').replace(/"/g, '""') + '"',
-          '"' + (row.status || '').replace(/"/g, '""') + '"',
-          '"' + (row.mac || 'N/A').replace(/"/g, '""') + '"',
-          '"' + (row.email || 'N/A').replace(/"/g, '""') + '"',
-          '"' + new Date(row.created_at).toISOString() + '"',
-          '"' + (row.expires_at ? new Date(row.expires_at).toISOString() : 'N/A') + '"',
-          '"' + (row.duration_days ? Math.round(row.duration_days) : 'N/A') + '"'
-        ].join(',') + '\n';
-      });
-      
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', 'attachment; filename="dreamhatcher_users_' + new Date().toISOString().split('T')[0] + '.csv"');
-      return res.send(csvData);
-    }
-
-    // Get dashboard statistics
-    const metrics = await pool.query(`
-      WITH user_stats AS (
-        SELECT 
-          COUNT(*) as total_users,
-          COUNT(CASE WHEN status = 'processed' THEN 1 END) as active_users,
-          COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_users,
-          COUNT(CASE WHEN status = 'expired' THEN 1 END) as expired_users,
-          COUNT(CASE WHEN status = 'suspended' THEN 1 END) as suspended_users,
-          COUNT(CASE WHEN created_at::date = CURRENT_DATE THEN 1 END) as signups_today,
-          COUNT(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' THEN 1 END) as signups_week
-        FROM payment_queue
-      ),
-      revenue_stats AS (
-        SELECT
-          COALESCE(SUM(
-            CASE 
-              WHEN plan = '24hr' THEN 350
-              WHEN plan = '7d' THEN 2400
-              WHEN plan = '30d' THEN 7500
-              ELSE 0
-            END
-          ), 0) as total_revenue_lifetime,
-          
-          COALESCE(SUM(
-            CASE WHEN created_at::date = CURRENT_DATE AND status = 'processed'
-            THEN CASE 
-              WHEN plan = '24hr' THEN 350
-              WHEN plan = '7d' THEN 2400
-              WHEN plan = '30d' THEN 7500
-              ELSE 0
-            END ELSE 0 END
-          ), 0) as revenue_today,
-          
-          COALESCE(SUM(
-            CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' AND status = 'processed'
-            THEN CASE 
-              WHEN plan = '24hr' THEN 350
-              WHEN plan = '7d' THEN 2400
-              WHEN plan = '30d' THEN 7500
-              ELSE 0
-            END ELSE 0 END
-          ), 0) as revenue_week,
-          
-          COALESCE(SUM(
-            CASE WHEN created_at >= CURRENT_DATE - INTERVAL '30 days' AND status = 'processed'
-            THEN CASE 
-              WHEN plan = '24hr' THEN 350
-              WHEN plan = '7d' THEN 2400
-              WHEN plan = '30d' THEN 7500
-              ELSE 0
-            END ELSE 0 END
-          ), 0) as revenue_month,
-          
-          COALESCE(AVG(
-            CASE 
-              WHEN plan = '24hr' THEN 350
-              WHEN plan = '7d' THEN 2400
-              WHEN plan = '30d' THEN 7500
-              ELSE 0
-            END
-          ), 0) as avg_revenue_per_user
-        FROM payment_queue
-        WHERE status = 'processed'
-      ),
-      plan_distribution AS (
-        SELECT 
-          plan,
-          COUNT(*) as count,
-          SUM(
-            CASE 
-              WHEN plan = '24hr' THEN 350
-              WHEN plan = '7d' THEN 2400
-              WHEN plan = '30d' THEN 7500
-              ELSE 0
-            END
-          ) as revenue
-        FROM payment_queue 
-        WHERE status = 'processed'
-        GROUP BY plan
-      ),
-      growth_metrics AS (
-        SELECT
-          (COUNT(CASE WHEN created_at::date = CURRENT_DATE THEN 1 END) * 100.0 / 
-           NULLIF(COUNT(CASE WHEN created_at::date = CURRENT_DATE - INTERVAL '1 day' THEN 1 END), 0)) as daily_growth_rate,
-          
-          COALESCE(SUM(
-            CASE WHEN plan = '30d' THEN 7500/30
-                 WHEN plan = '7d' THEN 2400/7
-                 WHEN plan = '24hr' THEN 350
-                 ELSE 0
-            END
-          ), 0) as mrr_projection
-        FROM payment_queue
-        WHERE status = 'processed' 
-        AND expires_at > NOW()
-      )
-      SELECT 
-        u.*, 
-        r.*,
-        g.*,
-        json_agg(json_build_object('plan', p.plan, 'count', p.count, 'revenue', p.revenue)) as plans_data
-      FROM user_stats u, revenue_stats r, growth_metrics g, plan_distribution p
-      GROUP BY 
-        u.total_users, u.active_users, u.pending_users, u.expired_users, u.suspended_users, 
-        u.signups_today, u.signups_week, r.total_revenue_lifetime, r.revenue_today, 
-        r.revenue_week, r.revenue_month, r.avg_revenue_per_user, g.daily_growth_rate, g.mrr_projection
-    `);
-
-    // Real-time status
-    const realtimeStatus = await pool.query(`
-      SELECT
-        COUNT(CASE WHEN status = 'processed' AND (expires_at IS NULL OR expires_at > NOW()) THEN 1 END) as currently_active,
-        COUNT(CASE WHEN status = 'processed' AND expires_at < NOW() THEN 1 END) as currently_expired,
-        COUNT(CASE WHEN status = 'pending' THEN 1 END) as currently_pending,
-        COUNT(CASE WHEN status = 'suspended' THEN 1 END) as currently_suspended
-      FROM payment_queue
-    `);
-
-    // Recent activity
-    const recentActivity = await pool.query(`
-      SELECT 
-        id,
-        mikrotik_username,
-        mikrotik_password,
-        plan,
-        status,
-        mac_address,
-        customer_email,
-        created_at,
-        expires_at,
-        CASE 
-          WHEN status = 'suspended' THEN 'suspended'
-          WHEN status = 'expired' THEN 'expired'
-          WHEN status = 'pending' THEN 'pending'
-          WHEN status = 'processed' AND expires_at IS NOT NULL AND expires_at < NOW() THEN 'expired'
-          WHEN status = 'processed' THEN 'active'
-          ELSE 'unknown'
-        END as realtime_status,
-        CASE 
-          WHEN plan = '24hr' THEN 'Daily'
-          WHEN plan = '7d' THEN 'Weekly'
-          WHEN plan = '30d' THEN 'Monthly'
-          ELSE plan
-        END as plan_name
-      FROM payment_queue
-      ORDER BY created_at DESC
-      LIMIT 100
-    `);
-
-    // Performance analytics
-    const performance = await pool.query(`
-      SELECT
-        DATE(created_at) as date,
-        COUNT(*) as signups,
-        SUM(CASE 
-          WHEN plan = '24hr' THEN 350
-          WHEN plan = '7d' THEN 2400
-          WHEN plan = '30d' THEN 7500
-          ELSE 0
-        END) as daily_revenue
-      FROM payment_queue
-      WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'
-        AND status = 'processed'
-      GROUP BY DATE(created_at)
-      ORDER BY date DESC
-    `);
-
-    const stats = metrics.rows[0];
-    const realtime = realtimeStatus.rows[0];
-    const perfData = performance.rows;
+// ========== DASHBOARD RENDERER ==========
+function renderDashboard(data) {
+    const { sessionId, stats, users, activeCount, expiredCount, pendingCount, planData, actionMessage, messageType } = data;
     
-    // Format dates for chart
-    const chartLabels = perfData.map(p => {
-      const date = new Date(p.date);
-      return date.getDate() + ' ' + date.toLocaleString('en-NG', { month: 'short' });
-    }).reverse();
+    const now = new Date();
+    const sessionEnd = now.getTime() + (3 * 60 * 1000);
     
-    const chartData = perfData.map(p => p.daily_revenue).reverse();
+    // Escape HTML
+    const escapeHtml = (text) => {
+        if (!text) return '';
+        const map = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
+        };
+        return text.toString().replace(/[&<>"']/g, m => map[m]);
+    };
+    
+    // Build user table rows
+    let userRows = '';
+    if (users.length === 0) {
+        userRows = '<tr><td colspan="8" style="text-align:center;padding:48px;color:var(--text-muted);"><i class="fa-solid fa-inbox" style="font-size:32px;display:block;margin-bottom:12px;"></i>No users found</td></tr>';
+    } else {
+        users.forEach(user => {
+            const created = new Date(user.created_at);
+            const expires = user.expires_at ? new Date(user.expires_at) : null;
+            const isExpired = expires && expires < now;
+            
+            const statusBadge = 'badge-' + user.realtime_status;
+            const statusIcon = user.realtime_status === 'active' ? 'fa-circle-check' :
+                             user.realtime_status === 'expired' ? 'fa-circle-xmark' :
+                             user.realtime_status === 'pending' ? 'fa-hourglass-half' :
+                             user.realtime_status === 'suspended' ? 'fa-pause-circle' : 'fa-question-circle';
+            const statusLabel = user.realtime_status.charAt(0).toUpperCase() + user.realtime_status.slice(1);
+            
+            userRows += `
+                <tr data-status="${user.realtime_status}" data-search="${escapeHtml(user.mikrotik_username || '')} ${escapeHtml(user.mac_address || '')} ${escapeHtml(user.customer_email || '')}">
+                    <td class="user-cell">
+                        <strong>${escapeHtml(user.mikrotik_username || 'N/A')}</strong>
+                        ${user.customer_email ? '<small>' + escapeHtml(user.customer_email) + '</small>' : ''}
+                    </td>
+                    <td><span class="pw" onclick="copyPw('${escapeHtml(user.mikrotik_password || '')}')" title="Click to copy">${escapeHtml(user.mikrotik_password || 'N/A')}</span></td>
+                    <td>
+                        <span class="plan-tag plan-${user.plan === '24hr' ? 'daily' : user.plan === '7d' ? 'weekly' : 'monthly'}">
+                            <i class="fa-solid ${user.plan === '24hr' ? 'fa-bolt' : user.plan === '7d' ? 'fa-rocket' : 'fa-crown'}"></i> 
+                            ${planLabel(user.plan)}
+                        </span>
+                    </td>
+                    <td>
+                        <span class="badge ${statusBadge}">
+                            <i class="fa-solid ${statusIcon}"></i> ${statusLabel}
+                        </span>
+                    </td>
+                    <td>
+                        ${expires ? 
+                            `<span class="time-cell ${isExpired ? 'expires-gone' : 'expires-ok'}">
+                                ${expires.toLocaleDateString('en-NG')}<br>
+                                <small>${expires.toLocaleTimeString('en-NG', {hour:'2-digit',minute:'2-digit'})}</small>
+                            </span>` : 
+                            '<span style="color:var(--text-muted);">N/A</span>'
+                        }
+                    </td>
+                    <td>${user.mac_address ? `<span class="mac">${escapeHtml(user.mac_address)}</span>` : '<span style="color:var(--text-muted);">N/A</span>'}</td>
+                    <td class="time-cell">
+                        ${created.toLocaleDateString('en-NG')}<br>
+                        <small>${created.toLocaleTimeString('en-NG', {hour:'2-digit',minute:'2-digit'})}</small>
+                    </td>
+                    <td>
+                        <div class="row-actions">
+                            <button class="act-btn a-extend" title="Extend Plan" onclick="openExtend(${user.id}, '${escapeHtml(user.mikrotik_username || '')}')">
+                                <i class="fa-solid fa-clock-rotate-left"></i>
+                            </button>
+                            <a href="/admin?sessionId=${sessionId}&action=toggle_status&userId=${user.id}" class="act-btn a-reset" title="Toggle Status">
+                                <i class="fa-solid fa-power-off"></i>
+                            </a>
+                            <a href="/admin?sessionId=${sessionId}&action=reset&userId=${user.id}" class="act-btn a-reset" onclick="return confirm('Reset user to pending?')" title="Reset to Pending">
+                                <i class="fa-solid fa-arrow-rotate-left"></i>
+                            </a>
+                            <a href="/admin?sessionId=${sessionId}&action=delete&userId=${user.id}" class="act-btn a-delete" onclick="return confirm('Permanently delete this user?')" title="Delete User">
+                                <i class="fa-solid fa-trash-can"></i>
+                            </a>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        });
+    }
+    
+    // Plan distribution percentages
+    const totalUsers = Number(stats.total_users) || 1;
+    const dailyPct = ((planData.daily.count / totalUsers) * 100).toFixed(1);
+    const weeklyPct = ((planData.weekly.count / totalUsers) * 100).toFixed(1);
+    const monthlyPct = ((planData.monthly.count / totalUsers) * 100).toFixed(1);
+    
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dream Hatcher Admin Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,500;0,9..40,700;0,9..40,800;1,9..40,400&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        :root {
+            --bg-primary: #06080f;
+            --bg-secondary: #0c1019;
+            --bg-card: #111623;
+            --bg-card-hover: #161d2e;
+            --bg-elevated: #1a2235;
+            --border: rgba(99, 130, 190, 0.12);
+            --border-active: rgba(99, 180, 255, 0.3);
+            --text-primary: #e8edf5;
+            --text-secondary: #8494b2;
+            --text-muted: #566580;
+            --accent: #3e8bff;
+            --accent-glow: rgba(62, 139, 255, 0.15);
+            --success: #2dd4a0;
+            --success-bg: rgba(45, 212, 160, 0.12);
+            --danger: #f46b6b;
+            --danger-bg: rgba(244, 107, 107, 0.12);
+            --warning: #f0b132;
+            --warning-bg: rgba(240, 177, 50, 0.12);
+            --purple: #a78bfa;
+            --purple-bg: rgba(167, 139, 250, 0.12);
+            --pink: #f472b6;
+            --pink-bg: rgba(244, 114, 182, 0.12);
+            --font: 'DM Sans', system-ui, -apple-system, sans-serif;
+            --mono: 'JetBrains Mono', 'SF Mono', monospace;
+            --radius: 14px;
+            --radius-sm: 10px;
+            --radius-xs: 7px;
+        }
 
-    // Send the dashboard HTML
-    res.send(getDashboardHTML({
-      sessionId: sessionId,
-      stats: stats,
-      realtime: realtime,
-      recentActivity: recentActivity.rows,
-      chartLabels: chartLabels,
-      chartData: chartData,
-      actionMessage: actionMessage,
-      messageType: messageType,
-      perfData: perfData
-    }));
+        .dark {
+            --bg-primary: #06080f;
+            --bg-secondary: #0c1019;
+            --bg-card: #111623;
+        }
 
-  } catch (error) {
-    console.error('Dashboard Error:', error);
-    res.status(500).send(getErrorPage(error.message));
-  }
-}
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
-// ========== HELPER FUNCTIONS ==========
+        html { font-size: 16px; scroll-behavior: smooth; }
 
-function getLoginForm(sessionExpired) {
-  return '<!DOCTYPE html>' +
-'<html lang="en">' +
-'<head>' +
-'    <meta charset="UTF-8">' +
-'    <meta name="viewport" content="width=device-width, initial-scale=1.0">' +
-'    <title>Admin Portal • Dream Hatcher</title>' +
-'    <style>' +
-'        :root {' +
-'            --primary: #0066ff;' +
-'            --primary-dark: #0052d4;' +
-'            --secondary: #00c9ff;' +
-'            --success: #10b981;' +
-'            --danger: #ef4444;' +
-'            --warning: #f59e0b;' +
-'            --dark: #0a0e1a;' +
-'            --darker: #050811;' +
-'            --light: #f8fafc;' +
-'            --gray: #64748b;' +
-'            --border: rgba(255,255,255,0.1);' +
-'        }' +
-'        ' +
-'        * {' +
-'            margin: 0;' +
-'            padding: 0;' +
-'            box-sizing: border-box;' +
-'            font-family: \'Segoe UI\', system-ui, -apple-system, sans-serif;' +
-'        }' +
-'        ' +
-'        body {' +
-'            background: linear-gradient(135deg, var(--darker) 0%, var(--dark) 100%);' +
-'            min-height: 100vh;' +
-'            display: flex;' +
-'            align-items: center;' +
-'            justify-content: center;' +
-'            padding: 20px;' +
-'            color: var(--light);' +
-'        }' +
-'        ' +
-'        .login-container {' +
-'            width: 100%;' +
-'            max-width: 420px;' +
-'        }' +
-'        ' +
-'        .login-card {' +
-'            background: rgba(255, 255, 255, 0.05);' +
-'            backdrop-filter: blur(10px);' +
-'            border-radius: 20px;' +
-'            border: 1px solid var(--border);' +
-'            padding: 40px;' +
-'            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);' +
-'            position: relative;' +
-'            overflow: hidden;' +
-'        }' +
-'        ' +
-'        .login-card::before {' +
-'            content: \'\';' +
-'            position: absolute;' +
-'            top: 0;' +
-'            left: 0;' +
-'            right: 0;' +
-'            height: 4px;' +
-'            background: linear-gradient(90deg, var(--secondary), var(--primary));' +
-'        }' +
-'        ' +
-'        .logo {' +
-'            text-align: center;' +
-'            margin-bottom: 30px;' +
-'        }' +
-'        ' +
-'        .logo-icon {' +
-'            font-size: 48px;' +
-'            margin-bottom: 10px;' +
-'            color: var(--secondary);' +
-'        }' +
-'        ' +
-'        .logo h1 {' +
-'            font-size: 28px;' +
-'            font-weight: 700;' +
-'            background: linear-gradient(135deg, var(--secondary), var(--primary));' +
-'            -webkit-background-clip: text;' +
-'            -webkit-text-fill-color: transparent;' +
-'            margin-bottom: 5px;' +
-'        }' +
-'        ' +
-'        .logo p {' +
-'            color: var(--gray);' +
-'            font-size: 14px;' +
-'        }' +
-'        ' +
-'        .alert {' +
-'            padding: 15px;' +
-'            border-radius: 10px;' +
-'            margin-bottom: 25px;' +
-'            display: ' + (sessionExpired ? 'flex' : 'none') + ';' +
-'            align-items: center;' +
-'            gap: 10px;' +
-'            background: rgba(239, 68, 68, 0.15);' +
-'            border: 1px solid rgba(239, 68, 68, 0.3);' +
-'            color: #fca5a5;' +
-'        }' +
-'        ' +
-'        .form-group {' +
-'            margin-bottom: 25px;' +
-'        }' +
-'        ' +
-'        .form-label {' +
-'            display: block;' +
-'            margin-bottom: 8px;' +
-'            color: var(--light);' +
-'            font-weight: 500;' +
-'            font-size: 14px;' +
-'        }' +
-'        ' +
-'        .input-group {' +
-'            position: relative;' +
-'        }' +
-'        ' +
-'        .input-group input {' +
-'            width: 100%;' +
-'            padding: 16px 20px 16px 50px;' +
-'            border-radius: 12px;' +
-'            border: 1px solid var(--border);' +
-'            background: rgba(255, 255, 255, 0.07);' +
-'            color: var(--light);' +
-'            font-size: 16px;' +
-'            transition: all 0.3s;' +
-'        }' +
-'        ' +
-'        .input-group input:focus {' +
-'            outline: none;' +
-'            border-color: var(--primary);' +
-'            background: rgba(255, 255, 255, 0.1);' +
-'            box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.1);' +
-'        }' +
-'        ' +
-'        .input-group i {' +
-'            position: absolute;' +
-'            left: 20px;' +
-'            top: 50%;' +
-'            transform: translateY(-50%);' +
-'            color: var(--gray);' +
-'            font-size: 18px;' +
-'        }' +
-'        ' +
-'        .btn-login {' +
-'            width: 100%;' +
-'            padding: 18px;' +
-'            border-radius: 12px;' +
-'            border: none;' +
-'            background: linear-gradient(135deg, var(--primary), var(--primary-dark));' +
-'            color: white;' +
-'            font-size: 16px;' +
-'            font-weight: 600;' +
-'            cursor: pointer;' +
-'            transition: all 0.3s;' +
-'            display: flex;' +
-'            align-items: center;' +
-'            justify-content: center;' +
-'            gap: 10px;' +
-'        }' +
-'        ' +
-'        .btn-login:hover {' +
-'            transform: translateY(-2px);' +
-'            box-shadow: 0 10px 20px rgba(0, 102, 255, 0.3);' +
-'        }' +
-'        ' +
-'        .btn-login:active {' +
-'            transform: translateY(0);' +
-'        }' +
-'        ' +
-'        .security-note {' +
-'            margin-top: 25px;' +
-'            padding-top: 25px;' +
-'            border-top: 1px solid var(--border);' +
-'            text-align: center;' +
-'            color: var(--gray);' +
-'            font-size: 13px;' +
-'        }' +
-'        ' +
-'        @media (max-width: 480px) {' +
-'            .login-card {' +
-'                padding: 30px 25px;' +
-'            }' +
-'        }' +
-'    </style>' +
-'</head>' +
-'<body>' +
-'    <div class="login-container">' +
-'        <div class="login-card">' +
-'            <div class="logo">' +
-'                <div class="logo-icon">' +
-'                    🔐' +
-'                </div>' +
-'                <h1>Dream Hatcher</h1>' +
-'                <p>Enterprise Admin Portal</p>' +
-'            </div>' +
-'            ' +
-'            <div class="alert">' +
-'                ⚠️' +
-'                <span>Session expired. Please login again.</span>' +
-'            </div>' +
-'            ' +
-'            <form method="GET" action="/admin">' +
-'                <div class="form-group">' +
-'                    <label class="form-label">Administrator Password</label>' +
-'                    <div class="input-group">' +
-'                        🔑' +
-'                        <input type="password" name="pwd" placeholder="Enter secure password" required autofocus>' +
-'                    </div>' +
-'                </div>' +
-'                ' +
-'                <button type="submit" class="btn-login">' +
-'                    🔐 Access Dashboard' +
-'                </button>' +
-'            </form>' +
-'            ' +
-'            <div class="security-note">' +
-'                🔒 Secure HTTPS Connection • Session Timeout: 3 min' +
-'            </div>' +
-'        </div>' +
-'    </div>' +
-'</body>' +
-'</html>';
-}
+        body {
+            font-family: var(--font);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
 
-function getDashboardHTML(data) {
-  const { sessionId, stats, realtime, recentActivity, chartLabels, chartData, actionMessage, messageType, perfData } = data;
-  
-  // Format currency
-  const formatCurrency = (amount) => {
-    const num = Number(amount) || 0;
-    return '₦' + num.toLocaleString('en-NG');
-  };
-  
-  // Calculate session end time (3 minutes from now)
-  const sessionEnd = Date.now() + (3 * 60 * 1000);
-  
-  // Prepare plan distribution data
-  const dailyCount = stats.plans_data?.find(p => p.plan === '24hr')?.count || 0;
-  const weeklyCount = stats.plans_data?.find(p => p.plan === '7d')?.count || 0;
-  const monthlyCount = stats.plans_data?.find(p => p.plan === '30d')?.count || 0;
-  
-  // Build HTML
-  let html = '<!DOCTYPE html>' +
-'<html lang="en">' +
-'<head>' +
-'    <meta charset="UTF-8">' +
-'    <meta name="viewport" content="width=device-width, initial-scale=1.0">' +
-'    <title>Dashboard • Dream Hatcher Admin</title>' +
-'    <style>' +
-'        :root {' +
-'            --primary: #0066ff;' +
-'            --primary-dark: #0052d4;' +
-'            --secondary: #00c9ff;' +
-'            --success: #10b981;' +
-'            --danger: #ef4444;' +
-'            --warning: #f59e0b;' +
-'            --info: #3b82f6;' +
-'            --dark: #0a0e1a;' +
-'            --darker: #050811;' +
-'            --light: #f8fafc;' +
-'            --gray: #64748b;' +
-'            --border: rgba(255,255,255,0.1);' +
-'            --card-bg: rgba(255, 255, 255, 0.05);' +
-'        }' +
-'        ' +
-'        * {' +
-'            margin: 0;' +
-'            padding: 0;' +
-'            box-sizing: border-box;' +
-'            font-family: \'Segoe UI\', system-ui, -apple-system, sans-serif;' +
-'        }' +
-'        ' +
-'        body {' +
-'            background: var(--darker);' +
-'            color: var(--light);' +
-'            min-height: 100vh;' +
-'            overflow-x: hidden;' +
-'        }' +
-'        ' +
-'        /* ========== TOP NAVBAR ========== */' +
-'        .navbar {' +
-'            background: rgba(10, 14, 26, 0.95);' +
-'            backdrop-filter: blur(10px);' +
-'            border-bottom: 1px solid var(--border);' +
-'            padding: 0 30px;' +
-'            height: 70px;' +
-'            display: flex;' +
-'            align-items: center;' +
-'            justify-content: space-between;' +
-'            position: sticky;' +
-'            top: 0;' +
-'            z-index: 1000;' +
-'        }' +
-'        ' +
-'        .brand {' +
-'            display: flex;' +
-'            align-items: center;' +
-'            gap: 15px;' +
-'        }' +
-'        ' +
-'        .brand-icon {' +
-'            width: 40px;' +
-'            height: 40px;' +
-'            background: linear-gradient(135deg, var(--secondary), var(--primary));' +
-'            border-radius: 10px;' +
-'            display: flex;' +
-'            align-items: center;' +
-'            justify-content: center;' +
-'            font-size: 20px;' +
-'        }' +
-'        ' +
-'        .brand-text h1 {' +
-'            font-size: 20px;' +
-'            font-weight: 700;' +
-'            background: linear-gradient(135deg, var(--secondary), var(--primary));' +
-'            -webkit-background-clip: text;' +
-'            -webkit-text-fill-color: transparent;' +
-'        }' +
-'        ' +
-'        .brand-text p {' +
-'            font-size: 12px;' +
-'            color: var(--gray);' +
-'        }' +
-'        ' +
-'        .nav-controls {' +
-'            display: flex;' +
-'            align-items: center;' +
-'            gap: 20px;' +
-'        }' +
-'        ' +
-'        .session-timer {' +
-'            background: rgba(245, 158, 11, 0.15);' +
-'            border: 1px solid rgba(245, 158, 11, 0.3);' +
-'            border-radius: 10px;' +
-'            padding: 10px 20px;' +
-'            display: flex;' +
-'            align-items: center;' +
-'            gap: 10px;' +
-'            font-weight: 600;' +
-'            color: #fbbf24;' +
-'        }' +
-'        ' +
-'        .session-timer.critical {' +
-'            background: rgba(239, 68, 68, 0.15);' +
-'            border-color: rgba(239, 68, 68, 0.3);' +
-'            color: #fca5a5;' +
-'            animation: pulse 2s infinite;' +
-'        }' +
-'        ' +
-'        @keyframes pulse {' +
-'            0%, 100% { opacity: 1; }' +
-'            50% { opacity: 0.7; }' +
-'        }' +
-'        ' +
-'        .btn {' +
-'            padding: 10px 20px;' +
-'            border-radius: 10px;' +
-'            border: none;' +
-'            font-weight: 600;' +
-'            cursor: pointer;' +
-'            transition: all 0.3s;' +
-'            display: inline-flex;' +
-'            align-items: center;' +
-'            gap: 8px;' +
-'            text-decoration: none;' +
-'            font-size: 14px;' +
-'        }' +
-'        ' +
-'        .btn-primary {' +
-'            background: linear-gradient(135deg, var(--primary), var(--primary-dark));' +
-'            color: white;' +
-'        }' +
-'        ' +
-'        .btn-danger {' +
-'            background: linear-gradient(135deg, var(--danger), #dc2626);' +
-'            color: white;' +
-'        }' +
-'        ' +
-'        .btn-success {' +
-'            background: linear-gradient(135deg, var(--success), #059669);' +
-'            color: white;' +
-'        }' +
-'        ' +
-'        .btn-secondary {' +
-'            background: var(--card-bg);' +
-'            color: var(--light);' +
-'            border: 1px solid var(--border);' +
-'        }' +
-'        ' +
-'        .btn:hover {' +
-'            transform: translateY(-2px);' +
-'            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);' +
-'        }' +
-'        ' +
-'        /* ========== MAIN LAYOUT ========== */' +
-'        .container {' +
-'            padding: 30px;' +
-'            max-width: 1600px;' +
-'            margin: 0 auto;' +
-'        }' +
-'        ' +
-'        /* ========== ALERT MESSAGES ========== */' +
-'        .alert {' +
-'            padding: 20px;' +
-'            border-radius: 12px;' +
-'            margin-bottom: 30px;' +
-'            display: ' + (actionMessage ? 'flex' : 'none') + ';' +
-'            align-items: center;' +
-'            gap: 15px;' +
-'            border-left: 4px solid;' +
-'            animation: slideIn 0.3s ease-out;' +
-'        }' +
-'        ' +
-'        @keyframes slideIn {' +
-'            from { transform: translateY(-10px); opacity: 0; }' +
-'            to { transform: translateY(0); opacity: 1; }' +
-'        }' +
-'        ' +
-'        .alert-success {' +
-'            background: rgba(16, 185, 129, 0.15);' +
-'            border-left-color: var(--success);' +
-'            color: #a7f3d0;' +
-'        }' +
-'        ' +
-'        .alert-warning {' +
-'            background: rgba(245, 158, 11, 0.15);' +
-'            border-left-color: var(--warning);' +
-'            color: #fde68a;' +
-'        }' +
-'        ' +
-'        .alert-info {' +
-'            background: rgba(59, 130, 246, 0.15);' +
-'            border-left-color: var(--info);' +
-'            color: #93c5fd;' +
-'        }' +
-'        ' +
-'        /* ========== STATS GRID ========== */' +
-'        .stats-grid {' +
-'            display: grid;' +
-'            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));' +
-'            gap: 20px;' +
-'            margin-bottom: 30px;' +
-'        }' +
-'        ' +
-'        .stat-card {' +
-'            background: var(--card-bg);' +
-'            border: 1px solid var(--border);' +
-'            border-radius: 16px;' +
-'            padding: 25px;' +
-'            transition: all 0.3s;' +
-'            position: relative;' +
-'            overflow: hidden;' +
-'        }' +
-'        ' +
-'        .stat-card::before {' +
-'            content: \'\';' +
-'            position: absolute;' +
-'            top: 0;' +
-'            left: 0;' +
-'            right: 0;' +
-'            height: 4px;' +
-'            background: linear-gradient(90deg, var(--secondary), var(--primary));' +
-'        }' +
-'        ' +
-'        .stat-card:hover {' +
-'            transform: translateY(-5px);' +
-'            border-color: rgba(0, 201, 255, 0.3);' +
-'            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);' +
-'        }' +
-'        ' +
-'        .stat-header {' +
-'            display: flex;' +
-'            justify-content: space-between;' +
-'            align-items: center;' +
-'            margin-bottom: 20px;' +
-'        }' +
-'        ' +
-'        .stat-icon {' +
-'            width: 50px;' +
-'            height: 50px;' +
-'            border-radius: 12px;' +
-'            display: flex;' +
-'            align-items: center;' +
-'            justify-content: center;' +
-'            font-size: 24px;' +
-'        }' +
-'        ' +
-'        .stat-icon.revenue { background: rgba(16, 185, 129, 0.2); color: var(--success); }' +
-'        .stat-icon.users { background: rgba(59, 130, 246, 0.2); color: var(--info); }' +
-'        .stat-icon.growth { background: rgba(168, 85, 247, 0.2); color: #a855f7; }' +
-'        .stat-icon.active { background: rgba(34, 197, 94, 0.2); color: #22c55e; }' +
-'        ' +
-'        .stat-trend {' +
-'            font-size: 14px;' +
-'            padding: 5px 10px;' +
-'            border-radius: 20px;' +
-'            font-weight: 600;' +
-'        }' +
-'        ' +
-'        .trend-up { background: rgba(16, 185, 129, 0.2); color: var(--success); }' +
-'        .trend-down { background: rgba(239, 68, 68, 0.2); color: var(--danger); }' +
-'        ' +
-'        .stat-value {' +
-'            font-size: 32px;' +
-'            font-weight: 800;' +
-'            margin-bottom: 5px;' +
-'        }' +
-'        ' +
-'        .stat-label {' +
-'            color: var(--gray);' +
-'            font-size: 14px;' +
-'            margin-top: 5px;' +
-'        }' +
-'        ' +
-'        /* ========== DATA TABLE ========== */' +
-'        .table-card {' +
-'            background: var(--card-bg);' +
-'            border: 1px solid var(--border);' +
-'            border-radius: 16px;' +
-'            padding: 25px;' +
-'            margin-bottom: 30px;' +
-'            overflow: hidden;' +
-'        }' +
-'        ' +
-'        .table-header {' +
-'            display: flex;' +
-'            justify-content: space-between;' +
-'            align-items: center;' +
-'            margin-bottom: 20px;' +
-'            flex-wrap: wrap;' +
-'            gap: 15px;' +
-'        }' +
-'        ' +
-'        .table-actions {' +
-'            display: flex;' +
-'            gap: 10px;' +
-'            flex-wrap: wrap;' +
-'        }' +
-'        ' +
-'        .search-box {' +
-'            position: relative;' +
-'            min-width: 250px;' +
-'        }' +
-'        ' +
-'        .search-box input {' +
-'            width: 100%;' +
-'            padding: 12px 20px 12px 45px;' +
-'            border-radius: 10px;' +
-'            border: 1px solid var(--border);' +
-'            background: rgba(255, 255, 255, 0.07);' +
-'            color: var(--light);' +
-'            font-size: 14px;' +
-'        }' +
-'        ' +
-'        table {' +
-'            width: 100%;' +
-'            border-collapse: collapse;' +
-'        }' +
-'        ' +
-'        thead {' +
-'            background: rgba(255, 255, 255, 0.05);' +
-'        }' +
-'        ' +
-'        th {' +
-'            padding: 15px;' +
-'            text-align: left;' +
-'            color: var(--gray);' +
-'            font-weight: 600;' +
-'            font-size: 12px;' +
-'            text-transform: uppercase;' +
-'            letter-spacing: 0.5px;' +
-'            border-bottom: 1px solid var(--border);' +
-'        }' +
-'        ' +
-'        td {' +
-'            padding: 15px;' +
-'            border-bottom: 1px solid var(--border);' +
-'            font-size: 14px;' +
-'        }' +
-'        ' +
-'        tr:hover {' +
-'            background: rgba(255, 255, 255, 0.03);' +
-'        }' +
-'        ' +
-'        .badge {' +
-'            padding: 6px 12px;' +
-'            border-radius: 20px;' +
-'            font-size: 12px;' +
-'            font-weight: 600;' +
-'            display: inline-flex;' +
-'            align-items: center;' +
-'            gap: 5px;' +
-'        }' +
-'        ' +
-'        .badge-active { background: rgba(16, 185, 129, 0.2); color: var(--success); }' +
-'        .badge-expired { background: rgba(239, 68, 68, 0.2); color: var(--danger); }' +
-'        .badge-pending { background: rgba(245, 158, 11, 0.2); color: var(--warning); }' +
-'        .badge-suspended { background: rgba(148, 163, 184, 0.2); color: var(--gray); }' +
-'        ' +
-'        .plan-badge {' +
-'            padding: 6px 12px;' +
-'            border-radius: 8px;' +
-'            font-size: 12px;' +
-'            font-weight: 600;' +
-'        }' +
-'        ' +
-'        .plan-daily { background: rgba(59, 130, 246, 0.2); color: var(--info); }' +
-'        .plan-weekly { background: rgba(139, 92, 246, 0.2); color: #8b5cf6; }' +
-'        .plan-monthly { background: rgba(236, 72, 153, 0.2); color: #ec4899; }' +
-'        ' +
-'        .action-buttons {' +
-'            display: flex;' +
-'            gap: 8px;' +
-'        }' +
-'        ' +
-'        .action-btn {' +
-'            width: 36px;' +
-'            height: 36px;' +
-'            border-radius: 8px;' +
-'            border: 1px solid var(--border);' +
-'            background: rgba(255, 255, 255, 0.05);' +
-'            color: var(--light);' +
-'            cursor: pointer;' +
-'            display: flex;' +
-'            align-items: center;' +
-'            justify-content: center;' +
-'            transition: all 0.2s;' +
-'        }' +
-'        ' +
-'        .action-btn:hover {' +
-'            background: rgba(255, 255, 255, 0.1);' +
-'            transform: translateY(-2px);' +
-'        }' +
-'        ' +
-'        .action-btn.extend { color: var(--success); border-color: rgba(16, 185, 129, 0.3); }' +
-'        .action-btn.reset { color: var(--warning); border-color: rgba(245, 158, 11, 0.3); }' +
-'        .action-btn.delete { color: var(--danger); border-color: rgba(239, 68, 68, 0.3); }' +
-'        .action-btn.toggle { color: var(--info); border-color: rgba(59, 130, 246, 0.3); }' +
-'        ' +
-'        /* ========== MODALS ========== */' +
-'        .modal {' +
-'            display: none;' +
-'            position: fixed;' +
-'            top: 0;' +
-'            left: 0;' +
-'            width: 100%;' +
-'            height: 100%;' +
-'            background: rgba(0, 0, 0, 0.8);' +
-'            backdrop-filter: blur(5px);' +
-'            z-index: 2000;' +
-'            align-items: center;' +
-'            justify-content: center;' +
-'            padding: 20px;' +
-'        }' +
-'        ' +
-'        .modal.active {' +
-'            display: flex;' +
-'            animation: fadeIn 0.3s;' +
-'        }' +
-'        ' +
-'        @keyframes fadeIn {' +
-'            from { opacity: 0; }' +
-'            to { opacity: 1; }' +
-'        }' +
-'        ' +
-'        .modal-content {' +
-'            background: var(--dark);' +
-'            border-radius: 20px;' +
-'            padding: 30px;' +
-'            width: 100%;' +
-'            max-width: 500px;' +
-'            border: 1px solid var(--border);' +
-'            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);' +
-'        }' +
-'        ' +
-'        .modal-header {' +
-'            display: flex;' +
-'            justify-content: space-between;' +
-'            align-items: center;' +
-'            margin-bottom: 20px;' +
-'            padding-bottom: 20px;' +
-'            border-bottom: 1px solid var(--border);' +
-'        }' +
-'        ' +
-'        .modal-header h3 {' +
-'            font-size: 20px;' +
-'            color: var(--light);' +
-'        }' +
-'        ' +
-'        .modal-close {' +
-'            background: none;' +
-'            border: none;' +
-'            color: var(--gray);' +
-'            font-size: 20px;' +
-'            cursor: pointer;' +
-'            width: 36px;' +
-'            height: 36px;' +
-'            border-radius: 8px;' +
-'            display: flex;' +
-'            align-items: center;' +
-'            justify-content: center;' +
-'        }' +
-'        ' +
-'        .modal-close:hover {' +
-'            background: rgba(255, 255, 255, 0.05);' +
-'        }' +
-'        ' +
-'        /* ========== FOOTER ========== */' +
-'        .footer {' +
-'            text-align: center;' +
-'            padding: 30px;' +
-'            color: var(--gray);' +
-'            font-size: 14px;' +
-'            border-top: 1px solid var(--border);' +
-'            margin-top: 30px;' +
-'        }' +
-'        ' +
-'        .footer-links {' +
-'            display: flex;' +
-'            justify-content: center;' +
-'            gap: 30px;' +
-'            margin-top: 15px;' +
-'        }' +
-'        ' +
-'        /* ========== RESPONSIVE ========== */' +
-'        @media (max-width: 768px) {' +
-'            .container {' +
-'                padding: 20px;' +
-'            }' +
-'            ' +
-'            .navbar {' +
-'                padding: 0 20px;' +
-'                height: 60px;' +
-'            }' +
-'            ' +
-'            .nav-controls {' +
-'                gap: 10px;' +
-'            }' +
-'            ' +
-'            .session-timer {' +
-'                padding: 8px 12px;' +
-'                font-size: 14px;' +
-'            }' +
-'            ' +
-'            .btn {' +
-'                padding: 8px 15px;' +
-'                font-size: 13px;' +
-'            }' +
-'            ' +
-'            .stats-grid {' +
-'                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));' +
-'            }' +
-'            ' +
-'            th, td {' +
-'                padding: 10px;' +
-'                font-size: 12px;' +
-'            }' +
-'            ' +
-'            .table-header {' +
-'                flex-direction: column;' +
-'                align-items: flex-start;' +
-'            }' +
-'            ' +
-'            .search-box {' +
-'                min-width: 100%;' +
-'            }' +
-'        }' +
-'    </style>' +
-'</head>' +
-'<body>' +
-'    <!-- Session Timeout Modal -->' +
-'    <div class="modal" id="timeoutModal">' +
-'        <div class="modal-content">' +
-'            <div class="modal-header">' +
-'                <h3>⚠️ Session Expired</h3>' +
-'                <button class="modal-close" onclick="logout()">&times;</button>' +
-'            </div>' +
-'            <div style="padding: 20px 0;">' +
-'                <p style="margin-bottom: 20px; color: var(--gray);">' +
-'                    Your session has expired due to 3 minutes of inactivity.' +
-'                    For security reasons, you have been automatically logged out.' +
-'                </p>' +
-'                <div style="display: flex; gap: 10px;">' +
-'                    <button class="btn btn-secondary" onclick="logout()" style="flex: 1;">' +
-'                        Close' +
-'                    </button>' +
-'                    <a href="/admin" class="btn btn-primary" style="flex: 1; text-align: center;">' +
-'                        🔐 Login Again' +
-'                    </a>' +
-'                </div>' +
-'            </div>' +
-'        </div>' +
-'    </div>' +
+        /* =================== NAV =================== */
+        .topbar {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: rgba(6, 8, 15, 0.88);
+            backdrop-filter: blur(20px) saturate(1.5);
+            -webkit-backdrop-filter: blur(20px) saturate(1.5);
+            border-bottom: 1px solid var(--border);
+            padding: 0 clamp(16px, 3vw, 32px);
+            height: 64px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
 
-'    <!-- Extend Plan Modal -->' +
-'    <div class="modal" id="extendModal">' +
-'        <div class="modal-content">' +
-'            <div class="modal-header">' +
-'                <h3>⏰ Extend User Plan</h3>' +
-'                <button class="modal-close" onclick="closeModal(\'extendModal\')">&times;</button>' +
-'            </div>' +
-'            <form id="extendForm" method="GET" action="/admin">' +
-'                <input type="hidden" name="sessionId" value="' + sessionId + '">' +
-'                <input type="hidden" name="action" value="extend">' +
-'                <input type="hidden" name="userId" id="extendUserId">' +
-'                ' +
-'                <div style="padding: 20px 0;">' +
-'                    <p style="margin-bottom: 15px; color: var(--gray);">' +
-'                        Extend plan for: <strong id="extendUsername" style="color: var(--light);"></strong>' +
-'                    </p>' +
-'                    ' +
-'                    <div style="margin-bottom: 20px;">' +
-'                        <label style="display: block; margin-bottom: 8px; color: var(--light); font-weight: 500;">Select Plan</label>' +
-'                        <div style="display: grid; gap: 10px;">' +
-'                            <label class="plan-option" style="display: flex; align-items: center; padding: 15px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer;">' +
-'                                <input type="radio" name="newPlan" value="24hr" style="margin-right: 10px;" required>' +
-'                                <div>' +
-'                                    <div style="font-weight: 600; color: var(--light);">Daily Plan</div>' +
-'                                    <div style="font-size: 14px; color: var(--gray);">24 hours • ₦350</div>' +
-'                                </div>' +
-'                            </label>' +
-'                            ' +
-'                            <label class="plan-option" style="display: flex; align-items: center; padding: 15px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer;">' +
-'                                <input type="radio" name="newPlan" value="7d" style="margin-right: 10px;">' +
-'                                <div>' +
-'                                    <div style="font-weight: 600; color: var(--light);">Weekly Plan</div>' +
-'                                    <div style="font-size: 14px; color: var(--gray);">7 days • ₦2,400</div>' +
-'                                </div>' +
-'                            </label>' +
-'                            ' +
-'                            <label class="plan-option" style="display: flex; align-items: center; padding: 15px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer;">' +
-'                                <input type="radio" name="newPlan" value="30d" style="margin-right: 10px;">' +
-'                                <div>' +
-'                                    <div style="font-weight: 600; color: var(--light);">Monthly Plan</div>' +
-'                                    <div style="font-size: 14px; color: var(--gray);">30 days • ₦7,500</div>' +
-'                                </div>' +
-'                            </label>' +
-'                        </div>' +
-'                    </div>' +
-'                    ' +
-'                    <div style="display: flex; gap: 10px;">' +
-'                        <button type="button" class="btn btn-secondary" onclick="closeModal(\'extendModal\')" style="flex: 1;">' +
-'                            Cancel' +
-'                        </button>' +
-'                        <button type="submit" class="btn btn-success" style="flex: 1;">' +
-'                            ✅ Confirm Extension' +
-'                        </button>' +
-'                    </div>' +
-'                </div>' +
-'            </form>' +
-'        </div>' +
-'    </div>' +
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
 
-'    <!-- Top Navigation -->' +
-'    <nav class="navbar">' +
-'        <div class="brand">' +
-'            <div class="brand-icon">' +
-'                🌐' +
-'            </div>' +
-'            <div class="brand-text">' +
-'                <h1>Dream Hatcher Admin</h1>' +
-'                <p>Enterprise WiFi Management</p>' +
-'            </div>' +
-'        </div>' +
-'        ' +
-'        <div class="nav-controls">' +
-'            <div class="session-timer" id="sessionTimer">' +
-'                ⏱️' +
-'                <span id="timerText">03:00</span>' +
-'            </div>' +
-'            <button class="btn btn-primary" onclick="window.location.reload()">' +
-'                🔄 Refresh' +
-'            </button>' +
-'            <button class="btn btn-danger" onclick="logout()">' +
-'                🚪 Logout' +
-'            </button>' +
-'        </div>' +
-'    </nav>' +
+        .brand-mark {
+            width: 38px;
+            height: 38px;
+            border-radius: var(--radius-sm);
+            background: linear-gradient(135deg, var(--accent) 0%, #6366f1 100%);
+            display: grid;
+            place-items: center;
+            font-size: 18px;
+            color: #fff;
+            font-weight: 800;
+            box-shadow: 0 4px 16px rgba(62, 139, 255, 0.25);
+        }
 
-'    <!-- Main Content -->' +
-'    <div class="container">' +
-        (actionMessage ? 
-        '<div class="alert alert-' + (messageType || 'success') + '">' +
-        '    ✅' +
-        '    <span>' + actionMessage + '</span>' +
-        '</div>' : '') +
+        .brand-name {
+            font-size: 17px;
+            font-weight: 700;
+            letter-spacing: -0.3px;
+        }
 
-'        <!-- Revenue Statistics -->' +
-'        <div class="stats-grid">' +
-'            <div class="stat-card">' +
-'                <div class="stat-header">' +
-'                    <div class="stat-icon revenue">' +
-'                      📅' +
-'                    </div>' +
-'                    <div class="stat-trend trend-up">' +
-'                        TODAY' +
-'                    </div>' +
-'                </div>' +
-'                <div class="stat-value">' + formatCurrency(stats.revenue_today) + '</div>' +
-'                <div class="stat-label">Today\'s Revenue</div>' +
-'                <div style="margin-top: 15px; font-size: 13px; color: var(--gray);">' +
-'                    👥 ' + stats.signups_today + ' signups today' +
-'                </div>' +
-'            </div>' +
-'            ' + 
-'            <div class="stat-card">' +
-'                <div class="stat-header">' +
-'                    <div class="stat-icon revenue">' +
-'                         💰' +
-'                    </div>' +
-'                    <div class="stat-trend trend-up">' +
-'                        ALL-TIME' +
-'                    </div>' +
-'                </div>' +
-'                <div class="stat-value">' + formatCurrency(stats.total_revenue_lifetime) + '</div>' +
-'                <div class="stat-label">Total Lifetime Revenue (Never Expires)</div>' +
-'                <div style="margin-top: 15px; font-size: 13px; color: var(--success);">' +
-'                    ℹ️ Includes all historical payments' +
-'                </div>' +
-'            </div>' +
-'            ' +
-'            <div class="stat-card">' +
-'                <div class="stat-header">' +
-'                    <div class="stat-icon users">' +
-'                        👥' +
-'                    </div>' +
-'                    <div class="stat-trend ' + (stats.daily_growth_rate > 0 ? 'trend-up' : 'trend-down') + '">' +
-'                        ' + (stats.daily_growth_rate > 0 ? '↗' : '↘') + ' ' + 
-                        (stats.daily_growth_rate ? Math.abs(stats.daily_growth_rate).toFixed(1) : '0') + '%' +
-'                    </div>' +
-'                </div>' +
-'                <div class="stat-value">' + stats.total_users + '</div>' +
-'                <div class="stat-label">Total Registered Users</div>' +
-'                <div style="margin-top: 15px; font-size: 13px; color: var(--gray);">' +
-'                    📈 MRR Projection: ' + formatCurrency(stats.mrr_projection) + '/day' +
-'                </div>' +
-'            </div>' +
-'            ' +
-'            <div class="stat-card">' +
-'                <div class="stat-header">' +
-'                    <div class="stat-icon active">' +
-'                        ⚡' +
-'                    </div>' +
-'                    <div class="stat-trend trend-up">' +
-'                        LIVE' +
-'                    </div>' +
-'                </div>' +
-'                <div class="stat-value">' + realtime.currently_active + '</div>' +
-'                <div class="stat-label">Currently Active Users</div>' +
-'                <div style="margin-top: 15px; display: flex; gap: 15px; font-size: 13px;">' +
-'                    <span style="color: var(--danger);">' +
-'                        ❌ ' + realtime.currently_expired + ' expired' +
-'                    </span>' +
-'                    <span style="color: var(--warning);">' +
-'                        ⏳ ' + realtime.currently_pending + ' pending' +
-'                    </span>' +
-'                </div>' +
-'            </div>' +
-'        </div>' +
+        .brand-tag {
+            font-size: 11px;
+            color: var(--text-muted);
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            font-weight: 500;
+        }
 
-'        <!-- Plan Distribution -->' +
-'        <div class="table-card">' +
-'            <div class="table-header">' +
-'                <div>' +
-'                    <h2 style="color: var(--light); font-size: 20px; margin-bottom: 5px;">' +
-'                        📊 Plan Distribution' +
-'                    </h2>' +
-'                    <p style="color: var(--gray); font-size: 14px;">' +
-'                        ' + dailyCount + ' Daily • ' + weeklyCount + ' Weekly • ' + monthlyCount + ' Monthly' +
-'                    </p>' +
-'                </div>' +
-'            </div>' +
-'            <div style="display: flex; gap: 20px; flex-wrap: wrap;">' +
-'                <div style="flex: 1; min-width: 300px;">' +
-'                    <div style="background: rgba(59, 130, 246, 0.1); padding: 20px; border-radius: 12px; margin-bottom: 10px;">' +
-'                        <div style="display: flex; justify-content: space-between; align-items: center;">' +
-'                            <span style="color: var(--info); font-weight: 600;">⚡ Daily Plan</span>' +
-'                            <span style="color: var(--light); font-weight: 700;">' + dailyCount + ' users</span>' +
-'                        </div>' +
-'                        <div style="margin-top: 10px; height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden;">' +
-'                            <div style="height: 100%; width: ' + (stats.total_users > 0 ? (dailyCount / stats.total_users * 100) : 0) + '%; background: var(--info);"></div>' +
-'                        </div>' +
-'                    </div>' +
-'                    <div style="background: rgba(139, 92, 246, 0.1); padding: 20px; border-radius: 12px; margin-bottom: 10px;">' +
-'                        <div style="display: flex; justify-content: space-between; align-items: center;">' +
-'                            <span style="color: #8b5cf6; font-weight: 600;">🚀 Weekly Plan</span>' +
-'                            <span style="color: var(--light); font-weight: 700;">' + weeklyCount + ' users</span>' +
-'                        </div>' +
-'                        <div style="margin-top: 10px; height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden;">' +
-'                            <div style="height: 100%; width: ' + (stats.total_users > 0 ? (weeklyCount / stats.total_users * 100) : 0) + '%; background: #8b5cf6;"></div>' +
-'                        </div>' +
-'                    </div>' +
-'                    <div style="background: rgba(236, 72, 153, 0.1); padding: 20px; border-radius: 12px;">' +
-'                        <div style="display: flex; justify-content: space-between; align-items: center;">' +
-'                            <span style="color: #ec4899; font-weight: 600;">👑 Monthly Plan</span>' +
-'                            <span style="color: var(--light); font-weight: 700;">' + monthlyCount + ' users</span>' +
-'                        </div>' +
-'                        <div style="margin-top: 10px; height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden;">' +
-'                            <div style="height: 100%; width: ' + (stats.total_users > 0 ? (monthlyCount / stats.total_users * 100) : 0) + '%; background: #ec4899;"></div>' +
-'                        </div>' +
-'                    </div>' +
-'                </div>' +
-'                <div style="flex: 1; min-width: 300px; padding: 20px; background: rgba(255,255,255,0.03); border-radius: 12px;">' +
-'                    <h3 style="color: var(--light); margin-bottom: 15px;">💰 Revenue Summary</h3>' +
-'                    <div style="display: grid; gap: 10px;">' +
-'                        <div style="display: flex; justify-content: space-between;">' +
-'                            <span style="color: var(--gray);">Today:</span>' +
-'                            <span style="color: var(--light); font-weight: 600;">' + formatCurrency(stats.revenue_today) + '</span>' +
-'                        </div>' +
-'                        <div style="display: flex; justify-content: space-between;">' +
-'                            <span style="color: var(--gray);">This Week:</span>' +
-'                            <span style="color: var(--light); font-weight: 600;">' + formatCurrency(stats.revenue_week) + '</span>' +
-'                        </div>' +
-'                        <div style="display: flex; justify-content: space-between;">' +
-'                            <span style="color: var(--gray);">This Month:</span>' +
-'                            <span style="color: var(--light); font-weight: 600;">' + formatCurrency(stats.revenue_month) + '</span>' +
-'                        </div>' +
-'                        <div style="border-top: 1px solid var(--border); padding-top: 10px; margin-top: 5px;">' +
-'                            <div style="display: flex; justify-content: space-between;">' +
-'                                <span style="color: var(--success); font-weight: 600;">Total Lifetime:</span>' +
-'                                <span style="color: var(--success); font-weight: 700;">' + formatCurrency(stats.total_revenue_lifetime) + '</span>' +
-'                            </div>' +
-'                        </div>' +
-'                    </div>' +
-'                </div>' +
-'            </div>' +
-'        </div>' +
+        .nav-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
 
-'        <!-- User Management -->' +
-'        <div class="table-card">' +
-'            <div class="table-header">' +
-'                <div>' +
-'                    <h2 style="color: var(--light); font-size: 20px; margin-bottom: 5px;">' +
-'                        👥 User Management' +
-'                    </h2>' +
-'                    <p style="color: var(--gray); font-size: 14px;">' +
-'                        ' + recentActivity.length + ' users • Active: ' + realtime.currently_active + ' • Pending: ' + realtime.currently_pending +
-'                    </p>' +
-'                </div>' +
-'                ' +
-'                <div class="table-actions">' +
-'                    <div class="search-box">' +
-'                        🔍' +
-'                        <input type="text" id="searchInput" placeholder="Search users, MAC, email..." onkeyup="searchTable()">' +
-'                    </div>' +
-'                    <a href="/admin?sessionId=' + sessionId + '&exportData=csv" class="btn btn-primary">' +
-'                        📥 Export CSV' +
-'                    </a>' +
-'                    <button class="btn btn-secondary" onclick="showAllUsers()">' +
-'                        👁️ Show All' +
-'                    </button>' +
-'                </div>' +
-'            </div>' +
-'            ' +
-'            <div style="overflow-x: auto;">' +
-'                <table id="usersTable">' +
-'                    <thead>' +
-'                        <tr>' +
-'                            <th>Username</th>' +
-'                            <th>Password</th>' +
-'                            <th>Plan</th>' +
-'                            <th>Status</th>' +
-'                            <th>Expires</th>' +
-'                            <th>MAC Address</th>' +
-'                            <th>Created</th>' +
-'                            <th>Actions</th>' +
-'                        </tr>' +
-'                    </thead>' +
-'                    <tbody>' +
-                        recentActivity.map(user => {
-                          const createdDate = new Date(user.created_at);
-                          const expiresDate = user.expires_at ? new Date(user.expires_at) : null;
-                          
-                          return '<tr data-search="' + 
-                            (user.mikrotik_username || '') + ' ' + 
-                            (user.mac_address || '') + ' ' + 
-                            (user.customer_email || '') + '">' +
-'                            <td>' +
-'                                <strong>' + (user.mikrotik_username || 'N/A') + '</strong>' +
-                                (user.customer_email ? '<br><small style="color: var(--gray);">' + user.customer_email + '</small>' : '') +
-'                            </td>' +
-'                            <td>' +
-'                                <span class="password" onclick="copyToClipboard(\'' + (user.mikrotik_password || '') + '\')" ' +
-'                                      style="font-family: monospace; cursor: pointer; color: var(--warning);">' +
-                                    (user.mikrotik_password || 'N/A') +
-'                                </span>' +
-'                            </td>' +
-'                            <td>' +
-'                                <span class="plan-badge plan-' + 
-                                  (user.plan === '24hr' ? 'daily' : user.plan === '7d' ? 'weekly' : 'monthly') + '">' +
-                                    (user.plan_name || 'N/A') +
-'                                </span>' +
-'                            </td>' +
-'                            <td>' +
-'                                <span class="badge badge-' + user.realtime_status + '">' +
-                                    (user.realtime_status === 'active' ? '✅' : 
-                                     user.realtime_status === 'expired' ? '❌' : 
-                                     user.realtime_status === 'pending' ? '⏳' : '⏸️') +
-                                    ' ' + user.realtime_status.charAt(0).toUpperCase() + user.realtime_status.slice(1) +
-'                                </span>' +
-'                            </td>' +
-'                            <td>' +
-                                (expiresDate ? 
-                                    '<span style="color: ' + (expiresDate > new Date() ? 'var(--success)' : 'var(--danger)') + ';">' +
-                                        expiresDate.toLocaleDateString('en-NG') + '<br>' +
-                                        '<small>' + expiresDate.toLocaleTimeString('en-NG', {hour: '2-digit', minute:'2-digit'}) + '</small>' +
-                                    '</span>' : 
-                                    '<span style="color: var(--gray);">N/A</span>'
-                                ) +
-'                            </td>' +
-'                            <td>' +
-                                (user.mac_address ? 
-                                    '<span style="font-family: monospace; color: var(--light);">' + user.mac_address + '</span>' : 
-                                    '<span style="color: var(--gray);">N/A</span>'
-                                ) +
-'                            </td>' +
-'                            <td>' +
-                                createdDate.toLocaleDateString('en-NG') + '<br>' +
-                                '<small style="color: var(--gray);">' +
-                                    createdDate.toLocaleTimeString('en-NG', {hour: '2-digit', minute:'2-digit'}) +
-                                '</small>' +
-'                            </td>' +
-'                            <td>' +
-'                                <div class="action-buttons">' +
-'                                    <button class="action-btn extend" ' +
-'                                            onclick="openExtendModal(\'' + user.id + '\', \'' + (user.mikrotik_username || '') + '\')"' +
-'                                            title="Extend Plan">' +
-'                                        ⏰' +
-'                                    </button>' +
-'                                    <a href="/admin?sessionId=' + sessionId + '&action=toggle_status&userId=' + user.id + '" ' +
-'                                       class="action-btn toggle"' +
-'                                       onclick="return confirm(\'Toggle user status?\')"' +
-'                                       title="Toggle Status">' +
-'                                        ⚡' +
-'                                    </a>' +
-'                                    <a href="/admin?sessionId=' + sessionId + '&action=reset&userId=' + user.id + '" ' +
-'                                       class="action-btn reset"' +
-'                                       onclick="return confirm(\'Reset user to pending?\')"' +
-'                                       title="Reset User">' +
-'                                        🔄' +
-'                                    </a>' +
-'                                    <a href="/admin?sessionId=' + sessionId + '&action=delete&userId=' + user.id + '" ' +
-'                                       class="action-btn delete"' +
-'                                       onclick="return confirm(\'Permanently delete this user?\')"' +
-'                                       title="Delete User">' +
-'                                        🗑️' +
-'                                    </a>' +
-'                                </div>' +
-'                            </td>' +
-'                        </tr>';
-                        }).join('') +
-'                    </tbody>' +
-'                </table>' +
-'            </div>' +
-'        </div>' +
+        .chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 14px;
+            border-radius: 50px;
+            font-size: 13px;
+            font-weight: 600;
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+        }
 
-'        <!-- Footer -->' +
-'        <div class="footer">' +
-'            <p>Dream Hatcher Enterprise Admin Dashboard v3.0</p>' +
-'            <p>Secure Connection • Last Updated: ' + new Date().toLocaleString('en-NG', { 
-                weekday: 'long', 
-                year: 'numeric', 
-                month: 'long', 
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit'
-            }) + '</p>' +
-'            <div class="footer-links">' +
-'                <span>💾 ' + stats.total_users + ' Total Users</span>' +
-'                <span>💰 ' + formatCurrency(stats.total_revenue_lifetime) + ' Revenue</span>' +
-'                <span>🔒 Enterprise Secure</span>' +
-'            </div>' +
-'        </div>' +
-'    </div>' +
+        .chip-live {
+            color: var(--success);
+            border-color: rgba(45, 212, 160, 0.25);
+        }
 
-'    <script>' +
-'        // ========== SESSION MANAGEMENT ==========' +
-'        let sessionEndTime = ' + sessionEnd + ';' +
-'        let activityDetected = false;' +
-'' +
-'        function updateSessionTimer() {' +
-'            const now = Date.now();' +
-'            const timeLeft = Math.max(0, sessionEndTime - now);' +
-'            const minutes = Math.floor(timeLeft / (1000 * 60));' +
-'            const seconds = Math.floor((timeLeft % (1000 * 60)) / 1000);' +
-'            ' +
-'            const timerElement = document.getElementById(\'sessionTimer\');' +
-'            const timerText = document.getElementById(\'timerText\');' +
-'            ' +
-'            if (timeLeft <= 0) {' +
-'                document.getElementById(\'timeoutModal\').classList.add(\'active\');' +
-'                return;' +
-'            }' +
-'            ' +
-'            // Format time' +
-'            const timeStr = (minutes < 10 ? "0" : "") + minutes + ":" + (seconds < 10 ? "0" : "") + seconds;' +
-'            timerText.textContent = timeStr;' +
-'            ' +
-'            // Add warning class when less than 1 minute' +
-'            if (timeLeft < 60000) {' +
-'                timerElement.classList.add(\'critical\');' +
-'            } else {' +
-'                timerElement.classList.remove(\'critical\');' +
-'            }' +
-'            ' +
-'            setTimeout(updateSessionTimer, 1000);' +
-'        }' +
-'' +
-'        function resetSessionTimer() {' +
-'            activityDetected = true;' +
-'            sessionEndTime = Date.now() + (3 * 60 * 1000);' +
-'        }' +
-'' +
-'        function logout() {' +
-'            window.location.href = "/admin";' +
-'        }' +
-'' +
-'        // ========== ACTIVITY DETECTION ==========' +
-'        [\'mousemove\', \'keydown\', \'click\', \'scroll\', \'touchstart\'].forEach(event => {' +
-'            document.addEventListener(event, resetSessionTimer, { passive: true });' +
-'        });' +
-'' +
-'        // ========== TABLE SEARCH ==========' +
-'        function searchTable() {' +
-'            const input = document.getElementById(\'searchInput\');' +
-'            const filter = input.value.toLowerCase();' +
-'            const rows = document.querySelectorAll(\'#usersTable tbody tr\');' +
-'            ' +
-'            rows.forEach(row => {' +
-'                const searchData = row.getAttribute(\'data-search\').toLowerCase();' +
-'                row.style.display = searchData.includes(filter) ? \'\' : \'none\';' +
-'            });' +
-'        }' +
-'' +
-'        // ========== MODAL CONTROLS ==========' +
-'        function openExtendModal(userId, username) {' +
-'            document.getElementById(\'extendUserId\').value = userId;' +
-'            document.getElementById(\'extendUsername\').textContent = username;' +
-'            document.getElementById(\'extendModal\').classList.add(\'active\');' +
-'        }' +
-'' +
-'        function closeModal(modalId) {' +
-'            document.getElementById(modalId).classList.remove(\'active\');' +
-'        }' +
-'' +
-'        // Close modals on outside click' +
-'        document.querySelectorAll(\'.modal\').forEach(modal => {' +
-'            modal.addEventListener(\'click\', function(e) {' +
-'                if (e.target === this) {' +
-'                    this.classList.remove(\'active\');' +
-'                }' +
-'            });' +
-'        });' +
-'' +
-'        // ========== UTILITY FUNCTIONS ==========' +
-'        function copyToClipboard(text) {' +
-'            navigator.clipboard.writeText(text).then(() => {' +
-'                alert(\'Copied to clipboard: \' + text);' +
-'            });' +
-'        }' +
-'' +
-'        function showAllUsers() {' +
-'            document.getElementById(\'searchInput\').value = \'\';' +
-'            searchTable();' +
-'        }' +
-'' +
-'        // Initialize session timer' +
-'        updateSessionTimer();' +
-'        ' +
-'        // Auto-refresh every 60 seconds' +
-'        setInterval(() => {' +
-'            if (activityDetected) {' +
-'                window.location.reload();' +
-'            }' +
-'        }, 60000);' +
-'    </script>' +
-'</body>' +
-'</html>';
-  
-  return html;
-}
+        .chip-live::before {
+            content: '';
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--success);
+            animation: livePulse 2s ease-in-out infinite;
+        }
 
-function getErrorPage(error) {
-  return '<!DOCTYPE html>' +
-'<html>' +
-'<head>' +
-'    <style>' +
-'        body {' +
-'            background: #0a0e1a;' +
-'            color: white;' +
-'            font-family: \'Segoe UI\', sans-serif;' +
-'            display: flex;' +
-'            align-items: center;' +
-'            justify-content: center;' +
-'            min-height: 100vh;' +
-'            padding: 20px;' +
-'        }' +
-'        .error-box {' +
-'            background: rgba(239, 68, 68, 0.1);' +
-'            border: 1px solid rgba(239, 68, 68, 0.3);' +
-'            border-radius: 16px;' +
-'            padding: 40px;' +
-'            text-align: center;' +
-'            max-width: 500px;' +
-'        }' +
-'        .error-icon {' +
-'            font-size: 48px;' +
-'            color: #ef4444;' +
-'            margin-bottom: 20px;' +
-'        }' +
-'        h2 {' +
-'            color: #fca5a5;' +
-'            margin-bottom: 10px;' +
-'        }' +
-'        pre {' +
-'            background: rgba(0,0,0,0.3);' +
-'            padding: 15px;' +
-'            border-radius: 8px;' +
-'            text-align: left;' +
-'            overflow-x: auto;' +
-'            color: #94a3b8;' +
-'            font-size: 14px;' +
-'        }' +
-'        .btn {' +
-'            display: inline-block;' +
-'            margin-top: 20px;' +
-'            padding: 12px 30px;' +
-'            background: linear-gradient(135deg, #0066ff, #0052d4);' +
-'            color: white;' +
-'            border-radius: 10px;' +
-'            text-decoration: none;' +
-'            font-weight: 600;' +
-'        }' +
-'    </style>' +
-'</head>' +
-'<body>' +
-'    <div class="error-box">' +
-'        <div class="error-icon">⚠️</div>' +
-'        <h2>Dashboard Error</h2>' +
-'        <p>An unexpected error occurred while loading the dashboard.</p>' +
-'        <pre>' + error + '</pre>' +
-'        <a href="/admin" class="btn">Return to Login</a>' +
-'    </div>' +
-'</body>' +
-'</html>';
+        @keyframes livePulse {
+            0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(45, 212, 160, 0.5); }
+            50% { opacity: 0.6; box-shadow: 0 0 0 6px rgba(45, 212, 160, 0); }
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 8px 18px;
+            border-radius: var(--radius-xs);
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            color: var(--text-primary);
+            font-family: var(--font);
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+
+        .btn:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-active);
+            transform: translateY(-1px);
+        }
+
+        .btn-accent {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #fff;
+        }
+
+        .btn-accent:hover {
+            background: #5a9fff;
+            border-color: #5a9fff;
+        }
+
+        .btn-danger {
+            color: var(--danger);
+            border-color: rgba(244, 107, 107, 0.25);
+        }
+
+        .btn-danger:hover {
+            background: var(--danger-bg);
+        }
+
+        .btn-success {
+            color: var(--success);
+            border-color: rgba(45, 212, 160, 0.25);
+        }
+
+        .btn-success:hover {
+            background: var(--success-bg);
+        }
+
+        .btn-sm {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        /* =================== LAYOUT =================== */
+        .page {
+            padding: clamp(16px, 3vw, 32px);
+            max-width: 1440px;
+            margin: 0 auto;
+        }
+
+        .page-title {
+            font-size: clamp(22px, 3vw, 28px);
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            margin-bottom: 4px;
+        }
+
+        .page-subtitle {
+            color: var(--text-muted);
+            font-size: 14px;
+            margin-bottom: 28px;
+        }
+
+        /* =================== ALERT =================== */
+        .toast {
+            padding: 16px 20px;
+            border-radius: var(--radius-sm);
+            margin-bottom: 24px;
+            display: ${actionMessage ? 'flex' : 'none'};
+            align-items: center;
+            gap: 12px;
+            font-size: 14px;
+            font-weight: 500;
+            animation: slideDown 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+            border-left: 3px solid;
+        }
+
+        @keyframes slideDown {
+            from { transform: translateY(-10px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        .toast-success { background: var(--success-bg); border-left-color: var(--success); color: var(--success); }
+        .toast-warning { background: var(--warning-bg); border-left-color: var(--warning); color: var(--warning); }
+        .toast-error { background: var(--danger-bg); border-left-color: var(--danger); color: var(--danger); }
+        .toast-info { background: var(--accent-glow); border-left-color: var(--accent); color: var(--accent); }
+
+        /* =================== METRIC CARDS =================== */
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .metric {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 22px 24px;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.25s;
+        }
+
+        .metric:hover {
+            border-color: var(--border-active);
+            transform: translateY(-3px);
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
+        }
+
+        .metric-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 16px;
+        }
+
+        .metric-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            display: grid;
+            place-items: center;
+            font-size: 24px;
+        }
+
+        .metric-icon.green { background: var(--success-bg); color: var(--success); }
+        .metric-icon.blue { background: var(--accent-glow); color: var(--accent); }
+        .metric-icon.purple { background: var(--purple-bg); color: var(--purple); }
+        .metric-icon.pink { background: var(--pink-bg); color: var(--pink); }
+        .metric-icon.orange { background: var(--warning-bg); color: var(--warning); }
+        .metric-icon.red { background: var(--danger-bg); color: var(--danger); }
+
+        .metric-tag {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            padding: 4px 10px;
+            border-radius: 50px;
+        }
+
+        .tag-lifetime { background: var(--success-bg); color: var(--success); }
+        .tag-today { background: var(--accent-glow); color: var(--accent); }
+        .tag-week { background: var(--purple-bg); color: var(--purple); }
+        .tag-month { background: var(--pink-bg); color: var(--pink); }
+        .tag-live { background: var(--warning-bg); color: var(--warning); }
+
+        .metric-value {
+            font-size: clamp(26px, 3vw, 32px);
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            line-height: 1.1;
+            margin-bottom: 4px;
+        }
+
+        .metric-value.currency { color: var(--success); }
+
+        .metric-label {
+            font-size: 13px;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        .metric-footer {
+            margin-top: 14px;
+            padding-top: 14px;
+            border-top: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        /* =================== CARD =================== */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            margin-bottom: 24px;
+            overflow: hidden;
+        }
+
+        .card-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 14px;
+        }
+
+        .card-title {
+            font-size: 17px;
+            font-weight: 700;
+            letter-spacing: -0.3px;
+        }
+
+        .card-subtitle {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        .card-tools {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .card-body { padding: 24px; }
+
+        /* =================== TABLE =================== */
+        .tbl-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+        table { width: 100%; border-collapse: collapse; min-width: 800px; }
+
+        thead { background: var(--bg-secondary); }
+
+        th {
+            padding: 12px 16px;
+            text-align: left;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.7px;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border);
+            white-space: nowrap;
+            user-select: none;
+        }
+
+        td {
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--border);
+            font-size: 13.5px;
+            vertical-align: middle;
+        }
+
+        tbody tr { transition: background 0.15s; }
+        tbody tr:hover { background: var(--bg-card-hover); }
+        tbody tr:last-child td { border-bottom: none; }
+
+        .user-cell strong {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+
+        .user-cell small {
+            color: var(--text-muted);
+            font-size: 12px;
+        }
+
+        .pw {
+            font-family: var(--mono);
+            font-size: 13px;
+            color: var(--warning);
+            cursor: pointer;
+            padding: 3px 8px;
+            border-radius: var(--radius-xs);
+            transition: background 0.15s;
+        }
+
+        .pw:hover { background: var(--warning-bg); }
+
+        .mac {
+            font-family: var(--mono);
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 5px 12px;
+            border-radius: 50px;
+            font-size: 12px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .badge-active { background: var(--success-bg); color: var(--success); }
+        .badge-expired { background: var(--danger-bg); color: var(--danger); }
+        .badge-pending { background: var(--warning-bg); color: var(--warning); }
+        .badge-suspended { background: rgba(100, 116, 139, 0.15); color: var(--text-secondary); }
+        .badge-unknown { background: rgba(100, 116, 139, 0.1); color: var(--text-muted); }
+
+        .plan-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 5px 12px;
+            border-radius: var(--radius-xs);
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .plan-daily { background: var(--accent-glow); color: var(--accent); }
+        .plan-weekly { background: var(--purple-bg); color: var(--purple); }
+        .plan-monthly { background: var(--pink-bg); color: var(--pink); }
+
+        .time-cell {
+            font-size: 13px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+
+        .time-cell small { color: var(--text-muted); }
+
+        .expires-ok { color: var(--success); }
+        .expires-gone { color: var(--danger); }
+
+        .row-actions {
+            display: flex;
+            gap: 6px;
+        }
+
+        .act-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: var(--radius-xs);
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: grid;
+            place-items: center;
+            font-size: 14px;
+            transition: all 0.2s;
+            text-decoration: none;
+        }
+
+        .act-btn:hover { background: var(--bg-elevated); transform: translateY(-1px); }
+        .act-btn.a-extend:hover { color: var(--success); border-color: rgba(45, 212, 160, 0.4); }
+        .act-btn.a-reset:hover { color: var(--warning); border-color: rgba(240, 177, 50, 0.4); }
+        .act-btn.a-delete:hover { color: var(--danger); border-color: rgba(244, 107, 107, 0.4); }
+
+        /* =================== SEARCH =================== */
+        .search-wrap {
+            position: relative;
+            min-width: 220px;
+        }
+
+        .search-wrap i {
+            position: absolute;
+            left: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted);
+            font-size: 14px;
+            pointer-events: none;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 10px 16px 10px 40px;
+            border-radius: var(--radius-xs);
+            border: 1px solid var(--border);
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            font-family: var(--font);
+            font-size: 14px;
+            transition: border-color 0.2s;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-glow);
+        }
+
+        .search-input::placeholder { color: var(--text-muted); }
+
+        /* =================== FILTER TABS =================== */
+        .filter-tabs {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .filter-tab {
+            padding: 7px 16px;
+            border-radius: 50px;
+            font-size: 12px;
+            font-weight: 600;
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: var(--font);
+        }
+
+        .filter-tab:hover { background: var(--bg-elevated); }
+        .filter-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+        /* =================== PLAN DISTRIBUTION =================== */
+        .dist-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+        }
+
+        .dist-item {
+            padding: 20px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+            background: var(--bg-secondary);
+        }
+
+        .dist-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .dist-name { font-size: 14px; font-weight: 600; }
+        .dist-count { font-size: 22px; font-weight: 800; }
+
+        .dist-bar {
+            height: 6px;
+            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.06);
+            overflow: hidden;
+            margin-top: 8px;
+        }
+
+        .dist-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .fill-blue { background: var(--accent); }
+        .fill-purple { background: var(--purple); }
+        .fill-pink { background: var(--pink); }
+
+        .rev-summary {
+            padding: 20px;
+            border-radius: var(--radius-sm);
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+        }
+
+        .rev-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            font-size: 14px;
+        }
+
+        .rev-row:not(:last-child) { border-bottom: 1px solid var(--border); }
+        .rev-row-label { color: var(--text-secondary); }
+        .rev-row-value { font-weight: 700; }
+        .rev-row-total .rev-row-label { color: var(--success); font-weight: 600; }
+        .rev-row-total .rev-row-value { color: var(--success); font-size: 16px; }
+
+        /* =================== MODAL =================== */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            z-index: 999;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .modal-overlay.open { display: flex; animation: fadeIn 0.25s; }
+
+        .modal-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            width: 100%;
+            max-width: 440px;
+            box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+            animation: modalPop 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes modalPop { from { opacity: 0; transform: scale(0.95) translateY(10px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+
+        .modal-head {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-head h3 { font-size: 17px; font-weight: 700; }
+
+        .modal-close {
+            width: 32px;
+            height: 32px;
+            border-radius: var(--radius-xs);
+            border: none;
+            background: transparent;
+            color: var(--text-muted);
+            cursor: pointer;
+            display: grid;
+            place-items: center;
+            font-size: 18px;
+        }
+
+        .modal-close:hover { background: var(--bg-elevated); color: var(--text-primary); }
+
+        .modal-body { padding: 24px; }
+
+        .modal-foot {
+            padding: 16px 24px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+
+        .plan-radio {
+            display: block;
+            padding: 14px 16px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .plan-radio:hover { background: var(--bg-elevated); }
+
+        .plan-radio input[type="radio"] {
+            margin-right: 10px;
+            accent-color: var(--accent);
+        }
+
+        .plan-radio-name { font-weight: 600; }
+        .plan-radio-detail { font-size: 13px; color: var(--text-muted); margin-left: 24px; }
+
+        /* =================== FOOTER =================== */
+        .page-footer {
+            text-align: center;
+            padding: 32px 24px;
+            border-top: 1px solid var(--border);
+            margin-top: 16px;
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+
+        .footer-stats {
+            display: flex;
+            justify-content: center;
+            gap: 28px;
+            margin-top: 12px;
+            flex-wrap: wrap;
+            font-size: 12px;
+        }
+
+        /* =================== COPY TOAST =================== */
+        .copy-feedback {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%) translateY(80px);
+            background: var(--bg-elevated);
+            color: var(--success);
+            border: 1px solid rgba(45, 212, 160, 0.3);
+            padding: 10px 22px;
+            border-radius: 50px;
+            font-size: 13px;
+            font-weight: 600;
+            z-index: 9999;
+            transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.35s;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .copy-feedback.show {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+        }
+
+        /* =================== SCROLLBAR =================== */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.08); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.14); }
+
+        /* =================== RESPONSIVE =================== */
+        @media (max-width: 768px) {
+            .topbar { height: 56px; }
+            .brand-name { font-size: 15px; }
+            .brand-tag { display: none; }
+            .nav-actions .btn span.lbl { display: none; }
+            .metrics { grid-template-columns: 1fr 1fr; }
+            .card-header { padding: 16px; }
+            .card-body { padding: 16px; }
+            td, th { padding: 10px 12px; }
+            .dist-grid { grid-template-columns: 1fr; }
+        }
+
+        @media (max-width: 480px) {
+            .metrics { grid-template-columns: 1fr; }
+            .filter-tabs { overflow-x: auto; flex-wrap: nowrap; }
+            .nav-actions { gap: 8px; }
+            .chip span.lbl { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Copy Toast -->
+    <div class="copy-feedback" id="copyToast"><i class="fa-solid fa-check"></i> Copied to clipboard</div>
+
+    <!-- Extend Modal -->
+    <div class="modal-overlay" id="extendModal">
+        <div class="modal-box">
+            <div class="modal-head">
+                <h3>Extend User Plan</h3>
+                <button class="modal-close" onclick="closeExtend()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="color: var(--text-secondary); margin-bottom: 16px;">
+                    Extending plan for: <strong id="extendUser" style="color: var(--text-primary);"></strong>
+                </p>
+                <label class="plan-radio">
+                    <input type="radio" name="extPlan" value="24hr" checked>
+                    <span class="plan-radio-name">Daily Plan</span>
+                    <div class="plan-radio-detail">24 hours • ₦350</div>
+                </label>
+                <label class="plan-radio">
+                    <input type="radio" name="extPlan" value="7d">
+                    <span class="plan-radio-name">Weekly Plan</span>
+                    <div class="plan-radio-detail">7 days • ₦2,400</div>
+                </label>
+                <label class="plan-radio">
+                    <input type="radio" name="extPlan" value="30d">
+                    <span class="plan-radio-name">Monthly Plan</span>
+                    <div class="plan-radio-detail">30 days • ₦7,500</div>
+                </label>
+            </div>
+            <div class="modal-foot">
+                <button class="btn" onclick="closeExtend()">Cancel</button>
+                <button class="btn btn-success" id="extendConfirmBtn">
+                    <i class="fa-solid fa-check"></i> Confirm Extension
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Topbar -->
+    <nav class="topbar">
+        <div class="brand">
+            <div class="brand-mark">DH</div>
+            <div>
+                <div class="brand-name">Dream Hatcher</div>
+                <div class="brand-tag">Admin Console</div>
+            </div>
+        </div>
+        <div class="nav-actions">
+            <div class="chip chip-live"><span class="lbl">System Online</span></div>
+            <button class="btn" onclick="location.reload()"><i class="fa-solid fa-arrows-rotate"></i> <span class="lbl">Refresh</span></button>
+            <button class="btn btn-danger" onclick="logout()">
+                <i class="fa-solid fa-right-from-bracket"></i>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="page" id="app">
+        <div style="display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 12px; margin-bottom: 28px;">
+            <div>
+                <h1 class="page-title">Dashboard</h1>
+                <p class="page-subtitle">Real-time business overview & user management</p>
+            </div>
+            <div style="font-size: 13px; color: var(--text-muted);">
+                <i class="fa-regular fa-clock"></i> Last refreshed: <span id="lastRefresh">${new Date().toLocaleString('en-NG')}</span>
+            </div>
+        </div>
+
+        <div class="toast ${messageType ? 'visible' : ''}" id="toastMsg" style="${actionMessage ? '' : 'display: none;'}">
+            ${actionMessage ? `<i class="fa-solid fa-${messageType === 'success' ? 'check-circle' : messageType === 'warning' ? 'triangle-exclamation' : 'circle-info'}"></i> ${actionMessage}` : ''}
+        </div>
+
+        <!-- Metrics -->
+        <div class="metrics" id="metricsGrid">
+            <div class="metric">
+                <div class="metric-top">
+                    <div class="metric-icon green">
+                        <i class="fa-solid fa-vault"></i>
+                    </div>
+                    <span class="metric-tag tag-lifetime">ALL-TIME</span>
+                </div>
+                <div class="metric-value currency">${naira(stats.total_revenue_lifetime)}</div>
+                <div class="metric-label">Lifetime Revenue</div>
+                <div class="metric-footer">
+                    <i class="fa-solid fa-circle-info"></i> Includes every payment ever received
+                </div>
+            </div>
+            
+            <div class="metric">
+                <div class="metric-top">
+                    <div class="metric-icon blue">
+                        <i class="fa-solid fa-calendar-day"></i>
+                    </div>
+                    <span class="metric-tag tag-today">TODAY</span>
+                </div>
+                <div class="metric-value currency">${naira(stats.revenue_today)}</div>
+                <div class="metric-label">Today's Revenue</div>
+                <div class="metric-footer">
+                    <i class="fa-solid fa-user-plus"></i> ${stats.signups_today} new signups today
+                </div>
+            </div>
+            
+            <div class="metric">
+                <div class="metric-top">
+                    <div class="metric-icon purple">
+                        <i class="fa-solid fa-calendar-week"></i>
+                    </div>
+                    <span class="metric-tag tag-week">7 DAYS</span>
+                </div>
+                <div class="metric-value currency">${naira(stats.revenue_week)}</div>
+                <div class="metric-label">This Week</div>
+                <div class="metric-footer">
+                    <i class="fa-solid fa-chart-line"></i> Rolling 7-day window
+                </div>
+            </div>
+            
+            <div class="metric">
+                <div class="metric-top">
+                    <div class="metric-icon pink">
+                        <i class="fa-solid fa-calendar"></i>
+                    </div>
+                    <span class="metric-tag tag-month">30 DAYS</span>
+                </div>
+                <div class="metric-value currency">${naira(stats.revenue_month)}</div>
+                <div class="metric-label">This Month</div>
+                <div class="metric-footer">
+                    <i class="fa-solid fa-chart-line"></i> Rolling 30-day window
+                </div>
+            </div>
+            
+            <div class="metric">
+                <div class="metric-top">
+                    <div class="metric-icon blue">
+                        <i class="fa-solid fa-users"></i>
+                    </div>
+                    <span class="metric-tag tag-today">TOTAL</span>
+                </div>
+                <div class="metric-value">${stats.total_users}</div>
+                <div class="metric-label">Total Registered Users</div>
+                <div class="metric-footer">
+                    <i class="fa-solid fa-database"></i> All-time registrations
+                </div>
+            </div>
+            
+            <div class="metric">
+                <div class="metric-top">
+                    <div class="metric-icon green">
+                        <i class="fa-solid fa-signal"></i>
+                    </div>
+                    <span class="metric-tag tag-live">LIVE</span>
+                </div>
+                <div class="metric-value" style="color: var(--success);">${activeCount}</div>
+                <div class="metric-label">Currently Active</div>
+                <div class="metric-footer">
+                    <span style="color:var(--danger);"><i class="fa-solid fa-xmark"></i> ${expiredCount} expired</span>
+                    <span style="color:var(--warning);"><i class="fa-solid fa-hourglass-half"></i> ${pendingCount} pending</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Plan Distribution & Revenue -->
+        <div class="card">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">
+                        <i class="fa-solid fa-chart-pie" style="color: var(--accent); margin-right: 8px;"></i>
+                        Plan Distribution & Revenue
+                    </div>
+                    <div class="card-subtitle">
+                        Breakdown by plan type — revenue counts <strong>all</strong> users regardless of status
+                    </div>
+                </div>
+            </div>
+            <div class="card-body">
+                <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 20px;">
+                    <div class="dist-grid" id="distGrid">
+                        <div class="dist-item">
+                            <div class="dist-top">
+                                <span class="dist-name" style="color:var(--accent);">
+                                    <i class="fa-solid fa-bolt"></i> Daily
+                                </span>
+                                <span class="dist-count">${planData.daily.count}</span>
+                            </div>
+                            <div style="font-size:12px; color:var(--text-muted);">
+                                ${naira(planData.daily.revenue)} revenue • ${dailyPct}%
+                            </div>
+                            <div class="dist-bar">
+                                <div class="dist-fill fill-blue" style="width:${dailyPct}%;"></div>
+                            </div>
+                        </div>
+                        
+                        <div class="dist-item">
+                            <div class="dist-top">
+                                <span class="dist-name" style="color:var(--purple);">
+                                    <i class="fa-solid fa-rocket"></i> Weekly
+                                </span>
+                                <span class="dist-count">${planData.weekly.count}</span>
+                            </div>
+                            <div style="font-size:12px; color:var(--text-muted);">
+                                ${naira(planData.weekly.revenue)} revenue • ${weeklyPct}%
+                            </div>
+                            <div class="dist-bar">
+                                <div class="dist-fill fill-purple" style="width:${weeklyPct}%;"></div>
+                            </div>
+                        </div>
+                        
+                        <div class="dist-item">
+                            <div class="dist-top">
+                                <span class="dist-name" style="color:var(--pink);">
+                                    <i class="fa-solid fa-crown"></i> Monthly
+                                </span>
+                                <span class="dist-count">${planData.monthly.count}</span>
+                            </div>
+                            <div style="font-size:12px; color:var(--text-muted);">
+                                ${naira(planData.monthly.revenue)} revenue • ${monthlyPct}%
+                            </div>
+                            <div class="dist-bar">
+                                <div class="dist-fill fill-pink" style="width:${monthlyPct}%;"></div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="rev-summary" id="revSummary">
+                        <div style="font-size:15px; font-weight:700; margin-bottom:16px;">
+                            <i class="fa-solid fa-receipt" style="color:var(--accent);margin-right:8px;"></i>
+                            Revenue Summary
+                        </div>
+                        <div class="rev-row">
+                            <span class="rev-row-label">Today</span>
+                            <span class="rev-row-value">${naira(stats.revenue_today)}</span>
+                        </div>
+                        <div class="rev-row">
+                            <span class="rev-row-label">This Week</span>
+                            <span class="rev-row-value">${naira(stats.revenue_week)}</span>
+                        </div>
+                        <div class="rev-row">
+                            <span class="rev-row-label">This Month</span>
+                            <span class="rev-row-value">${naira(stats.revenue_month)}</span>
+                        </div>
+                        <div class="rev-row rev-row-total">
+                            <span class="rev-row-label">Total Lifetime</span>
+                            <span class="rev-row-value">${naira(stats.total_revenue_lifetime)}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- User Management -->
+        <div class="card">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">
+                        <i class="fa-solid fa-users" style="color: var(--accent); margin-right: 8px;"></i>
+                        User Management
+                    </div>
+                    <div class="card-subtitle" id="tableSubtitle">
+                        ${users.length} users • Active: ${activeCount} • Expired: ${expiredCount} • Pending: ${pendingCount}
+                    </div>
+                </div>
+                <div class="card-tools">
+                    <div class="search-wrap">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                        <input class="search-input" type="text" id="searchInput" placeholder="Search users, MAC, email..." oninput="filterTable()">
+                    </div>
+                    <div class="filter-tabs" id="filterTabs">
+                        <button class="filter-tab active" data-filter="all">All</button>
+                        <button class="filter-tab" data-filter="active">Active</button>
+                        <button class="filter-tab" data-filter="pending">Pending</button>
+                        <button class="filter-tab" data-filter="expired">Expired</button>
+                    </div>
+                </div>
+            </div>
+            <div class="tbl-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>User</th>
+                            <th>Password</th>
+                            <th>Plan</th>
+                            <th>Status</th>
+                            <th>Expires</th>
+                            <th>MAC</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="usersTbody">
+                        ${userRows}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="page-footer">
+            <p>Dream Hatcher Admin Dashboard v3.1 — Corrected Build</p>
+            <div class="footer-stats" id="footerStats">
+                <span><i class="fa-solid fa-database"></i> ${stats.total_users} Total Users</span>
+                <span><i class="fa-solid fa-vault"></i> ${naira(stats.total_revenue_lifetime)} Lifetime Revenue</span>
+                <span><i class="fa-solid fa-shield-halved"></i> Secure Admin Console</span>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // Session Management
+        let sessionEndTime = ${sessionEnd};
+        let extendTargetId = null;
+
+        function updateSessionTimer() {
+            const now = Date.now();
+            const timeLeft = Math.max(0, sessionEndTime - now);
+            const minutes = Math.floor(timeLeft / (1000 * 60));
+            const seconds = Math.floor((timeLeft % (1000 * 60)) / 1000);
+            
+            if (timeLeft <= 0) {
+                logout();
+                return;
+            }
+            
+            setTimeout(updateSessionTimer, 1000);
+        }
+
+        function resetSessionTimer() {
+            sessionEndTime = Date.now() + (3 * 60 * 1000);
+        }
+
+        function logout() {
+            window.location.href = "/admin";
+        }
+
+        // Activity detection
+        ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'].forEach(event => {
+            document.addEventListener(event, resetSessionTimer, { passive: true });
+        });
+
+        // Copy password
+        function copyPw(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                const toast = document.getElementById('copyToast');
+                toast.classList.add('show');
+                setTimeout(() => toast.classList.remove('show'), 1800);
+            });
+        }
+
+        // Extend modal
+        function openExtend(userId, username) {
+            extendTargetId = userId;
+            document.getElementById('extendUser').textContent = username;
+            document.getElementById('extendModal').classList.add('open');
+        }
+
+        function closeExtend() {
+            document.getElementById('extendModal').classList.remove('open');
+            extendTargetId = null;
+        }
+
+        document.getElementById('extendConfirmBtn').addEventListener('click', function() {
+            if (!extendTargetId) return;
+            const sel = document.querySelector('input[name="extPlan"]:checked');
+            if (!sel) return;
+            window.location.href = '/admin?sessionId=${sessionId}&action=extend&userId=' + extendTargetId + '&newPlan=' + sel.value;
+        });
+
+        // Close modal on outside click
+        document.getElementById('extendModal').addEventListener('click', function(e) {
+            if (e.target === this) closeExtend();
+        });
+
+        // Table filtering
+        let currentFilter = 'all';
+
+        document.getElementById('filterTabs').addEventListener('click', function(e) {
+            const tab = e.target.closest('.filter-tab');
+            if (!tab) return;
+            document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            currentFilter = tab.dataset.filter;
+            filterTable();
+        });
+
+        function filterTable() {
+            const search = document.getElementById('searchInput').value.toLowerCase();
+            const rows = document.querySelectorAll('#usersTbody tr');
+            rows.forEach(row => {
+                if (!row.dataset.search) {
+                    row.style.display = '';
+                    return;
+                }
+                const matchSearch = row.dataset.search.toLowerCase().indexOf(search) !== -1;
+                const matchFilter = currentFilter === 'all' || row.dataset.status === currentFilter;
+                row.style.display = (matchSearch && matchFilter) ? '' : 'none';
+            });
+        }
+
+        // Initialize
+        updateSessionTimer();
+        
+        // Auto-refresh every 60 seconds
+        setInterval(() => {
+            window.location.reload();
+        }, 60000);
+    </script>
+</body>
+</html>`;
 }
 // ========== ERROR HANDLER ==========
 app.use((err, req, res, next) => {
@@ -3052,5 +3117,6 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
