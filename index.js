@@ -1356,9 +1356,9 @@ app.get('/', (req, res) => {
 });
 
 // ============================================
-// DREAM HATCHER ENTERPRISE ADMIN DASHBOARD v3.1
-// Professional WiFi Management System
-// Bug-free, production-ready
+// DREAM HATCHER ENTERPRISE ADMIN DASHBOARD v3.2
+// Professional WiFi Management System with Admin Tracking
+// Complete integrated code - DO NOT TRUNCATE
 // ============================================
 
 // Security Configuration
@@ -1367,6 +1367,8 @@ const SESSION_TIMEOUT = 3 * 60 * 1000; // 3 minutes strict
 
 // Simple session storage (use Redis in production)
 const adminSessions = {};
+
+// ========== HELPER FUNCTIONS ==========
 
 // Helper: Format currency
 function naira(amount) {
@@ -1390,9 +1392,159 @@ function planLabel(plan) {
     return plan || 'Unknown';
 }
 
+// Helper: Escape HTML to prevent XSS
+function escapeHtml(text) {
+    if (!text) return '';
+    const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    return text.toString().replace(/[&<>"']/g, m => map[m]);
+}
+
+// ========== ADMIN LOGIN TRACKING FUNCTIONS ==========
+
+// Create admin_logs table if not exists (run this once)
+async function createAdminLogsTable() {
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS admin_logs (
+                id SERIAL PRIMARY KEY,
+                session_id VARCHAR(255) NOT NULL,
+                admin_ip VARCHAR(45) NOT NULL,
+                user_agent TEXT,
+                login_time TIMESTAMP DEFAULT NOW(),
+                logout_time TIMESTAMP,
+                last_activity TIMESTAMP DEFAULT NOW(),
+                is_active BOOLEAN DEFAULT true
+            );
+            
+            CREATE INDEX IF NOT EXISTS idx_admin_logs_session ON admin_logs(session_id);
+            CREATE INDEX IF NOT EXISTS idx_admin_logs_active ON admin_logs(is_active);
+            CREATE INDEX IF NOT EXISTS idx_admin_logs_time ON admin_logs(login_time DESC);
+        `);
+        console.log('Admin logs table ready');
+    } catch (error) {
+        console.error('Error creating admin logs table:', error);
+    }
+}
+
+// Initialize the table on startup
+createAdminLogsTable();
+
+// Log admin login
+async function logAdminLogin(sessionId, ip, userAgent) {
+    try {
+        await pool.query(
+            'INSERT INTO admin_logs (session_id, admin_ip, user_agent, login_time, last_activity, is_active) VALUES ($1, $2, $3, NOW(), NOW(), true)',
+            [sessionId, ip, userAgent]
+        );
+    } catch (error) {
+        console.error('Error logging admin login:', error);
+    }
+}
+
+// Update admin activity
+async function updateAdminActivity(sessionId) {
+    try {
+        await pool.query(
+            'UPDATE admin_logs SET last_activity = NOW() WHERE session_id = $1 AND is_active = true',
+            [sessionId]
+        );
+    } catch (error) {
+        console.error('Error updating admin activity:', error);
+    }
+}
+
+// Log admin logout
+async function logAdminLogout(sessionId) {
+    try {
+        await pool.query(
+            'UPDATE admin_logs SET logout_time = NOW(), is_active = false WHERE session_id = $1 AND is_active = true',
+            [sessionId]
+        );
+    } catch (error) {
+        console.error('Error logging admin logout:', error);
+    }
+}
+
+// Get current active admins
+async function getActiveAdmins() {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                session_id,
+                admin_ip,
+                user_agent,
+                login_time,
+                last_activity,
+                EXTRACT(EPOCH FROM (NOW() - last_activity)) as idle_seconds
+            FROM admin_logs 
+            WHERE is_active = true 
+            ORDER BY last_activity DESC
+            LIMIT 10
+        `);
+        return result.rows;
+    } catch (error) {
+        console.error('Error getting active admins:', error);
+        return [];
+    }
+}
+
+// Get admin login history
+async function getAdminLoginHistory(limit = 20) {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                session_id,
+                admin_ip,
+                user_agent,
+                login_time,
+                logout_time,
+                EXTRACT(EPOCH FROM (COALESCE(logout_time, NOW()) - login_time)) as session_duration_seconds,
+                is_active
+            FROM admin_logs 
+            ORDER BY login_time DESC
+            LIMIT $1
+        `, [limit]);
+        return result.rows;
+    } catch (error) {
+        console.error('Error getting admin history:', error);
+        return [];
+    }
+}
+
 // ========== ADMIN DASHBOARD ROUTE ==========
 app.get('/admin', async (req, res) => {
-    const { pwd, action, userId, newPlan, sessionId, exportData } = req.query;
+    const { pwd, action, userId, newPlan, sessionId, exportData, forceLogout } = req.query;
+    
+    // ========== FORCE LOGOUT OTHER SESSIONS ==========
+    if (forceLogout === 'all' && sessionId && adminSessions[sessionId]) {
+        try {
+            // Logout all other sessions except current one
+            Object.keys(adminSessions).forEach(key => {
+                if (key !== sessionId) {
+                    logAdminLogout(key);
+                    delete adminSessions[key];
+                }
+            });
+            
+            // Mark all other sessions as inactive in database
+            await pool.query(
+                'UPDATE admin_logs SET logout_time = NOW(), is_active = false WHERE session_id != $1 AND is_active = true',
+                [sessionId]
+            );
+            
+            // Redirect back with success message
+            return res.redirect(`/admin?sessionId=${sessionId}&action=force_logout_success`);
+        } catch (error) {
+            console.error('Force logout error:', error);
+            return res.redirect(`/admin?sessionId=${sessionId}&action=force_logout_error`);
+        }
+    }
     
     // ========== SESSION-BASED AUTH ==========
     if (sessionId && adminSessions[sessionId]) {
@@ -1400,6 +1552,8 @@ app.get('/admin', async (req, res) => {
         
         // Check session expiry
         if (Date.now() - session.lastActivity > SESSION_TIMEOUT) {
+            // Log logout
+            await logAdminLogout(sessionId);
             delete adminSessions[sessionId];
             return res.redirect('/admin?sessionExpired=true');
         }
@@ -1408,7 +1562,10 @@ app.get('/admin', async (req, res) => {
         session.lastActivity = Date.now();
         adminSessions[sessionId] = session;
         
-        // Handle admin actions
+        // Update activity in database
+        await updateAdminActivity(sessionId);
+        
+        // Continue with authenticated session
         return await handleAdminDashboard(req, res, sessionId);
     }
     
@@ -1420,148 +1577,19 @@ app.get('/admin', async (req, res) => {
             id: newSessionId,
             loggedInAt: new Date(),
             lastActivity: Date.now(),
-            ip: req.ip
+            ip: req.ip,
+            userAgent: req.headers['user-agent']
         };
+        
+        // Log admin login
+        await logAdminLogin(newSessionId, req.ip, req.headers['user-agent']);
         
         // Redirect with session ID
         return res.redirect(`/admin?sessionId=${newSessionId}`);
     }
     
     // ========== SHOW LOGIN FORM ==========
-    return res.send(`
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Portal • Dream Hatcher</title>
-    <style>
-        :root {
-            --bg-primary: #06080f;
-            --bg-secondary: #0c1019;
-            --bg-card: #111623;
-            --border: rgba(99, 130, 190, 0.12);
-            --text-primary: #e8edf5;
-            --text-secondary: #8494b2;
-            --accent: #3e8bff;
-            --success: #2dd4a0;
-            --danger: #f46b6b;
-        }
-        
-        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }
-        
-        body {
-            background: var(--bg-primary);
-            color: var(--text-primary);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }
-        
-        .login-container {
-            width: 100%;
-            max-width: 400px;
-        }
-        
-        .login-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 14px;
-            padding: 40px;
-            text-align: center;
-        }
-        
-        .logo {
-            font-size: 48px;
-            margin-bottom: 20px;
-            color: var(--accent);
-        }
-        
-        h1 {
-            font-size: 24px;
-            margin-bottom: 8px;
-            color: var(--text-primary);
-        }
-        
-        p {
-            color: var(--text-secondary);
-            margin-bottom: 30px;
-            font-size: 14px;
-        }
-        
-        .alert {
-            background: rgba(244, 107, 107, 0.1);
-            border: 1px solid rgba(244, 107, 107, 0.3);
-            color: var(--danger);
-            padding: 12px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            display: ${req.query.sessionExpired ? 'block' : 'none'};
-        }
-        
-        input {
-            width: 100%;
-            padding: 14px 18px;
-            border-radius: 10px;
-            border: 1px solid var(--border);
-            background: rgba(255, 255, 255, 0.05);
-            color: var(--text-primary);
-            font-size: 15px;
-            margin-bottom: 20px;
-        }
-        
-        input:focus {
-            outline: none;
-            border-color: var(--accent);
-        }
-        
-        button {
-            width: 100%;
-            padding: 15px;
-            border-radius: 10px;
-            border: none;
-            background: var(--accent);
-            color: white;
-            font-size: 15px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: opacity 0.2s;
-        }
-        
-        button:hover { opacity: 0.9; }
-        
-        .security-note {
-            margin-top: 25px;
-            font-size: 12px;
-            color: var(--text-secondary);
-        }
-    </style>
-</head>
-<body>
-    <div class="login-container">
-        <div class="login-card">
-            <div class="logo">🔐</div>
-            <h1>Dream Hatcher Admin</h1>
-            <p>Enterprise Admin Portal</p>
-            
-            <div class="alert">
-                ⚠️ Session expired. Please login again.
-            </div>
-            
-            <form method="GET" action="/admin">
-                <input type="password" name="pwd" placeholder="Enter admin password" required autofocus>
-                <button type="submit">Access Dashboard</button>
-            </form>
-            
-            <div class="security-note">
-                🔒 Session Timeout: 3 minutes • Secure Connection
-            </div>
-        </div>
-    </div>
-</body>
-</html>`);
+    return res.send(getLoginForm(req.query.sessionExpired));
 });
 
 // ========== ADMIN DASHBOARD HANDLER ==========
@@ -1618,6 +1646,17 @@ async function handleAdminDashboard(req, res, sessionId) {
             `);
             actionMessage = 'Cleaned up ' + result.rowCount + ' expired users';
             messageType = 'success';
+        }
+
+        // ========== FORCE LOGOUT SUCCESS MESSAGE ==========
+        if (action === 'force_logout_success') {
+            actionMessage = 'All other admin sessions have been terminated';
+            messageType = 'success';
+        }
+
+        if (action === 'force_logout_error') {
+            actionMessage = 'Error terminating other sessions';
+            messageType = 'error';
         }
 
         // ========== EXPORT CSV ==========
@@ -1770,6 +1809,10 @@ async function handleAdminDashboard(req, res, sessionId) {
             LIMIT 100
         `);
 
+        // 3. GET ACTIVE ADMIN SESSIONS
+        const activeAdmins = await getActiveAdmins();
+        const adminHistory = await getAdminLoginHistory(10);
+        
         const stats = metrics.rows[0];
         const users = recentActivity.rows;
         
@@ -1800,6 +1843,12 @@ async function handleAdminDashboard(req, res, sessionId) {
             });
         }
 
+        // Current session info
+        const currentSession = adminSessions[sessionId];
+        const currentAdminIdleSeconds = currentSession ? 
+            Math.floor((Date.now() - currentSession.lastActivity) / 1000) : 0;
+        const activeSessions = activeAdmins.length;
+
         // ========== RENDER DASHBOARD ==========
         res.send(renderDashboard({
             sessionId: sessionId,
@@ -1809,35 +1858,245 @@ async function handleAdminDashboard(req, res, sessionId) {
             expiredCount: expiredCount,
             pendingCount: pendingCount,
             planData: planData,
+            activeAdmins: activeAdmins,
+            adminHistory: adminHistory,
+            activeSessions: activeSessions,
+            currentAdminIdleSeconds: currentAdminIdleSeconds,
+            currentAdminIP: currentSession ? currentSession.ip : 'Unknown',
             actionMessage: actionMessage,
             messageType: messageType
         }));
 
     } catch (error) {
         console.error('Dashboard Error:', error);
-        res.status(500).send('Internal Server Error: ' + error.message);
+        res.status(500).send(getErrorPage(error.message));
     }
+}
+
+// ========== LOGIN FORM ==========
+function getLoginForm(sessionExpired) {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Portal • Dream Hatcher</title>
+    <style>
+        :root {
+            --bg-primary: #06080f;
+            --bg-secondary: #0c1019;
+            --bg-card: #111623;
+            --border: rgba(99, 130, 190, 0.12);
+            --text-primary: #e8edf5;
+            --text-secondary: #8494b2;
+            --accent: #3e8bff;
+            --success: #2dd4a0;
+            --danger: #f46b6b;
+        }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }
+        
+        body {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .login-container {
+            width: 100%;
+            max-width: 400px;
+        }
+        
+        .login-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 40px;
+            text-align: center;
+        }
+        
+        .logo {
+            font-size: 48px;
+            margin-bottom: 20px;
+            color: var(--accent);
+        }
+        
+        h1 {
+            font-size: 24px;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+        
+        p {
+            color: var(--text-secondary);
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .alert {
+            background: rgba(244, 107, 107, 0.1);
+            border: 1px solid rgba(244, 107, 107, 0.3);
+            color: var(--danger);
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: ${sessionExpired ? 'block' : 'none'};
+        }
+        
+        input {
+            width: 100%;
+            padding: 14px 18px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-primary);
+            font-size: 15px;
+            margin-bottom: 20px;
+        }
+        
+        input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        
+        button {
+            width: 100%;
+            padding: 15px;
+            border-radius: 10px;
+            border: none;
+            background: var(--accent);
+            color: white;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        
+        button:hover { opacity: 0.9; }
+        
+        .security-note {
+            margin-top: 25px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-card">
+            <div class="logo">🔐</div>
+            <h1>Dream Hatcher Admin</h1>
+            <p>Enterprise Admin Portal</p>
+            
+            <div class="alert">
+                ⚠️ Session expired. Please login again.
+            </div>
+            
+            <form method="GET" action="/admin">
+                <input type="password" name="pwd" placeholder="Enter admin password" required autofocus>
+                <button type="submit">Access Dashboard</button>
+            </form>
+            
+            <div class="security-note">
+                🔒 Session Timeout: 3 minutes • Secure Connection
+            </div>
+        </div>
+    </div>
+</body>
+</html>`;
+}
+
+// ========== ERROR PAGE ==========
+function getErrorPage(error) {
+    return `<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {
+            background: #0a0e1a;
+            color: white;
+            font-family: 'Segoe UI', sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .error-box {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 16px;
+            padding: 40px;
+            text-align: center;
+            max-width: 500px;
+        }
+        .error-icon {
+            font-size: 48px;
+            color: #ef4444;
+            margin-bottom: 20px;
+        }
+        h2 {
+            color: #fca5a5;
+            margin-bottom: 10px;
+        }
+        pre {
+            background: rgba(0,0,0,0.3);
+            padding: 15px;
+            border-radius: 8px;
+            text-align: left;
+            overflow-x: auto;
+            color: #94a3b8;
+            font-size: 14px;
+        }
+        .btn {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 12px 30px;
+            background: linear-gradient(135deg, #0066ff, #0052d4);
+            color: white;
+            border-radius: 10px;
+            text-decoration: none;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="error-box">
+        <div class="error-icon">⚠️</div>
+        <h2>Dashboard Error</h2>
+        <p>An unexpected error occurred while loading the dashboard.</p>
+        <pre>${error}</pre>
+        <a href="/admin" class="btn">Return to Login</a>
+    </div>
+</body>
+</html>`;
 }
 
 // ========== DASHBOARD RENDERER ==========
 function renderDashboard(data) {
-    const { sessionId, stats, users, activeCount, expiredCount, pendingCount, planData, actionMessage, messageType } = data;
+    const { 
+        sessionId, 
+        stats, 
+        users, 
+        activeCount, 
+        expiredCount, 
+        pendingCount, 
+        planData,
+        activeAdmins,
+        adminHistory,
+        activeSessions,
+        currentAdminIdleSeconds,
+        currentAdminIP,
+        actionMessage, 
+        messageType 
+    } = data;
     
     const now = new Date();
     const sessionEnd = now.getTime() + (3 * 60 * 1000);
-    
-    // Escape HTML
-    const escapeHtml = (text) => {
-        if (!text) return '';
-        const map = {
-            '&': '&amp;',
-            '<': '&lt;',
-            '>': '&gt;',
-            '"': '&quot;',
-            "'": '&#039;'
-        };
-        return text.toString().replace(/[&<>"']/g, m => map[m]);
-    };
     
     // Build user table rows
     let userRows = '';
@@ -1908,6 +2167,44 @@ function renderDashboard(data) {
             `;
         });
     }
+    
+    // Build admin sessions rows
+    let adminSessionsRows = '';
+    activeAdmins.forEach(admin => {
+        const loginTime = new Date(admin.login_time);
+        const lastActivity = new Date(admin.last_activity);
+        const idleMinutes = Math.floor(admin.idle_seconds / 60);
+        const idleSeconds = Math.floor(admin.idle_seconds % 60);
+        
+        adminSessionsRows += `
+            <tr style="${admin.session_id === sessionId ? 'background: rgba(167, 139, 250, 0.1);' : ''}">
+                <td style="padding: 10px; font-size: 12px;">
+                    ${admin.session_id.substring(0, 8)}...
+                    ${admin.session_id === sessionId ? '<span style="color: var(--success); font-size: 10px;"> (You)</span>' : ''}
+                </td>
+                <td style="padding: 10px; font-size: 12px; font-family: var(--mono);">
+                    ${admin.admin_ip}
+                </td>
+                <td style="padding: 10px; font-size: 12px;">
+                    ${loginTime.toLocaleTimeString('en-NG', {hour:'2-digit', minute:'2-digit'})}<br>
+                    <small style="color: var(--text-muted);">
+                        ${loginTime.toLocaleDateString('en-NG', {day:'numeric', month:'short'})}
+                    </small>
+                </td>
+                <td style="padding: 10px; font-size: 12px;">
+                    ${lastActivity.toLocaleTimeString('en-NG', {hour:'2-digit', minute:'2-digit'})}<br>
+                    <small style="color: var(--text-muted);">
+                        ${idleMinutes}m ago
+                    </small>
+                </td>
+                <td style="padding: 10px; font-size: 12px;">
+                    <span class="${admin.idle_seconds > 60 ? 'badge-expired' : 'badge-active'}" style="font-size: 10px; padding: 3px 8px;">
+                        ${idleMinutes}m ${idleSeconds}s
+                    </span>
+                </td>
+            </tr>
+        `;
+    });
     
     // Plan distribution percentages
     const totalUsers = Number(stats.total_users) || 1;
@@ -2732,13 +3029,92 @@ function renderDashboard(data) {
         </div>
     </div>
 
+    <!-- Admin Sessions Modal -->
+    <div class="modal-overlay" id="adminSessionsModal">
+        <div class="modal-box" style="max-width: 700px;">
+            <div class="modal-head">
+                <h3><i class="fa-solid fa-user-shield"></i> Active Admin Sessions</h3>
+                <button class="modal-close" onclick="closeModal('adminSessionsModal')">&times;</button>
+            </div>
+            <div class="modal-body" style="max-height: 400px; overflow-y: auto;">
+                <table style="width: 100%;">
+                    <thead>
+                        <tr>
+                            <th style="padding: 10px; font-size: 11px;">Session ID</th>
+                            <th style="padding: 10px; font-size: 11px;">IP Address</th>
+                            <th style="padding: 10px; font-size: 11px;">Login Time</th>
+                            <th style="padding: 10px; font-size: 11px;">Last Activity</th>
+                            <th style="padding: 10px; font-size: 11px;">Idle Time</th>
+                        </tr>
+                    </thead>
+                    <tbody id="adminSessionsBody">
+                        ${activeAdmins.length > 0 ? adminSessionsRows : `
+                            <tr>
+                                <td colspan="5" style="text-align: center; padding: 40px; color: var(--text-muted);">
+                                    <i class="fa-solid fa-user-slash" style="font-size: 24px; display: block; margin-bottom: 10px;"></i>
+                                    No active admin sessions
+                                </td>
+                            </tr>
+                        `}
+                    </tbody>
+                </table>
+                
+                ${adminHistory.length > 0 ? `
+                    <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid var(--border);">
+                        <h4 style="font-size: 14px; margin-bottom: 15px; color: var(--text-primary);">
+                            <i class="fa-solid fa-history"></i> Recent Login History
+                        </h4>
+                        <div style="display: grid; gap: 10px;">
+                            ${adminHistory.slice(0, 5).map(log => {
+                                const loginTime = new Date(log.login_time);
+                                const logoutTime = log.logout_time ? new Date(log.logout_time) : null;
+                                const durationHours = Math.floor(log.session_duration_seconds / 3600);
+                                const durationMinutes = Math.floor((log.session_duration_seconds % 3600) / 60);
+                                
+                                return `
+                                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: var(--bg-secondary); border-radius: 8px;">
+                                        <div>
+                                            <div style="font-size: 12px; font-weight: 600; color: ${log.is_active ? 'var(--success)' : 'var(--text-secondary)'};">
+                                                <i class="fa-solid fa-circle" style="font-size: 6px; vertical-align: middle;"></i>
+                                                ${log.admin_ip}
+                                            </div>
+                                            <div style="font-size: 11px; color: var(--text-muted);">
+                                                ${loginTime.toLocaleString('en-NG', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'})}
+                                            </div>
+                                        </div>
+                                        <div style="text-align: right;">
+                                            <div style="font-size: 11px; color: ${log.is_active ? 'var(--success)' : 'var(--text-muted)'};">
+                                                ${log.is_active ? 'Still active' : 'Session ended'}
+                                            </div>
+                                            <div style="font-size: 11px; color: var(--text-muted);">
+                                                ${durationHours}h ${durationMinutes}m
+                                            </div>
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+            </div>
+            <div class="modal-foot">
+                <button class="btn" onclick="closeModal('adminSessionsModal')">Close</button>
+                ${activeSessions > 1 ? `
+                    <button class="btn btn-danger" onclick="forceLogoutAll()">
+                        <i class="fa-solid fa-power-off"></i> Force Logout All Others
+                    </button>
+                ` : ''}
+            </div>
+        </div>
+    </div>
+
     <!-- Topbar -->
     <nav class="topbar">
         <div class="brand">
             <div class="brand-mark">DH</div>
             <div>
-                <div class="brand-name">Dream Hatcher Tech</div>
-                <div class="brand-tag">Admin Console For High Speed Internet Connectivity</div>
+                <div class="brand-name">Dream Hatcher</div>
+                <div class="brand-tag">Admin Console</div>
             </div>
         </div>
         <div class="nav-actions">
@@ -2763,11 +3139,12 @@ function renderDashboard(data) {
         </div>
 
         <div class="toast ${messageType ? 'visible' : ''}" id="toastMsg" style="${actionMessage ? '' : 'display: none;'}">
-            ${actionMessage ? `<i class="fa-solid fa-${messageType === 'success' ? 'check-circle' : messageType === 'warning' ? 'triangle-exclamation' : 'circle-info'}"></i> ${actionMessage}` : ''}
+            ${actionMessage ? `<i class="fa-solid fa-${messageType === 'success' ? 'check-circle' : messageType === 'warning' ? 'triangle-exclamation' : messageType === 'error' ? 'circle-xmark' : 'circle-info'}"></i> ${actionMessage}` : ''}
         </div>
 
-        <!-- Metrics -->
+        <!-- Metrics Grid -->
         <div class="metrics" id="metricsGrid">
+            <!-- Box 1: Lifetime Revenue -->
             <div class="metric">
                 <div class="metric-top">
                     <div class="metric-icon green">
@@ -2782,6 +3159,7 @@ function renderDashboard(data) {
                 </div>
             </div>
             
+            <!-- Box 2: Today's Revenue -->
             <div class="metric">
                 <div class="metric-top">
                     <div class="metric-icon blue">
@@ -2796,6 +3174,7 @@ function renderDashboard(data) {
                 </div>
             </div>
             
+            <!-- Box 3: Weekly Revenue -->
             <div class="metric">
                 <div class="metric-top">
                     <div class="metric-icon purple">
@@ -2810,6 +3189,7 @@ function renderDashboard(data) {
                 </div>
             </div>
             
+            <!-- Box 4: Monthly Revenue -->
             <div class="metric">
                 <div class="metric-top">
                     <div class="metric-icon pink">
@@ -2824,6 +3204,7 @@ function renderDashboard(data) {
                 </div>
             </div>
             
+            <!-- Box 5: Total Users -->
             <div class="metric">
                 <div class="metric-top">
                     <div class="metric-icon blue">
@@ -2838,6 +3219,7 @@ function renderDashboard(data) {
                 </div>
             </div>
             
+            <!-- Box 6: Active Users -->
             <div class="metric">
                 <div class="metric-top">
                     <div class="metric-icon green">
@@ -2850,6 +3232,26 @@ function renderDashboard(data) {
                 <div class="metric-footer">
                     <span style="color:var(--danger);"><i class="fa-solid fa-xmark"></i> ${expiredCount} expired</span>
                     <span style="color:var(--warning);"><i class="fa-solid fa-hourglass-half"></i> ${pendingCount} pending</span>
+                </div>
+            </div>
+            
+            <!-- NEW BOX 7: Admin Sessions -->
+            <div class="metric" onclick="showAdminSessions()" style="cursor: pointer;">
+                <div class="metric-top">
+                    <div class="metric-icon blue" style="background: var(--purple-bg); color: var(--purple);">
+                        <i class="fa-solid fa-user-shield"></i>
+                    </div>
+                    <span class="metric-tag" style="background: var(--purple-bg); color: var(--purple);">
+                        ACTIVE
+                    </span>
+                </div>
+                <div class="metric-value" style="color: var(--purple);">${activeSessions}</div>
+                <div class="metric-label">Admin Sessions</div>
+                <div class="metric-footer">
+                    <i class="fa-solid fa-location-dot"></i> ${currentAdminIP.substring(0, 15)}${currentAdminIP.length > 15 ? '...' : ''}
+                    <span style="margin-left: 10px;">
+                        <i class="fa-solid fa-clock"></i> ${Math.floor(currentAdminIdleSeconds / 60)}m idle
+                    </span>
                 </div>
             </div>
         </div>
@@ -2990,10 +3392,11 @@ function renderDashboard(data) {
 
         <!-- Footer -->
         <div class="page-footer">
-            <p>Dream Hatcher Tech ⓒ 2026</p>
+            <p>Dream Hatcher Admin Dashboard v3.2 — Complete with Admin Tracking</p>
             <div class="footer-stats" id="footerStats">
                 <span><i class="fa-solid fa-database"></i> ${stats.total_users} Total Users</span>
                 <span><i class="fa-solid fa-vault"></i> ${naira(stats.total_revenue_lifetime)} Lifetime Revenue</span>
+                <span><i class="fa-solid fa-user-shield"></i> ${activeSessions} Active Admin Sessions</span>
                 <span><i class="fa-solid fa-shield-halved"></i> Secure Admin Console</span>
             </div>
         </div>
@@ -3059,10 +3462,31 @@ function renderDashboard(data) {
             window.location.href = '/admin?sessionId=${sessionId}&action=extend&userId=' + extendTargetId + '&newPlan=' + sel.value;
         });
 
-        // Close modal on outside click
-        document.getElementById('extendModal').addEventListener('click', function(e) {
-            if (e.target === this) closeExtend();
+        // Admin sessions modal
+        function showAdminSessions() {
+            document.getElementById('adminSessionsModal').classList.add('open');
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.remove('open');
+        }
+
+        // Close modals on outside click
+        document.querySelectorAll('.modal-overlay').forEach(modal => {
+            modal.addEventListener('click', function(e) {
+                if (e.target === this) {
+                    if (this.id === 'extendModal') closeExtend();
+                    else if (this.id === 'adminSessionsModal') closeModal('adminSessionsModal');
+                }
+            });
         });
+
+        // Force logout all other sessions
+        function forceLogoutAll() {
+            if (confirm('Force logout all other admin sessions? Only you will remain logged in.')) {
+                window.location.href = '/admin?sessionId=${sessionId}&forceLogout=all';
+            }
+        }
 
         // Table filtering
         let currentFilter = 'all';
@@ -3117,7 +3541,3 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
-
-
-
-
