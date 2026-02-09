@@ -9,7 +9,6 @@ const app = express();
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 
 process.env.TZ = 'Africa/Lagos';  // Force Nigerian timezone
-require('dotenv').config();
 
 // Database connection to Supabase
 const pool = new Pool({
@@ -1076,53 +1075,73 @@ app.post('/api/mark-processed/:id', async (req, res) => {
   }
 });
 
-// ========== GET EXPIRED USERS (SILENT - for MikroTik) ==========
+// ========== EXPIRED USERS ENDPOINTS (MISSING IN ORIGINAL CODE - CRITICAL FIX) ==========
+
+// GET EXPIRED USERS - For MikroTik expiry script
 app.get('/api/expired-users', async (req, res) => {
   try {
     const apiKey = req.headers['x-api-key'] || req.query.api_key;
 
     if (!apiKey || apiKey !== process.env.MIKROTIK_API_KEY) {
+      console.warn('❌ Invalid or missing API key for expired-users endpoint');
       return res.status(403).send('');
     }
 
+    // Get users who are processed, have expiry time, and are expired (with 5 min buffer)
     const result = await pool.query(`
-  SELECT id, mikrotik_username, mac_address, expires_at
-  FROM payment_queue
-  WHERE status = 'processed'
-  AND expires_at IS NOT NULL
-  AND expires_at < NOW() - INTERVAL '10 minutes'  -- Add buffer to avoid race conditions
-  AND mikrotik_username IS NOT NULL
-  AND mikrotik_username != ''
-  LIMIT 50
-`);
+      SELECT 
+        id,
+        mikrotik_username,
+        mac_address,
+        expires_at,
+        status
+      FROM payment_queue
+      WHERE status = 'processed'
+      AND expires_at IS NOT NULL
+      AND expires_at < NOW() - INTERVAL '5 minutes'
+      AND mikrotik_username IS NOT NULL
+      AND mikrotik_username != ''
+      ORDER BY expires_at ASC
+      LIMIT 50
+    `);
 
     if (result.rows.length === 0) {
-      return res.send('');
+      console.log('📭 No expired users found');
+      return res.set('Content-Type', 'text/plain').send('');
     }
 
-    // Only log when there ARE expired users to process
-    console.log(`⏰ Found ${result.rows.length} expired user(s)`);
+    console.log(`⏰ Found ${result.rows.length} expired user(s) for MikroTik`);
 
-    const lines = result.rows.map(row => [
-      row.mikrotik_username || 'unknown',
-      row.mac_address || 'unknown',
-      row.expires_at.toISOString(),
-      row.id
-    ].join('|'));
+    const lines = result.rows.map(row => {
+      const expires = row.expires_at ? row.expires_at.toISOString() : '';
+      return [
+        row.mikrotik_username || 'unknown',
+        row.mac_address || 'unknown',
+        expires,
+        row.id
+      ].join('|');
+    });
 
+    const output = lines.join('\n');
     res.set('Content-Type', 'text/plain');
-    res.send(lines.join('\n'));
+    res.send(output);
 
   } catch (error) {
-    // Silent fail - just return empty
-    res.set('Content-Type', 'text/plain');
-    res.send('');
+    console.error('❌ /api/expired-users error:', error.message);
+    res.set('Content-Type', 'text/plain').send('');
   }
 });
 
-// ========== MARK USER AS EXPIRED (SILENT) ==========
+// MARK USER AS EXPIRED - Called by MikroTik after kicking user
 app.post('/api/mark-expired/:id', async (req, res) => {
   try {
+    const apiKey = req.headers['x-api-key'] || req.query.api_key;
+    
+    if (!apiKey || apiKey !== process.env.MIKROTIK_API_KEY) {
+      console.warn('❌ Invalid or missing API key for mark-expired');
+      return res.status(403).json({ success: false });
+    }
+
     let userId = req.params.id;
 
     // Extract ID from pipe-separated string if needed
@@ -1133,28 +1152,88 @@ app.post('/api/mark-expired/:id', async (req, res) => {
 
     const idNum = parseInt(userId);
 
-    // Silent validation fail
     if (isNaN(idNum) || idNum <= 0) {
+      console.error('❌ Invalid ID format for mark-expired:', userId);
       return res.json({ success: false });
     }
 
+    // Update user status to expired
     const result = await pool.query(
-      `UPDATE payment_queue SET status = 'expired' WHERE id = $1 AND status = 'processed' RETURNING mikrotik_username`,
+      `UPDATE payment_queue 
+       SET status = 'expired', 
+           mikrotik_username = mikrotik_username || '_expired'
+       WHERE id = $1 
+       AND (status = 'processed' OR status = 'pending')
+       RETURNING mikrotik_username, id`,
       [idNum]
     );
 
-    // Only log successful expirations
     if (result.rowCount > 0) {
-      console.log(`⏰ Expired: ${result.rows[0].mikrotik_username} (ID: ${idNum})`);
+      console.log(`✅ MikroTik: Expired user ${result.rows[0].mikrotik_username} (ID: ${result.rows[0].id})`);
       return res.json({ success: true, id: idNum });
     }
 
-    // Silent return if not found or already expired - no logging
-    return res.json({ success: false });
+    // Check if already expired
+    const checkResult = await pool.query(
+      `SELECT status FROM payment_queue WHERE id = $1`,
+      [idNum]
+    );
+
+    if (checkResult.rows.length > 0 && checkResult.rows[0].status === 'expired') {
+      console.log(`ℹ️ User ${idNum} already marked as expired`);
+      return res.json({ success: true, already_expired: true });
+    }
+
+    console.warn(`⚠️ User ${idNum} not found or not in processable state`);
+    return res.json({ success: false, error: 'User not found or invalid state' });
 
   } catch (error) {
-    // Silent fail
-    return res.json({ success: false });
+    console.error('❌ /api/mark-expired error:', error.message);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+// ========== EXPIRY SYNC ENDPOINT (For dashboard to sync with MikroTik) ==========
+app.get('/api/sync-expired', async (req, res) => {
+  try {
+    const apiKey = req.headers['x-api-key'] || req.query.api_key;
+    
+    if (!apiKey || apiKey !== process.env.MIKROTIK_API_KEY) {
+      return res.status(403).json({ success: false });
+    }
+
+    // Get all users that should be expired but aren't marked as expired
+    const result = await pool.query(`
+      SELECT 
+        id,
+        mikrotik_username,
+        mac_address,
+        expires_at,
+        status
+      FROM payment_queue
+      WHERE (status = 'processed' OR status = 'pending')
+      AND expires_at IS NOT NULL
+      AND expires_at < NOW()
+      AND mikrotik_username IS NOT NULL
+      ORDER BY expires_at ASC
+      LIMIT 100
+    `);
+
+    return res.json({
+      success: true,
+      count: result.rows.length,
+      users: result.rows.map(row => ({
+        id: row.id,
+        username: row.mikrotik_username,
+        mac: row.mac_address,
+        expires_at: row.expires_at,
+        status: row.status
+      }))
+    });
+
+  } catch (error) {
+    console.error('❌ /api/sync-expired error:', error.message);
+    return res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -1163,6 +1242,7 @@ app.get('/health', async (req, res) => {
   try {
     const dbResult = await pool.query('SELECT NOW()');
     const queueResult = await pool.query('SELECT COUNT(*) FROM payment_queue');
+    const expiredResult = await pool.query("SELECT COUNT(*) FROM payment_queue WHERE status = 'expired'");
 
     res.json({
       status: 'OK',
@@ -1170,8 +1250,15 @@ app.get('/health', async (req, res) => {
       database: 'connected',
       db_time: dbResult.rows[0].now,
       total_payments: queueResult.rows[0].count,
+      expired_users: expiredResult.rows[0].count,
       uptime: process.uptime(),
-      payment_provider: 'Monnify'
+      payment_provider: 'Monnify',
+      endpoints: {
+        mikrotik_queue: '/api/mikrotik-queue-text',
+        expired_users: '/api/expired-users',
+        mark_expired: '/api/mark-expired/:id',
+        sync_expired: '/api/sync-expired'
+      }
     });
   } catch (error) {
     res.status(500).json({
@@ -1416,20 +1503,58 @@ function escapeHtml(text) {
 
 async function createAdminLogsTable() {
     try {
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS admin_logs (
-                id SERIAL PRIMARY KEY,
-                username VARCHAR(50) NOT NULL,
-                role VARCHAR(20) NOT NULL,
-                session_id VARCHAR(255) NOT NULL,
-                admin_ip VARCHAR(45) NOT NULL,
-                user_agent TEXT,
-                login_time TIMESTAMP DEFAULT NOW(),
-                logout_time TIMESTAMP,
-                last_activity TIMESTAMP DEFAULT NOW(),
-                is_active BOOLEAN DEFAULT true
+        // First check if table exists
+        const tableCheck = await pool.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'admin_logs'
             );
         `);
+
+        if (tableCheck.rows[0].exists) {
+            // Table exists, check for columns and add if missing
+            const columns = await pool.query(`
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = 'admin_logs'
+            `);
+            
+            const columnNames = columns.rows.map(row => row.column_name);
+            
+            // Add missing columns if they don't exist
+            if (!columnNames.includes('username')) {
+                await pool.query(`ALTER TABLE admin_logs ADD COLUMN IF NOT EXISTS username VARCHAR(50) DEFAULT 'unknown'`);
+                console.log('✅ Added username column to admin_logs');
+            }
+            
+            if (!columnNames.includes('role')) {
+                await pool.query(`ALTER TABLE admin_logs ADD COLUMN IF NOT EXISTS role VARCHAR(20) DEFAULT 'unknown'`);
+                console.log('✅ Added role column to admin_logs');
+            }
+            
+            // Update any NULL values
+            await pool.query(`UPDATE admin_logs SET username = 'unknown' WHERE username IS NULL`);
+            await pool.query(`UPDATE admin_logs SET role = 'unknown' WHERE role IS NULL`);
+            
+        } else {
+            // Create table from scratch
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS admin_logs (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR(50) NOT NULL DEFAULT 'unknown',
+                    role VARCHAR(20) NOT NULL DEFAULT 'unknown',
+                    session_id VARCHAR(255) NOT NULL,
+                    admin_ip VARCHAR(45) NOT NULL,
+                    user_agent TEXT,
+                    login_time TIMESTAMP DEFAULT NOW(),
+                    logout_time TIMESTAMP,
+                    last_activity TIMESTAMP DEFAULT NOW(),
+                    is_active BOOLEAN DEFAULT true
+                );
+            `);
+            
+            console.log('✅ Created admin_logs table with proper schema');
+        }
         
         // Create indexes if they don't exist
         try {
@@ -1441,12 +1566,13 @@ async function createAdminLogsTable() {
             console.log('Indexes already exist or error creating them:', error.message);
         }
         
-        console.log('Admin logs table ready');
+        console.log('✅ Admin logs table ready and verified');
     } catch (error) {
-        console.log('Admin logs table already exists or error:', error.message);
+        console.log('Admin logs table setup error:', error.message);
     }
 }
 
+// Initialize admin logs table
 createAdminLogsTable();
 
 // Log admin login with unique user session
@@ -1469,7 +1595,7 @@ async function logAdminLogin(username, role, sessionId, ip, userAgent) {
         // Update tracking
         adminUserSessions[username] = sessionId;
     } catch (error) {
-        console.log('Logging admin login (non-critical):', error.message);
+        console.log('Logging admin login error:', error.message);
     }
 }
 
@@ -1481,7 +1607,7 @@ async function updateAdminActivity(sessionId) {
             [sessionId]
         );
     } catch (error) {
-        console.log('Updating admin activity (non-critical):', error.message);
+        console.log('Updating admin activity error:', error.message);
     }
 }
 
@@ -1503,47 +1629,15 @@ async function logAdminLogout(sessionId) {
             [sessionId]
         );
     } catch (error) {
-        console.log('Logging admin logout (non-critical):', error.message);
+        console.log('Logging admin logout error:', error.message);
     }
 }
 
 // Get active admins (unique by user) - FIXED QUERY
 async function getActiveAdmins() {
     try {
-        // First, check if username column exists
-        const tableCheck = await pool.query(`
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_name = 'admin_logs' 
-            AND column_name = 'username'
-        `);
-        
-        if (tableCheck.rows.length === 0) {
-            // Column doesn't exist, return simple session data
-            const result = await pool.query(`
-                SELECT 
-                    session_id,
-                    admin_ip,
-                    user_agent,
-                    login_time,
-                    last_activity,
-                    EXTRACT(EPOCH FROM (NOW() - last_activity)) as idle_seconds
-                FROM admin_logs 
-                WHERE is_active = true 
-                ORDER BY last_activity DESC
-            `);
-            
-            // Add default username and role for compatibility
-            return result.rows.map(row => ({
-                ...row,
-                username: 'Unknown',
-                role: 'unknown'
-            }));
-        }
-        
-        // Column exists, use the proper query
         const result = await pool.query(`
-            SELECT DISTINCT ON (username)
+            SELECT 
                 username,
                 role,
                 session_id,
@@ -1554,11 +1648,21 @@ async function getActiveAdmins() {
                 EXTRACT(EPOCH FROM (NOW() - last_activity)) as idle_seconds
             FROM admin_logs 
             WHERE is_active = true 
-            ORDER BY username, last_activity DESC
+            ORDER BY last_activity DESC
         `);
-        return result.rows;
+        
+        // Group by username to get unique sessions
+        const uniqueAdmins = {};
+        result.rows.forEach(row => {
+            if (!uniqueAdmins[row.username] || 
+                new Date(row.last_activity) > new Date(uniqueAdmins[row.username].last_activity)) {
+                uniqueAdmins[row.username] = row;
+            }
+        });
+        
+        return Object.values(uniqueAdmins);
     } catch (error) {
-        console.log('Getting active admins (non-critical):', error.message);
+        console.log('Getting active admins error:', error.message);
         return [];
     }
 }
@@ -1566,39 +1670,6 @@ async function getActiveAdmins() {
 // Get admin login history - FIXED QUERY
 async function getAdminLoginHistory(limit = 20) {
     try {
-        // First check if columns exist
-        const tableCheck = await pool.query(`
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_name = 'admin_logs' 
-            AND column_name IN ('username', 'role')
-        `);
-        
-        if (tableCheck.rows.length < 2) {
-            // Columns don't exist, use simple query
-            const result = await pool.query(`
-                SELECT 
-                    session_id as id,
-                    admin_ip,
-                    user_agent,
-                    login_time,
-                    logout_time,
-                    EXTRACT(EPOCH FROM (COALESCE(logout_time, NOW()) - login_time)) as session_duration_seconds,
-                    is_active
-                FROM admin_logs 
-                ORDER BY login_time DESC
-                LIMIT $1
-            `, [limit]);
-            
-            // Add default username and role
-            return result.rows.map(row => ({
-                ...row,
-                username: 'Unknown',
-                role: 'unknown'
-            }));
-        }
-        
-        // Columns exist, use proper query
         const result = await pool.query(`
             SELECT 
                 username,
@@ -1614,7 +1685,7 @@ async function getAdminLoginHistory(limit = 20) {
         `, [limit]);
         return result.rows;
     } catch (error) {
-        console.log('Getting admin history (non-critical):', error.message);
+        console.log('Getting admin history error:', error.message);
         return [];
     }
 }
@@ -1641,18 +1712,19 @@ async function checkExpiredUsers() {
         const result = await pool.query(`
             SELECT id, mikrotik_username, expires_at, status
             FROM payment_queue 
-            WHERE status = 'processed' 
+            WHERE (status = 'processed' OR status = 'pending')
             AND expires_at IS NOT NULL 
             AND expires_at <= $1
             AND (status != 'expired' OR status IS NULL)
+            LIMIT 50
         `, [now]);
         
         if (result.rows.length > 0) {
-            console.log(`⏰ Found ${result.rows.length} expired user(s)`);
+            console.log(`⏰ Auto-expiring ${result.rows.length} user(s) via scheduled check`);
             
             // Mark them as expired
             for (const user of result.rows) {
-                console.log(`⏰ Expired: ${user.mikrotik_username} (ID: ${user.id})`);
+                console.log(`⏰ Auto-expired: ${user.mikrotik_username} (ID: ${user.id})`);
                 await pool.query(
                     `UPDATE payment_queue SET status = 'expired' WHERE id = $1`,
                     [user.id]
@@ -1660,12 +1732,55 @@ async function checkExpiredUsers() {
             }
         }
     } catch (error) {
-        console.log('Checking expired users (non-critical):', error.message);
+        console.log('Checking expired users error:', error.message);
     }
 }
 
-// Run expiry check periodically
-setInterval(checkExpiredUsers, 60000); // Every minute
+// Run expiry check every 2 minutes
+setInterval(checkExpiredUsers, 120000);
+
+// ========== EXPIRY SYNC FUNCTION (For dashboard) ==========
+async function syncExpiredWithMikroTik() {
+    try {
+        // Get users that need to be synced with MikroTik
+        const result = await pool.query(`
+            SELECT 
+                id,
+                mikrotik_username,
+                mac_address,
+                expires_at
+            FROM payment_queue
+            WHERE status = 'expired'
+            AND expires_at IS NOT NULL
+            AND expires_at < NOW() - INTERVAL '1 minute'
+            AND mikrotik_username IS NOT NULL
+            AND mikrotik_username != ''
+            AND (last_sync IS NULL OR last_sync < expires_at)
+            LIMIT 20
+        `);
+        
+        if (result.rows.length > 0) {
+            console.log(`🔄 Syncing ${result.rows.length} expired users with MikroTik`);
+            
+            // Update last_sync timestamp
+            for (const user of result.rows) {
+                await pool.query(
+                    `UPDATE payment_queue SET last_sync = NOW() WHERE id = $1`,
+                    [user.id]
+                );
+            }
+            
+            return result.rows;
+        }
+        return [];
+    } catch (error) {
+        console.log('Syncing expired users error:', error.message);
+        return [];
+    }
+}
+
+// Run sync every 5 minutes
+setInterval(syncExpiredWithMikroTik, 300000);
 
 // ========== ADMIN DASHBOARD ROUTE ==========
 app.get('/admin', async (req, res) => {
@@ -1696,7 +1811,7 @@ app.get('/admin', async (req, res) => {
             
             return res.redirect(`/admin?sessionId=${sessionId}&action=force_logout_success`);
         } catch (error) {
-            console.log('Force logout (non-critical):', error.message);
+            console.log('Force logout error:', error.message);
             return res.redirect(`/admin?sessionId=${sessionId}&action=force_logout_error`);
         }
     }
@@ -1784,7 +1899,7 @@ async function handleAdminDashboard(req, res, sessionId) {
                 actionMessage = 'Permission denied: Cannot extend plans';
                 messageType = 'error';
             } else {
-                // FIXED: Calculate proper expiry based on plan
+                // Calculate proper expiry based on plan
                 let interval = '';
                 if (newPlan === '24hr') interval = '24 hours';
                 else if (newPlan === '7d') interval = '7 days';
@@ -1838,16 +1953,28 @@ async function handleAdminDashboard(req, res, sessionId) {
                 actionMessage = 'Permission denied: Cannot perform cleanup';
                 messageType = 'error';
             } else {
-                // FIXED: Proper cleanup of expired users
+                // Proper cleanup of expired users
                 const result = await pool.query(`
                     DELETE FROM payment_queue 
                     WHERE (
                         (status = 'expired') OR
-                        (status = 'processed' AND expires_at < NOW()) OR
+                        (status = 'processed' AND expires_at < NOW() - INTERVAL '7 days') OR
                         (status = 'pending' AND created_at < NOW() - INTERVAL '7 days')
                     )
                 `);
                 actionMessage = 'Cleaned up ' + result.rowCount + ' expired/pending users';
+                messageType = 'success';
+            }
+        }
+
+        // ========== SYNC EXPIRED WITH MIKROTIK ==========
+        if (action === 'sync_expired') {
+            if (!hasPermission(session, 'update')) {
+                actionMessage = 'Permission denied: Cannot sync expired users';
+                messageType = 'error';
+            } else {
+                const expiredUsers = await syncExpiredWithMikroTik();
+                actionMessage = 'Synced ' + expiredUsers.length + ' expired users with MikroTik';
                 messageType = 'success';
             }
         }
@@ -1882,12 +2009,13 @@ async function handleAdminDashboard(req, res, sessionId) {
                     mac_address as mac,
                     customer_email as email,
                     created_at,
-                    expires_at
+                    expires_at,
+                    last_sync
                 FROM payment_queue 
                 ORDER BY created_at DESC
             `);
             
-            let csvData = 'ID,Username,Password,Plan,Status,MAC Address,Email,Created,Expires\n';
+            let csvData = 'ID,Username,Password,Plan,Status,MAC Address,Email,Created,Expires,Last Sync\n';
             rows.forEach(row => {
                 csvData += [
                     row.id,
@@ -1898,7 +2026,8 @@ async function handleAdminDashboard(req, res, sessionId) {
                     '"' + (row.mac || 'N/A').replace(/"/g, '""') + '"',
                     '"' + (row.email || 'N/A').replace(/"/g, '""') + '"',
                     '"' + new Date(row.created_at).toISOString() + '"',
-                    '"' + (row.expires_at ? new Date(row.expires_at).toISOString() : 'N/A') + '"'
+                    '"' + (row.expires_at ? new Date(row.expires_at).toISOString() : 'N/A') + '"',
+                    '"' + (row.last_sync ? new Date(row.last_sync).toISOString() : 'N/A') + '"'
                 ].join(',') + '\n';
             });
             
@@ -1949,7 +2078,6 @@ async function handleAdminDashboard(req, res, sessionId) {
                             WHEN plan = '24hr' THEN 350
                             WHEN plan = '7d' THEN 2400
                             WHEN plan = '30d' THEN 7500
-                            ELSE 0
                         END ELSE 0 END
                     ), 0) as revenue_week,
                     
@@ -1959,7 +2087,6 @@ async function handleAdminDashboard(req, res, sessionId) {
                             WHEN plan = '24hr' THEN 350
                             WHEN plan = '7d' THEN 2400
                             WHEN plan = '30d' THEN 7500
-                            ELSE 0
                         END ELSE 0 END
                     ), 0) as revenue_month
                 FROM payment_queue
@@ -2002,7 +2129,8 @@ async function handleAdminDashboard(req, res, sessionId) {
                 customer_email,
                 created_at,
                 expires_at,
-                -- FIXED: REAL-TIME STATUS CHECK (IMMEDIATE EXPIRY)
+                last_sync,
+                -- REAL-TIME STATUS CHECK
                 CASE 
                     WHEN status = 'expired' THEN 'expired'
                     WHEN status = 'pending' THEN 'pending'
@@ -2272,7 +2400,7 @@ function getLoginForm(sessionExpired) {
             <p>Secure Admin Portal with Role-Based Access</p>
             
             <div class="alert">
-                <i class="fa-solid fa-clock"></i> Session expired. Please login again.
+                Session expired. Please login again.
             </div>
             
             <form method="GET" action="/admin">
@@ -2287,7 +2415,7 @@ function getLoginForm(sessionExpired) {
                 </div>
                 
                 <button type="submit">
-                    <i class="fa-solid fa-right-to-bracket"></i> Access Dashboard
+                    Access Dashboard
                 </button>
             </form>
             
@@ -2304,7 +2432,7 @@ function getLoginForm(sessionExpired) {
             </div>
             
             <div class="security-note">
-                <i class="fa-solid fa-shield-halved"></i> Session Timeout: 5 minutes • Encrypted Connection
+                Session Timeout: 5 minutes • Encrypted Connection
             </div>
         </div>
     </div>
@@ -2337,15 +2465,8 @@ function getErrorPage(error) {
             max-width: 500px;
             box-shadow: 0 20px 40px rgba(0,0,0,0.3);
         }
-        .error-icon {
-            font-size: 48px;
-            color: #ef4444;
-            margin-bottom: 20px;
-        }
-        h2 {
-            color: #fca5a5;
-            margin-bottom: 10px;
-        }
+        .error-icon { font-size: 48px; color: #ef4444; margin-bottom: 20px; }
+        h2 { color: #fca5a5; margin-bottom: 10px; }
         pre {
             background: #334155;
             padding: 15px;
@@ -2412,11 +2533,12 @@ function renderDashboard(data) {
     // Build user table rows WITH CORRECT COLUMN ORDER: Created, Expires, MAC
     let userRows = '';
     if (users.length === 0) {
-        userRows = '<tr><td colspan="9" style="text-align:center;padding:48px;color:var(--text-muted);"><i class="fa-solid fa-inbox" style="font-size:32px;display:block;margin-bottom:12px;"></i>No users found</td></tr>';
+        userRows = '<tr><td colspan="10" style="text-align:center;padding:48px;color:var(--text-muted);">No users found</td></tr>';
     } else {
         users.forEach(user => {
             const created = new Date(user.created_at);
             const expires = user.expires_at ? new Date(user.expires_at) : null;
+            const lastSync = user.last_sync ? new Date(user.last_sync) : null;
             const isExpired = user.realtime_status === 'expired';
             
             const statusBadge = 'badge-' + user.realtime_status;
@@ -2464,6 +2586,15 @@ function renderDashboard(data) {
                         }
                     </td>
                     <td>${user.mac_address ? `<span class="mac">${escapeHtml(user.mac_address)}</span>` : '<span style="color:var(--text-muted);">N/A</span>'}</td>
+                    <td>
+                        ${lastSync ? 
+                            `<span class="time-cell">
+                                ${lastSync.toLocaleDateString('en-NG')}<br>
+                                <small>${lastSync.toLocaleTimeString('en-NG', {hour:'2-digit',minute:'2-digit'})}</small>
+                            </span>` : 
+                            '<span style="color:var(--text-muted);">Never</span>'
+                        }
+                    </td>
                     <td>
                         <div class="row-actions">
                             ${showExtend ? `
@@ -3258,6 +3389,11 @@ function renderDashboard(data) {
                     <i class="fa-solid fa-broom"></i> Cleanup
                 </a>
             ` : ''}
+            ${hasPermission(session, 'update') ? `
+                <a href="/admin?sessionId=${sessionId}&action=sync_expired" class="btn" title="Sync expired users with MikroTik">
+                    <i class="fa-solid fa-rotate"></i> Sync Expired
+                </a>
+            ` : ''}
             <button class="btn" onclick="location.reload()">
                 <i class="fa-solid fa-rotate"></i> Refresh
             </button>
@@ -3392,6 +3528,7 @@ function renderDashboard(data) {
                             <th>Created</th>
                             <th>Expires</th>
                             <th>MAC Address</th>
+                            <th>Last Sync</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -3568,12 +3705,12 @@ const server = app.listen(PORT, () => {
   console.log(`🌐 Initialize: https://dreamhatcher-backend.onrender.com/api/initialize-payment`);
   console.log(`🔗 Callback: https://dreamhatcher-backend.onrender.com/monnify-callback`);
   console.log(`💰 Payment Provider: Monnify`);
+  console.log(`🔄 Expiry Endpoints Active:`);
+  console.log(`   • /api/expired-users (MikroTik)`);
+  console.log(`   • /api/mark-expired/:id (MikroTik)`);
+  console.log(`   • /api/sync-expired (Dashboard)`);
+  console.log(`🔐 Admin Dashboard: /admin`);
+  console.log(`📊 System Health: /health`);
 });
 
 server.setTimeout(30000);
-
-
-
-
-
-
