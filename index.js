@@ -22,6 +22,76 @@ pool.query('SELECT NOW()', (err, res) => {
   else console.log('✅ Connected to Supabase');
 });
 
+// ========== ENSURE DATABASE SCHEMA IS UP TO DATE ==========
+async function ensureDatabaseSchema() {
+  try {
+    console.log('🔧 Checking database schema...');
+    
+    // 1. Check and add last_sync column to payment_queue if it doesn't exist
+    const checkColumn = await pool.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'payment_queue' AND column_name = 'last_sync'
+    `);
+    
+    if (checkColumn.rows.length === 0) {
+      console.log('📝 Adding last_sync column to payment_queue table...');
+      await pool.query(`
+        ALTER TABLE payment_queue 
+        ADD COLUMN IF NOT EXISTS last_sync TIMESTAMP;
+      `);
+      console.log('✅ Added last_sync column');
+    }
+    
+    // 2. Ensure admin_logs table has proper columns
+    const checkAdminColumns = await pool.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'admin_logs'
+    `);
+    
+    const adminColumns = checkAdminColumns.rows.map(row => row.column_name);
+    
+    if (!adminColumns.includes('username')) {
+      console.log('📝 Adding username column to admin_logs table...');
+      await pool.query(`ALTER TABLE admin_logs ADD COLUMN username VARCHAR(50) DEFAULT 'unknown';`);
+    }
+    
+    if (!adminColumns.includes('role')) {
+      console.log('📝 Adding role column to admin_logs table...');
+      await pool.query(`ALTER TABLE admin_logs ADD COLUMN role VARCHAR(20) DEFAULT 'unknown';`);
+    }
+    
+    // 3. Update any null values
+    await pool.query(`
+      UPDATE admin_logs 
+      SET username = 'unknown' 
+      WHERE username IS NULL OR username = '';
+    `);
+    
+    await pool.query(`
+      UPDATE admin_logs 
+      SET role = 'unknown' 
+      WHERE role IS NULL OR role = '';
+    `);
+    
+    console.log('✅ Database schema check completed');
+    
+  } catch (error) {
+    console.log('⚠️ Database schema check error (non-critical):', error.message);
+  }
+}
+
+// Call this function after database connection
+pool.query('SELECT NOW()', async (err, res) => {
+  if (err) console.error('❌ Database connection failed:', err);
+  else {
+    console.log('✅ Connected to Supabase');
+    // Ensure schema is up to date
+    await ensureDatabaseSchema();
+  }
+});
+
 // ========== GLOBAL ERROR HANDLERS ==========
 process.on('uncaughtException', (error) => {
   console.error('💥 UNCAUGHT EXCEPTION:', error);
@@ -1106,9 +1176,9 @@ app.get('/api/expired-users', async (req, res) => {
     `);
 
     if (result.rows.length === 0) {
-      console.log('📭 No expired users found');
-      return res.set('Content-Type', 'text/plain').send('');
-    }
+    // SILENT - No expired users found
+    return res.set('Content-Type', 'text/plain').send('');
+}
 
     console.log(`⏰ Found ${result.rows.length} expired user(s) for MikroTik`);
 
@@ -2117,34 +2187,34 @@ async function handleAdminDashboard(req, res, sessionId) {
                 r.revenue_week, r.revenue_month
         `);
 
-        // 2. USERS WITH FIXED EXPIRY CALCULATION (REAL-TIME CHECK)
-        const recentActivity = await pool.query(`
-            SELECT 
-                id,
-                mikrotik_username,
-                mikrotik_password,
-                plan,
-                status,
-                mac_address,
-                customer_email,
-                created_at,
-                expires_at,
-                last_sync,
-                -- REAL-TIME STATUS CHECK
-                CASE 
-                    WHEN status = 'expired' THEN 'expired'
-                    WHEN status = 'pending' THEN 'pending'
-                    WHEN status = 'suspended' THEN 'suspended'
-                    WHEN status = 'processed' AND (expires_at IS NULL) THEN 'active'
-                    WHEN status = 'processed' AND (expires_at > NOW()) THEN 'active'
-                    WHEN status = 'processed' AND (expires_at <= NOW()) THEN 'expired'
-                    ELSE 'unknown'
-                END as realtime_status
-            FROM payment_queue
-            ORDER BY created_at DESC
-            LIMIT 100
-        `);
-
+      // 2. USERS WITH FIXED EXPIRY CALCULATION (REAL-TIME CHECK)
+const recentActivity = await pool.query(`
+  SELECT 
+    id,
+    mikrotik_username,
+    mikrotik_password,
+    plan,
+    status,
+    mac_address,
+    customer_email,
+    created_at,
+    expires_at,
+    -- Use COALESCE to handle missing last_sync column gracefully
+    COALESCE(last_sync, created_at) as last_sync,
+    -- FIXED: REAL-TIME STATUS CHECK (IMMEDIATE EXPIRY)
+    CASE 
+      WHEN status = 'expired' THEN 'expired'
+      WHEN status = 'pending' THEN 'pending'
+      WHEN status = 'suspended' THEN 'suspended'
+      WHEN status = 'processed' AND (expires_at IS NULL) THEN 'active'
+      WHEN status = 'processed' AND (expires_at > NOW()) THEN 'active'
+      WHEN status = 'processed' AND (expires_at <= NOW()) THEN 'expired'
+      ELSE 'unknown'
+    END as realtime_status
+  FROM payment_queue
+  ORDER BY created_at DESC
+  LIMIT 100
+`);
         // 3. GET ACTIVE ADMINS (UNIQUE BY USER)
         const activeAdmins = await getActiveAdmins();
         const adminHistory = await getAdminLoginHistory(10);
@@ -3714,3 +3784,4 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
