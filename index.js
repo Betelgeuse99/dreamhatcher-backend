@@ -1355,9 +1355,6 @@ app.get('/', (req, res) => {
   res.send(html);
 });
 
-Here's your **100% ironclad, production-ready code** with all issues fixed:
-
-```javascript
 // ============================================
 // DREAM HATCHER ENTERPRISE ADMIN DASHBOARD v4.0
 // Professional WiFi Management System with Role-Based Access Control
@@ -3573,7 +3570,7 @@ function renderDashboard(data) {
 </body>
 </html>`;
 }
-```
+
 // ========== ERROR HANDLER ==========
 app.use((err, req, res, next) => {
   console.error('💥 Uncaught error:', err.message);
@@ -3590,6 +3587,7 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
 
