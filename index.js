@@ -3167,7 +3167,7 @@ function renderDashboard(data) {
                     </div>
                     <span class="metric-tag tag-today">TODAY</span>
                 </div>
-               <div class="metric-value currency" style="color: #00d4ff;">${naira(stats.revenue_today)}</div>
+               <div class="metric-value currency" style="color: #FFA500;">${naira(stats.revenue_today)}</div>
                 <div class="metric-label">Today's Revenue</div>
                 <div class="metric-footer">
                     <i class="fa-solid fa-user-plus"></i> ${stats.signups_today} new signups today
@@ -3541,4 +3541,5 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
