@@ -1353,651 +1353,2255 @@ app.get('/', (req, res) => {
   res.send(html);
 });
 
-// ============================================
-// ADMIN DASHBOARD v2.0 - ENHANCED VERSION
-// Add this to your index.js (replace old /admin route)
+// DREAM HATCHER ENTERPRISE ADMIN DASHBOARD v4.1
+// Professional WiFi Management System with Role-Based Access Control
+// FIXED DATABASE SCHEMA & EXPIRY ISSUES
 // ============================================
 
-// Admin configuration
-const ADMIN_PASSWORD = 'dreamhatcher2024'; // CHANGE THIS!
-const SESSION_TIMEOUT = 5 * 60 * 1000; // 5 minutes in milliseconds
+// ========== SECURITY CONFIGURATION ==========
+const ADMIN_USERS = {
+    // SUPER ADMIN - Full access (100%)
+    'superadmin': {
+        password: 'dreamatcher@2024',
+        role: 'super_admin',
+        permissions: ['delete', 'create', 'update', 'extend', 'manage_users', 'export', 'force_logout']
+    },
+    // ADMIN - Read-only access
+    'admin': {
+        password: 'yusuf2026',
+        role: 'check',
+        permissions: ['view']
+    }
+};
 
-// ========== ADMIN DASHBOARD ==========
+const SESSION_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+
+// Session storage with unique user tracking
+const adminSessions = {};
+const adminUserSessions = {}; // Track by username to prevent duplicates
+
+// ========== HELPER FUNCTIONS ==========
+
+function naira(amount) {
+    const num = Number(amount) || 0;
+    return '₦' + num.toLocaleString('en-NG');
+}
+
+function planPrice(plan) {
+    const prices = { '24hr': 350, '7d': 2400, '30d': 7500 };
+    return prices[plan] || 0;
+}
+
+function planLabel(plan) {
+    const labels = { '24hr': 'Daily', '7d': 'Weekly', '30d': 'Monthly' };
+    return labels[plan] || plan || 'Unknown';
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    return text.toString().replace(/[&<>"']/g, m => map[m]);
+}
+
+// ========== ADMIN SESSION MANAGEMENT ==========
+
+async function createAdminLogsTable() {
+    try {
+        // First check if table exists
+        const tableCheck = await pool.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'admin_logs'
+            );
+        `);
+
+        if (tableCheck.rows[0].exists) {
+            // Table exists, check for columns and add if missing
+            const columns = await pool.query(`
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = 'admin_logs'
+            `);
+            
+            const columnNames = columns.rows.map(row => row.column_name);
+            
+            // Add missing columns if they don't exist
+            if (!columnNames.includes('username')) {
+                await pool.query(`ALTER TABLE admin_logs ADD COLUMN IF NOT EXISTS username VARCHAR(50) DEFAULT 'unknown'`);
+                console.log('✅ Added username column to admin_logs');
+            }
+            
+            if (!columnNames.includes('role')) {
+                await pool.query(`ALTER TABLE admin_logs ADD COLUMN IF NOT EXISTS role VARCHAR(20) DEFAULT 'unknown'`);
+                console.log('✅ Added role column to admin_logs');
+            }
+            
+            // Update any NULL values
+            await pool.query(`UPDATE admin_logs SET username = 'unknown' WHERE username IS NULL`);
+            await pool.query(`UPDATE admin_logs SET role = 'unknown' WHERE role IS NULL`);
+            
+        } else {
+            // Create table from scratch
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS admin_logs (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR(50) NOT NULL DEFAULT 'unknown',
+                    role VARCHAR(20) NOT NULL DEFAULT 'unknown',
+                    session_id VARCHAR(255) NOT NULL,
+                    admin_ip VARCHAR(45) NOT NULL,
+                    user_agent TEXT,
+                    login_time TIMESTAMP DEFAULT NOW(),
+                    logout_time TIMESTAMP,
+                    last_activity TIMESTAMP DEFAULT NOW(),
+                    is_active BOOLEAN DEFAULT true
+                );
+            `);
+            
+            console.log('✅ Created admin_logs table with proper schema');
+        }
+        
+        // Create indexes if they don't exist
+        try {
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_admin_logs_session ON admin_logs(session_id)`);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_admin_logs_active ON admin_logs(is_active)`);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_admin_logs_time ON admin_logs(login_time DESC)`);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_admin_logs_username ON admin_logs(username)`);
+        } catch (error) {
+            console.log('Indexes already exist or error creating them:', error.message);
+        }
+        
+        console.log('✅ Admin logs table ready and verified');
+    } catch (error) {
+        console.log('Admin logs table setup error:', error.message);
+    }
+}
+
+// Initialize admin logs table
+createAdminLogsTable();
+
+// Log admin login with unique user session
+async function logAdminLogin(username, role, sessionId, ip, userAgent) {
+    try {
+        // Close any existing active session for this user
+        await pool.query(
+            `UPDATE admin_logs SET logout_time = NOW(), is_active = false 
+             WHERE username = $1 AND is_active = true`,
+            [username]
+        );
+        
+        // Create new session
+        await pool.query(
+            `INSERT INTO admin_logs (username, role, session_id, admin_ip, user_agent, login_time, last_activity, is_active) 
+             VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), true)`,
+            [username, role, sessionId, ip, userAgent]
+        );
+        
+        // Update tracking
+        adminUserSessions[username] = sessionId;
+    } catch (error) {
+        console.log('Logging admin login error:', error.message);
+    }
+}
+
+// Update admin activity
+async function updateAdminActivity(sessionId) {
+    try {
+        await pool.query(
+            'UPDATE admin_logs SET last_activity = NOW() WHERE session_id = $1 AND is_active = true',
+            [sessionId]
+        );
+    } catch (error) {
+        console.log('Updating admin activity error:', error.message);
+    }
+}
+
+// Log admin logout
+async function logAdminLogout(sessionId) {
+    try {
+        const result = await pool.query(
+            'SELECT username FROM admin_logs WHERE session_id = $1',
+            [sessionId]
+        );
+        
+        if (result.rows[0]) {
+            const username = result.rows[0].username;
+            delete adminUserSessions[username];
+        }
+        
+        await pool.query(
+            'UPDATE admin_logs SET logout_time = NOW(), is_active = false WHERE session_id = $1',
+            [sessionId]
+        );
+    } catch (error) {
+        console.log('Logging admin logout error:', error.message);
+    }
+}
+
+// Get active admins (unique by user) - FIXED QUERY
+async function getActiveAdmins() {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                username,
+                role,
+                session_id,
+                admin_ip,
+                user_agent,
+                login_time,
+                last_activity,
+                EXTRACT(EPOCH FROM (NOW() - last_activity)) as idle_seconds
+            FROM admin_logs 
+            WHERE is_active = true 
+            ORDER BY last_activity DESC
+        `);
+        
+        // Group by username to get unique sessions
+        const uniqueAdmins = {};
+        result.rows.forEach(row => {
+            if (!uniqueAdmins[row.username] || 
+                new Date(row.last_activity) > new Date(uniqueAdmins[row.username].last_activity)) {
+                uniqueAdmins[row.username] = row;
+            }
+        });
+        
+        return Object.values(uniqueAdmins);
+    } catch (error) {
+        console.log('Getting active admins error:', error.message);
+        return [];
+    }
+}
+
+// Get admin login history - FIXED QUERY
+async function getAdminLoginHistory(limit = 20) {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                username,
+                role,
+                admin_ip,
+                login_time,
+                logout_time,
+                EXTRACT(EPOCH FROM (COALESCE(logout_time, NOW()) - login_time)) as session_duration_seconds,
+                is_active
+            FROM admin_logs 
+            ORDER BY login_time DESC
+            LIMIT $1
+        `, [limit]);
+        return result.rows;
+    } catch (error) {
+        console.log('Getting admin history error:', error.message);
+        return [];
+    }
+}
+
+// ========== PERMISSION CHECK ==========
+function hasPermission(session, requiredPermission) {
+    if (!session || !session.role) return false;
+    
+    // Super admin has all permissions
+    if (session.role === 'super_admin') return true;
+    
+    // Check specific permission
+    const userConfig = ADMIN_USERS[session.username];
+    if (!userConfig) return false;
+    
+    return userConfig.permissions.includes(requiredPermission);
+}
+
+// ========== FIXED EXPIRY CHECK FUNCTION ==========
+async function checkExpiredUsers() {
+    try {
+        // Find users who should be expired but aren't marked as expired
+        const now = new Date();
+        const result = await pool.query(`
+            SELECT id, mikrotik_username, expires_at, status
+            FROM payment_queue 
+            WHERE (status = 'processed' OR status = 'pending')
+            AND expires_at IS NOT NULL 
+            AND expires_at <= $1
+            AND (status != 'expired' OR status IS NULL)
+            LIMIT 50
+        `, [now]);
+        
+        if (result.rows.length > 0) {
+            console.log(`⏰ Auto-expiring ${result.rows.length} user(s) via scheduled check`);
+            
+            // Mark them as expired
+            for (const user of result.rows) {
+                console.log(`⏰ Auto-expired: ${user.mikrotik_username} (ID: ${user.id})`);
+                await pool.query(
+                    `UPDATE payment_queue SET status = 'expired' WHERE id = $1`,
+                    [user.id]
+                );
+            }
+        }
+    } catch (error) {
+        console.log('Checking expired users error:', error.message);
+    }
+}
+
+// Run expiry check every 2 minutes
+setInterval(checkExpiredUsers, 120000);
+
+// ========== EXPIRY SYNC FUNCTION (For dashboard) ==========
+async function syncExpiredWithMikroTik() {
+    try {
+        // Get users that need to be synced with MikroTik
+        const result = await pool.query(`
+            SELECT 
+                id,
+                mikrotik_username,
+                mac_address,
+                expires_at
+            FROM payment_queue
+            WHERE status = 'expired'
+            AND expires_at IS NOT NULL
+            AND expires_at < NOW() - INTERVAL '1 minute'
+            AND mikrotik_username IS NOT NULL
+            AND mikrotik_username != ''
+            AND (last_sync IS NULL OR last_sync < expires_at)
+            LIMIT 20
+        `);
+        
+        if (result.rows.length > 0) {
+            console.log(`🔄 Syncing ${result.rows.length} expired users with MikroTik`);
+            
+            // Update last_sync timestamp
+            for (const user of result.rows) {
+                await pool.query(
+                    `UPDATE payment_queue SET last_sync = NOW() WHERE id = $1`,
+                    [user.id]
+                );
+            }
+            
+            return result.rows;
+        }
+        return [];
+    } catch (error) {
+        console.log('Syncing expired users error:', error.message);
+        return [];
+    }
+}
+
+// Run sync every 5 minutes
+setInterval(syncExpiredWithMikroTik, 300000);
+
+// ========== ADMIN DASHBOARD ROUTE ==========
 app.get('/admin', async (req, res) => {
-  const { pwd, action, userId, newPlan } = req.query;
-
-  // Password check
-  if (pwd !== ADMIN_PASSWORD) {
-    return res.send(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Admin Login - Dream Hatcher</title>
-        <style>
-          * { margin: 0; padding: 0; box-sizing: border-box; }
-          body { font-family: 'Segoe UI', Arial; background: linear-gradient(135deg, #0a0e1a, #1a1a2e); color: white; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
-          .box { background: rgba(255,255,255,0.05); padding: 50px; border-radius: 24px; text-align: center; border: 1px solid rgba(255,255,255,0.1); max-width: 400px; width: 90%; }
-          .logo { font-size: 48px; margin-bottom: 20px; }
-          h2 { color: #00d4ff; margin-bottom: 30px; }
-          input { padding: 16px; border-radius: 12px; border: 2px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); color: white; font-size: 16px; width: 100%; margin: 10px 0; }
-          input:focus { outline: none; border-color: #00d4ff; }
-          button { padding: 16px 40px; background: linear-gradient(135deg, #00c9ff, #0066ff); border: none; border-radius: 12px; color: white; font-weight: bold; font-size: 16px; cursor: pointer; width: 100%; margin-top: 15px; }
-          button:hover { opacity: 0.9; }
-          .footer { margin-top: 30px; font-size: 12px; color: #64748b; }
-        </style>
-      </head>
-      <body>
-        <div class="box">
-          <div class="logo">🔐</div>
-          <h2>Admin Access</h2>
-          <form method="GET">
-            <input type="password" name="pwd" placeholder="Enter admin password" required autofocus>
-            <button type="submit">Login →</button>
-          </form>
-          <div class="footer">Dream Hatcher Tech Admin Panel</div>
-        </div>
-      </body>
-      </html>
-    `);
-  }
-
-  try {
-    // Handle admin actions
-    let actionMessage = '';
-
-    if (action === 'delete' && userId) {
-      await pool.query('DELETE FROM payment_queue WHERE id = $1', [userId]);
-      actionMessage = '✅ User deleted successfully';
+    const { user, pwd, action, userId, newPlan, sessionId, exportData, forceLogout } = req.query;
+    
+    // ========== FORCE LOGOUT OTHER SESSIONS ==========
+    if (forceLogout === 'all' && sessionId && adminSessions[sessionId]) {
+        const currentSession = adminSessions[sessionId];
+        if (currentSession.role !== 'super_admin') {
+            return res.redirect(`/admin?sessionId=${sessionId}&action=permission_denied`);
+        }
+        
+        try {
+            // Logout all other sessions except current one
+            Object.keys(adminSessions).forEach(key => {
+                if (key !== sessionId) {
+                    logAdminLogout(key);
+                    delete adminSessions[key];
+                }
+            });
+            
+            // Mark all other sessions as inactive
+            await pool.query(
+                `UPDATE admin_logs SET logout_time = NOW(), is_active = false 
+                 WHERE session_id != $1 AND is_active = true`,
+                [sessionId]
+            );
+            
+            return res.redirect(`/admin?sessionId=${sessionId}&action=force_logout_success`);
+        } catch (error) {
+            console.log('Force logout error:', error.message);
+            return res.redirect(`/admin?sessionId=${sessionId}&action=force_logout_error`);
+        }
     }
-
-    if (action === 'extend' && userId && newPlan) {
-      await pool.query('UPDATE payment_queue SET plan = $1, created_at = NOW() WHERE id = $2', [newPlan, userId]);
-      actionMessage = '✅ User plan extended successfully';
+    
+    // ========== SESSION-BASED AUTH ==========
+    if (sessionId && adminSessions[sessionId]) {
+        const session = adminSessions[sessionId];
+        
+        // Check session expiry
+        if (Date.now() - session.lastActivity > SESSION_TIMEOUT) {
+            await logAdminLogout(sessionId);
+            delete adminSessions[sessionId];
+            return res.redirect('/admin?sessionExpired=true');
+        }
+        
+        // Update last activity
+        session.lastActivity = Date.now();
+        adminSessions[sessionId] = session;
+        await updateAdminActivity(sessionId);
+        
+        return await handleAdminDashboard(req, res, sessionId);
     }
-
-    if (action === 'reset' && userId) {
-      await pool.query('UPDATE payment_queue SET status = $1 WHERE id = $2', ['pending', userId]);
-      actionMessage = '✅ User reset to pending (will be re-created on MikroTik)';
+    
+    // ========== USER/PASSWORD LOGIN ==========
+    if (user && pwd) {
+        const userConfig = ADMIN_USERS[user];
+        if (userConfig && userConfig.password === pwd) {
+            // Check if user already has active session
+            const existingSessionId = adminUserSessions[user];
+            if (existingSessionId && adminSessions[existingSessionId]) {
+                // Use existing session
+                const session = adminSessions[existingSessionId];
+                session.lastActivity = Date.now();
+                return res.redirect(`/admin?sessionId=${existingSessionId}`);
+            }
+            
+            // Create new session
+            const newSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            adminSessions[newSessionId] = {
+                id: newSessionId,
+                username: user,
+                role: userConfig.role,
+                permissions: userConfig.permissions,
+                loggedInAt: new Date(),
+                lastActivity: Date.now(),
+                ip: req.ip,
+                userAgent: req.headers['user-agent']
+            };
+            
+            await logAdminLogin(user, userConfig.role, newSessionId, req.ip, req.headers['user-agent']);
+            return res.redirect(`/admin?sessionId=${newSessionId}`);
+        }
     }
+    
+    // ========== SHOW LOGIN FORM ==========
+    return res.send(getLoginForm(req.query.sessionExpired));
+});
 
-    // Get statistics
-    const stats = await pool.query(`
-      SELECT
-        COUNT(*) as total_payments,
-        COUNT(*) FILTER (WHERE status = 'processed') as processed,
-        COUNT(*) FILTER (WHERE status = 'pending') as pending,
-        COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE) as today_count,
-        COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE - INTERVAL '7 days') as week_count,
-        COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE - INTERVAL '30 days') as month_count
-      FROM payment_queue
-    `);
+// ========== ADMIN DASHBOARD HANDLER ==========
+async function handleAdminDashboard(req, res, sessionId) {
+    try {
+        const session = adminSessions[sessionId];
+        if (!session) {
+            return res.redirect('/admin');
+        }
+        
+        const { action, userId, newPlan, exportData } = req.query;
+        let actionMessage = '';
+        let messageType = '';
 
-    // Revenue calculations
-    const revenue = await pool.query(`
-      SELECT
-        COALESCE(SUM(CASE WHEN plan = '24hr' THEN 350 WHEN plan = '7d' THEN 2400 WHEN plan = '30d' THEN 7500 ELSE 0 END), 0) as total_revenue,
-        COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE THEN (CASE WHEN plan = '24hr' THEN 350 WHEN plan = '7d' THEN 2400 WHEN plan = '30d' THEN 7500 ELSE 0 END) ELSE 0 END), 0) as today_revenue,
-        COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' THEN (CASE WHEN plan = '24hr' THEN 350 WHEN plan = '7d' THEN 2400 WHEN plan = '30d' THEN 7500 ELSE 0 END) ELSE 0 END), 0) as week_revenue,
-        COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '30 days' THEN (CASE WHEN plan = '24hr' THEN 350 WHEN plan = '7d' THEN 2400 WHEN plan = '30d' THEN 7500 ELSE 0 END) ELSE 0 END), 0) as month_revenue
-      FROM payment_queue WHERE status = 'processed'
-    `);
+        // ========== HANDLE ADMIN ACTIONS WITH PERMISSION CHECK ==========
+        if (action === 'delete' && userId) {
+            if (!hasPermission(session, 'delete')) {
+                actionMessage = 'Permission denied: Cannot delete users';
+                messageType = 'error';
+            } else {
+                await pool.query('DELETE FROM payment_queue WHERE id = $1', [userId]);
+                actionMessage = 'User account permanently deleted';
+                messageType = 'success';
+            }
+        }
 
-    // Plan breakdown
-    const plans = await pool.query(`
-      SELECT plan, COUNT(*) as count FROM payment_queue WHERE status = 'processed' GROUP BY plan
-    `);
+        if (action === 'extend' && userId && newPlan) {
+            if (!hasPermission(session, 'extend')) {
+                actionMessage = 'Permission denied: Cannot extend plans';
+                messageType = 'error';
+            } else {
+                // Calculate proper expiry based on plan
+                let interval = '';
+                if (newPlan === '24hr') interval = '24 hours';
+                else if (newPlan === '7d') interval = '7 days';
+                else if (newPlan === '30d') interval = '30 days';
+                
+                await pool.query(
+                    `UPDATE payment_queue 
+                     SET plan = $1, 
+                         expires_at = NOW() + INTERVAL '${interval}', 
+                         status = 'processed' 
+                     WHERE id = $2`,
+                    [newPlan, userId]
+                );
+                actionMessage = 'User plan extended to ' + interval;
+                messageType = 'success';
+            }
+        }
 
-    // Recent payments with expiry
-    const recent = await pool.query(`
-      SELECT
-        id, mikrotik_username, mikrotik_password, plan, status, mac_address, customer_email, created_at,
-        CASE
-          WHEN status != 'processed' THEN 'pending'
-          WHEN plan = '24hr' AND created_at + INTERVAL '24 hours' < NOW() THEN 'expired'
-          WHEN plan = '7d' AND created_at + INTERVAL '7 days' < NOW() THEN 'expired'
-          WHEN plan = '30d' AND created_at + INTERVAL '30 days' < NOW() THEN 'expired'
-          ELSE 'active'
-        END as real_status,
-        CASE
-          WHEN plan = '24hr' THEN created_at + INTERVAL '24 hours'
-          WHEN plan = '7d' THEN created_at + INTERVAL '7 days'
-          WHEN plan = '30d' THEN created_at + INTERVAL '30 days'
-        END as expires_at
-      FROM payment_queue
-      ORDER BY created_at DESC
-      LIMIT 50
-    `);
+        if (action === 'reset' && userId) {
+            if (!hasPermission(session, 'update')) {
+                actionMessage = 'Permission denied: Cannot reset users';
+                messageType = 'error';
+            } else {
+                await pool.query(
+                    `UPDATE payment_queue 
+                     SET status = 'pending', expires_at = NULL 
+                     WHERE id = $1`,
+                    [userId]
+                );
+                actionMessage = 'User reset to pending - will be recreated on MikroTik';
+                messageType = 'warning';
+            }
+        }
 
-    const s = stats.rows[0];
-    const r = revenue.rows[0];
-    const planData = {};
-    plans.rows.forEach(p => { planData[p.plan] = parseInt(p.count); });
+        if (action === 'toggle_status' && userId) {
+            if (!hasPermission(session, 'toggle_status')) {
+                actionMessage = 'Permission denied: Cannot toggle status';
+                messageType = 'error';
+            } else {
+                const current = await pool.query('SELECT status FROM payment_queue WHERE id = $1', [userId]);
+                const newStatus = current.rows[0].status === 'processed' ? 'suspended' : 'processed';
+                await pool.query('UPDATE payment_queue SET status = $1 WHERE id = $2', [newStatus, userId]);
+                actionMessage = 'User status changed to ' + newStatus;
+                messageType = 'info';
+            }
+        }
 
-    // Count by status
-    const activeCount = recent.rows.filter(r => r.real_status === 'active').length;
-    const expiredCount = recent.rows.filter(r => r.real_status === 'expired').length;
+        // ========== BULK CLEANUP (Super Admin Only) ==========
+        if (action === 'cleanup') {
+            if (!hasPermission(session, 'delete')) {
+                actionMessage = 'Permission denied: Cannot perform cleanup';
+                messageType = 'error';
+            } else {
+                // Proper cleanup of expired users
+                const result = await pool.query(`
+                    DELETE FROM payment_queue 
+                    WHERE (
+                        (status = 'expired') OR
+                        (status = 'processed' AND expires_at < NOW() - INTERVAL '7 days') OR
+                        (status = 'pending' AND created_at < NOW() - INTERVAL '7 days')
+                    )
+                `);
+                actionMessage = 'Cleaned up ' + result.rowCount + ' expired/pending users';
+                messageType = 'success';
+            }
+        }
 
-    const html = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Admin Dashboard - Dream Hatcher</title>
-      <style>
+        // ========== SYNC EXPIRED WITH MIKROTIK ==========
+        if (action === 'sync_expired') {
+            if (!hasPermission(session, 'update')) {
+                actionMessage = 'Permission denied: Cannot sync expired users';
+                messageType = 'error';
+            } else {
+                const expiredUsers = await syncExpiredWithMikroTik();
+                actionMessage = 'Synced ' + expiredUsers.length + ' expired users with MikroTik';
+                messageType = 'success';
+            }
+        }
+
+        // ========== FORCE LOGOUT MESSAGES ==========
+        if (action === 'force_logout_success') {
+            actionMessage = 'All other admin sessions have been terminated';
+            messageType = 'success';
+        }
+        if (action === 'force_logout_error') {
+            actionMessage = 'Error terminating other sessions';
+            messageType = 'error';
+        }
+        if (action === 'permission_denied') {
+            actionMessage = 'Permission denied: Requires Super Admin access';
+            messageType = 'error';
+        }
+
+        // ========== EXPORT CSV (Super Admin Only) ==========
+        if (exportData === 'csv') {
+            if (!hasPermission(session, 'export')) {
+                return res.status(403).send('Permission denied');
+            }
+            
+            const { rows } = await pool.query(`
+                SELECT 
+                    id,
+                    mikrotik_username as username,
+                    mikrotik_password as password,
+                    plan,
+                    status,
+                    mac_address as mac,
+                    customer_email as email,
+                    created_at,
+                    expires_at,
+                    last_sync
+                FROM payment_queue 
+                ORDER BY created_at DESC
+            `);
+            
+            let csvData = 'ID,Username,Password,Plan,Status,MAC Address,Email,Created,Expires,Last Sync\n';
+            rows.forEach(row => {
+                csvData += [
+                    row.id,
+                    '"' + (row.username || '').replace(/"/g, '""') + '"',
+                    '"' + (row.password || '').replace(/"/g, '""') + '"',
+                    '"' + (row.plan || '').replace(/"/g, '""') + '"',
+                    '"' + (row.status || '').replace(/"/g, '""') + '"',
+                    '"' + (row.mac || 'N/A').replace(/"/g, '""') + '"',
+                    '"' + (row.email || 'N/A').replace(/"/g, '""') + '"',
+                    '"' + new Date(row.created_at).toISOString() + '"',
+                    '"' + (row.expires_at ? new Date(row.expires_at).toISOString() : 'N/A') + '"',
+                    '"' + (row.last_sync ? new Date(row.last_sync).toISOString() : 'N/A') + '"'
+                ].join(',') + '\n';
+            });
+            
+            res.setHeader('Content-Type', 'text/csv');
+            res.setHeader('Content-Disposition', 'attachment; filename="dreamhatcher_users_' + new Date().toISOString().split('T')[0] + '.csv"');
+            return res.send(csvData);
+        }
+
+        // ========== GET DASHBOARD STATISTICS ==========
+        
+        // 1. CORE METRICS
+        const metrics = await pool.query(`
+            WITH user_stats AS (
+                SELECT 
+                    COUNT(*) as total_users,
+                    COUNT(CASE WHEN status = 'processed' AND (expires_at IS NULL OR expires_at > NOW()) THEN 1 END) as active_users,
+                    COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_users,
+                    COUNT(CASE WHEN status = 'expired' OR (status = 'processed' AND expires_at <= NOW()) THEN 1 END) as expired_users,
+                    COUNT(CASE WHEN status = 'suspended' THEN 1 END) as suspended_users,
+                    COUNT(CASE WHEN created_at::date = CURRENT_DATE THEN 1 END) as signups_today,
+                    COUNT(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' THEN 1 END) as signups_week
+                FROM payment_queue
+            ),
+            revenue_stats AS (
+                SELECT
+                    COALESCE(SUM(
+                        CASE 
+                            WHEN plan = '24hr' THEN 350
+                            WHEN plan = '7d' THEN 2400
+                            WHEN plan = '30d' THEN 7500
+                            ELSE 0
+                        END
+                    ), 0) as total_revenue_lifetime,
+                    
+                    COALESCE(SUM(
+                        CASE WHEN created_at::date = CURRENT_DATE
+                        THEN CASE 
+                            WHEN plan = '24hr' THEN 350
+                            WHEN plan = '7d' THEN 2400
+                            WHEN plan = '30d' THEN 7500
+                            ELSE 0
+                        END ELSE 0 END
+                    ), 0) as revenue_today,
+                    
+                    COALESCE(SUM(
+                        CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days'
+                        THEN CASE 
+                            WHEN plan = '24hr' THEN 350
+                            WHEN plan = '7d' THEN 2400
+                            WHEN plan = '30d' THEN 7500
+                        END ELSE 0 END
+                    ), 0) as revenue_week,
+                    
+                    COALESCE(SUM(
+                        CASE WHEN created_at >= CURRENT_DATE - INTERVAL '30 days'
+                        THEN CASE 
+                            WHEN plan = '24hr' THEN 350
+                            WHEN plan = '7d' THEN 2400
+                            WHEN plan = '30d' THEN 7500
+                        END ELSE 0 END
+                    ), 0) as revenue_month
+                FROM payment_queue
+            ),
+            plan_distribution AS (
+                SELECT 
+                    plan,
+                    COUNT(*) as count,
+                    SUM(
+                        CASE 
+                            WHEN plan = '24hr' THEN 350
+                            WHEN plan = '7d' THEN 2400
+                            WHEN plan = '30d' THEN 7500
+                            ELSE 0
+                        END
+                    ) as revenue
+                FROM payment_queue 
+                GROUP BY plan
+            )
+            SELECT 
+                u.*, 
+                r.*,
+                json_agg(json_build_object('plan', p.plan, 'count', p.count, 'revenue', p.revenue)) as plans_data
+            FROM user_stats u, revenue_stats r, plan_distribution p
+            GROUP BY 
+                u.total_users, u.active_users, u.pending_users, u.expired_users, u.suspended_users, 
+                u.signups_today, u.signups_week, r.total_revenue_lifetime, r.revenue_today, 
+                r.revenue_week, r.revenue_month
+        `);
+
+      // 2. USERS WITH FIXED EXPIRY CALCULATION (REAL-TIME CHECK)
+const recentActivity = await pool.query(`
+  SELECT 
+    id,
+    mikrotik_username,
+    mikrotik_password,
+    plan,
+    status,
+    mac_address,
+    customer_email,
+    created_at,
+    expires_at,
+    -- Use COALESCE to handle missing last_sync column gracefully
+    COALESCE(last_sync, created_at) as last_sync,
+    -- FIXED: REAL-TIME STATUS CHECK (IMMEDIATE EXPIRY)
+    CASE 
+      WHEN status = 'expired' THEN 'expired'
+      WHEN status = 'pending' THEN 'pending'
+      WHEN status = 'suspended' THEN 'suspended'
+      WHEN status = 'processed' AND (expires_at IS NULL) THEN 'active'
+      WHEN status = 'processed' AND (expires_at > NOW()) THEN 'active'
+      WHEN status = 'processed' AND (expires_at <= NOW()) THEN 'expired'
+      ELSE 'unknown'
+    END as realtime_status
+  FROM payment_queue
+  ORDER BY created_at DESC
+  LIMIT 100
+`);
+        // 3. GET ACTIVE ADMINS (UNIQUE BY USER)
+        const activeAdmins = await getActiveAdmins();
+        const adminHistory = await getAdminLoginHistory(10);
+        
+        const stats = metrics.rows[0];
+        const users = recentActivity.rows;
+        
+        // Count realtime statuses
+        const activeCount = users.filter(u => u.realtime_status === 'active').length;
+        const expiredCount = users.filter(u => u.realtime_status === 'expired').length;
+        const pendingCount = users.filter(u => u.realtime_status === 'pending').length;
+        const suspendedCount = users.filter(u => u.realtime_status === 'suspended').length;
+        
+        // Plan distribution
+        const planData = {
+            daily: { count: 0, revenue: 0 },
+            weekly: { count: 0, revenue: 0 },
+            monthly: { count: 0, revenue: 0 }
+        };
+        
+        if (stats.plans_data) {
+            stats.plans_data.forEach(p => {
+                if (p.plan === '24hr') {
+                    planData.daily.count = p.count;
+                    planData.daily.revenue = p.revenue;
+                } else if (p.plan === '7d') {
+                    planData.weekly.count = p.count;
+                    planData.weekly.revenue = p.revenue;
+                } else if (p.plan === '30d') {
+                    planData.monthly.count = p.count;
+                    planData.monthly.revenue = p.revenue;
+                }
+            });
+        }
+
+        // Current session info
+        const currentSession = session;
+        const currentAdminIdleSeconds = currentSession ? 
+            Math.floor((Date.now() - currentSession.lastActivity) / 1000) : 0;
+        const activeSessions = activeAdmins.length;
+
+        // ========== RENDER DASHBOARD ==========
+        res.send(renderDashboard({
+            session: session,
+            sessionId: sessionId,
+            stats: stats,
+            users: users,
+            activeCount: activeCount,
+            expiredCount: expiredCount,
+            pendingCount: pendingCount,
+            suspendedCount: suspendedCount,
+            planData: planData,
+            activeAdmins: activeAdmins,
+            adminHistory: adminHistory,
+            activeSessions: activeSessions,
+            currentAdminIdleSeconds: currentAdminIdleSeconds,
+            currentAdminIP: currentSession ? currentSession.ip : 'Unknown',
+            actionMessage: actionMessage,
+            messageType: messageType
+        }));
+
+    } catch (error) {
+        console.log('Dashboard handler error:', error.message);
+        res.status(500).send(getErrorPage(error.message));
+    }
+}
+
+// ========== LOGIN FORM ==========
+function getLoginForm(sessionExpired) {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Portal • Dream Hatcher</title>
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-card: #334155;
+            --border: #475569;
+            --text-primary: #f1f5f9;
+            --text-secondary: #cbd5e1;
+            --text-muted: #94a3b8;
+            --accent: #3b82f6;
+            --accent-dark: #2563eb;
+            --success: #10b981;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --purple: #8b5cf6;
+        }
+        
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        
         body {
-          font-family: 'Segoe UI', Arial, sans-serif;
-          background: linear-gradient(135deg, #0a0e1a 0%, #1a1a2e 100%);
-          min-height: 100vh;
-          color: white;
-          padding: 20px;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            line-height: 1.6;
         }
-        .header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 15px 0 25px;
-          border-bottom: 1px solid rgba(255,255,255,0.1);
-          margin-bottom: 25px;
-          flex-wrap: wrap;
-          gap: 15px;
+        
+        .login-container {
+            width: 100%;
+            max-width: 420px;
         }
-        .header-left h1 { color: #00d4ff; font-size: 1.5rem; }
-        .header-left p { color: #64748b; font-size: 0.85rem; margin-top: 3px; }
-        .header-right { display: flex; gap: 10px; align-items: center; }
-        .btn {
-          padding: 10px 20px;
-          border-radius: 8px;
-          border: none;
-          font-weight: 600;
-          cursor: pointer;
-          font-size: 0.85rem;
-          text-decoration: none;
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
+        
+        .login-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+            text-align: center;
         }
-        .btn-primary { background: linear-gradient(135deg, #00c9ff, #0066ff); color: white; }
-        .btn-danger { background: linear-gradient(135deg, #ef4444, #dc2626); color: white; }
-        .btn-success { background: linear-gradient(135deg, #10b981, #059669); color: white; }
-        .btn-secondary { background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.2); }
-        .btn:hover { opacity: 0.9; transform: translateY(-1px); }
-        .session-timer {
-          background: rgba(245,158,11,0.2);
-          color: #fbbf24;
-          padding: 8px 15px;
-          border-radius: 8px;
-          font-size: 0.8rem;
-          display: flex;
-          align-items: center;
-          gap: 8px;
+        
+        .logo {
+            width: 64px;
+            height: 64px;
+            background: linear-gradient(135deg, var(--accent), var(--purple));
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 24px;
+            color: white;
+            font-size: 28px;
+            font-weight: bold;
         }
-        .stats-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-          gap: 15px;
-          margin-bottom: 25px;
+        
+        h1 {
+            font-size: 28px;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+            font-weight: 700;
         }
-        .stat-card {
-          background: rgba(255,255,255,0.05);
-          border: 1px solid rgba(255,255,255,0.1);
-          border-radius: 16px;
-          padding: 20px;
-          text-align: center;
-          transition: transform 0.2s;
+        
+        p {
+            color: var(--text-secondary);
+            margin-bottom: 32px;
+            font-size: 15px;
         }
-        .stat-card:hover { transform: translateY(-3px); }
-        .stat-card.highlight { background: linear-gradient(135deg, rgba(0,201,255,0.15), rgba(146,254,157,0.1)); border-color: rgba(0,201,255,0.3); }
-        .stat-icon { font-size: 1.8rem; margin-bottom: 8px; }
-        .stat-value { font-size: 1.8rem; font-weight: 800; color: #00d4ff; }
-        .stat-value.money { color: #10b981; }
-        .stat-label { color: #94a3b8; font-size: 0.8rem; margin-top: 5px; }
-        .section {
-          background: rgba(255,255,255,0.05);
-          border: 1px solid rgba(255,255,255,0.1);
-          border-radius: 16px;
-          padding: 20px;
-          margin-bottom: 20px;
-        }
-        .section h2 {
-          color: #00d4ff;
-          font-size: 1.1rem;
-          margin-bottom: 15px;
-          display: flex;
-          align-items: center;
-          gap: 10px;
-        }
-        .tools-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-          gap: 15px;
-        }
-        .tool-card {
-          background: rgba(0,0,0,0.2);
-          border-radius: 12px;
-          padding: 20px;
-        }
-        .tool-card h3 { color: #f8fafc; font-size: 1rem; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
-        .tool-card p { color: #94a3b8; font-size: 0.85rem; margin-bottom: 15px; }
-        .tool-card input, .tool-card select {
-          width: 100%;
-          padding: 10px 12px;
-          border-radius: 8px;
-          border: 1px solid rgba(255,255,255,0.1);
-          background: rgba(255,255,255,0.05);
-          color: white;
-          font-size: 0.9rem;
-          margin-bottom: 10px;
-        }
-        .tool-card input:focus, .tool-card select:focus { outline: none; border-color: #00d4ff; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 12px 10px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.85rem; }
-        th { color: #64748b; font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; }
-        tr:hover { background: rgba(255,255,255,0.02); }
-        .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.7rem; font-weight: 600; }
-        .badge-active { background: rgba(16,185,129,0.2); color: #10b981; }
-        .badge-expired { background: rgba(239,68,68,0.2); color: #ef4444; }
-        .badge-pending { background: rgba(245,158,11,0.2); color: #f59e0b; }
-        .badge-daily { background: rgba(59,130,246,0.2); color: #3b82f6; }
-        .badge-weekly { background: rgba(139,92,246,0.2); color: #8b5cf6; }
-        .badge-monthly { background: rgba(236,72,153,0.2); color: #ec4899; }
-        .actions { display: flex; gap: 5px; }
-        .action-btn {
-          padding: 5px 10px;
-          border-radius: 6px;
-          border: none;
-          font-size: 0.75rem;
-          cursor: pointer;
-          background: rgba(255,255,255,0.1);
-          color: white;
-        }
-        .action-btn:hover { background: rgba(255,255,255,0.2); }
-        .action-btn.delete { background: rgba(239,68,68,0.2); color: #ef4444; }
-        .action-btn.extend { background: rgba(16,185,129,0.2); color: #10b981; }
-        .mac { font-family: monospace; font-size: 0.75rem; color: #64748b; }
-        .password { font-family: monospace; color: #fbbf24; cursor: pointer; }
-        .time { color: #64748b; font-size: 0.8rem; }
+        
         .alert {
-          padding: 15px 20px;
-          border-radius: 12px;
-          margin-bottom: 20px;
-          display: flex;
-          align-items: center;
-          gap: 10px;
+            background: rgba(239, 68, 68, 0.2);
+            border: 1px solid rgba(239, 68, 68, 0.4);
+            color: var(--danger);
+            padding: 12px 16px;
+            border-radius: 10px;
+            margin-bottom: 24px;
+            display: ${sessionExpired ? 'flex' : 'none'};
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            font-size: 14px;
         }
-        .alert-success { background: rgba(16,185,129,0.2); border: 1px solid rgba(16,185,129,0.3); color: #10b981; }
-        .alert-error { background: rgba(239,68,68,0.2); border: 1px solid rgba(239,68,68,0.3); color: #ef4444; }
-        .search-box {
-          display: flex;
-          gap: 10px;
-          margin-bottom: 15px;
+        
+        .input-group {
+            margin-bottom: 20px;
+            text-align: left;
         }
-        .search-box input {
-          flex: 1;
-          padding: 10px 15px;
-          border-radius: 8px;
-          border: 1px solid rgba(255,255,255,0.1);
-          background: rgba(0,0,0,0.2);
-          color: white;
-          font-size: 0.9rem;
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: var(--text-secondary);
+            font-size: 14px;
+            font-weight: 500;
         }
-        .modal {
-          display: none;
-          position: fixed;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100%;
-          background: rgba(0,0,0,0.8);
-          z-index: 1000;
-          align-items: center;
-          justify-content: center;
+        
+        input {
+            width: 100%;
+            padding: 14px 16px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            font-size: 15px;
+            transition: all 0.2s;
         }
-        .modal.active { display: flex; }
-        .modal-content {
-          background: #1a1a2e;
-          border-radius: 16px;
-          padding: 30px;
-          max-width: 400px;
-          width: 90%;
-          border: 1px solid rgba(255,255,255,0.1);
+        
+        input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
         }
-        .modal-content h3 { margin-bottom: 20px; color: #00d4ff; }
-        @media (max-width: 768px) {
-          .stats-grid { grid-template-columns: 1fr 1fr; }
-          .header { flex-direction: column; text-align: center; }
-          th, td { padding: 8px 5px; font-size: 0.75rem; }
+        
+        button {
+            width: 100%;
+            padding: 16px;
+            border-radius: 10px;
+            border: none;
+            background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+            color: white;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 8px;
         }
-        .logout-overlay {
-          display: none;
-          position: fixed;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100%;
-          background: rgba(0,0,0,0.95);
-          z-index: 2000;
-          align-items: center;
-          justify-content: center;
-          flex-direction: column;
+        
+        button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
         }
-        .logout-overlay.active { display: flex; }
-        .logout-overlay h2 { color: #ef4444; margin-bottom: 20px; }
-      </style>
-    </head>
-    <body>
-      <!-- Session timeout overlay -->
-      <div class="logout-overlay" id="logoutOverlay">
-        <h2>⏰ Session Expired</h2>
-        <p style="color: #94a3b8; margin-bottom: 20px;">You've been logged out due to inactivity.</p>
-        <a href="/admin" class="btn btn-primary">🔐 Login Again</a>
-      </div>
-
-      <!-- Extend Plan Modal -->
-      <div class="modal" id="extendModal">
-        <div class="modal-content">
-          <h3>⏰ Extend User Plan</h3>
-          <p style="color: #94a3b8; margin-bottom: 20px;">Select new plan for <strong id="extendUsername"></strong></p>
-          <form id="extendForm" method="GET">
-            <input type="hidden" name="pwd" value="${pwd}">
-            <input type="hidden" name="action" value="extend">
-            <input type="hidden" name="userId" id="extendUserId">
-            <select name="newPlan" style="width: 100%; padding: 12px; border-radius: 8px; margin-bottom: 15px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: white;">
-              <option value="24hr">⚡ Daily (24 hours)</option>
-              <option value="7d">🚀 Weekly (7 days)</option>
-              <option value="30d">👑 Monthly (30 days)</option>
-            </select>
-            <div style="display: flex; gap: 10px;">
-              <button type="button" class="btn btn-secondary" onclick="closeExtendModal()" style="flex: 1;">Cancel</button>
-              <button type="submit" class="btn btn-success" style="flex: 1;">Extend Plan</button>
+        
+        .security-note {
+            margin-top: 28px;
+            font-size: 12px;
+            color: var(--text-muted);
+            padding-top: 20px;
+            border-top: 1px solid var(--border);
+        }
+        
+        .credentials-hint {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px;
+            margin-top: 24px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            text-align: left;
+        }
+        
+        .credentials-hint h4 {
+            color: var(--text-primary);
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+        
+        .cred-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            border-bottom: 1px dashed var(--border);
+        }
+        
+        .cred-item:last-child {
+            border-bottom: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-card">
+            <div class="logo">DH</div>
+            <h1>Dream Hatcher Admin</h1>
+            <p>Secure Admin Portal with Role-Based Access</p>
+            
+            <div class="alert">
+                Session expired. Please login again.
             </div>
-          </form>
+            
+            <form method="GET" action="/admin">
+                <div class="input-group">
+                    <label for="user">Username</label>
+                    <input type="text" id="user" name="user" placeholder="Enter username" required autofocus>
+                </div>
+                
+                <div class="input-group">
+                    <label for="pwd">Password</label>
+                    <input type="password" id="pwd" name="pwd" placeholder="Enter password" required>
+                </div>
+                
+                <button type="submit">
+                    Access Dashboard
+                </button>
+            </form>
+            
+            <div class="credentials-hint">
+                <h4>Available Accounts:</h4>
+                <div class="cred-item">
+                    <span><strong>superadmin</strong> (Full Access)</span>
+                    <span>Super Admin</span>
+                </div>
+                <div class="cred-item">
+                    <span><strong>admin</strong> (admin check)</span>
+                    <span>Admin</span>
+                </div>
+            </div>
+            
+            <div class="security-note">
+                Session Timeout: 5 minutes • Encrypted Connection
+            </div>
         </div>
-      </div>
+    </div>
+</body>
+</html>`;
+}
 
-      <div class="header">
-        <div class="header-left">
-          <h1>🌐 Dream Hatcher Admin</h1>
-          <p>WiFi Business Dashboard</p>
-        </div>
-        <div class="header-right">
-          <div class="session-timer">
-            <span>⏱️</span>
-            <span id="sessionTimer">5:00</span>
-          </div>
-          <button class="btn btn-primary" onclick="location.reload()">🔄 Refresh</button>
-          <a href="/admin" class="btn btn-danger">🚪 Logout</a>
-        </div>
-      </div>
+// ========== ERROR PAGE ==========
+function getErrorPage(error) {
+    return `<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {
+            background: #0f172a;
+            color: #f1f5f9;
+            font-family: 'Segoe UI', sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .error-box {
+            background: #1e293b;
+            border: 1px solid #475569;
+            border-radius: 16px;
+            padding: 40px;
+            text-align: center;
+            max-width: 500px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+        }
+        .error-icon { font-size: 48px; color: #ef4444; margin-bottom: 20px; }
+        h2 { color: #fca5a5; margin-bottom: 10px; }
+        pre {
+            background: #334155;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: left;
+            overflow-x: auto;
+            color: #94a3b8;
+            font-size: 14px;
+            margin: 20px 0;
+        }
+        .btn {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 12px 30px;
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            color: white;
+            border-radius: 10px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        .btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+        }
+    </style>
+</head>
+<body>
+    <div class="error-box">
+        <div class="error-icon">⚠️</div>
+        <h2>Dashboard Error</h2>
+        <p>An unexpected error occurred while loading the dashboard.</p>
+        <pre>${escapeHtml(error)}</pre>
+        <a href="/admin" class="btn">Return to Login</a>
+    </div>
+</body>
+</html>`;
+}
 
-      ${actionMessage ? `<div class="alert alert-success">${actionMessage}</div>` : ''}
-
-      <!-- Revenue Stats -->
-      <div class="stats-grid">
-        <div class="stat-card highlight">
-          <div class="stat-icon">💰</div>
-          <div class="stat-value money">₦${Number(r.today_revenue).toLocaleString()}</div>
-          <div class="stat-label">Today's Revenue</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon">📅</div>
-          <div class="stat-value money">₦${Number(r.week_revenue).toLocaleString()}</div>
-          <div class="stat-label">This Week</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon">📆</div>
-          <div class="stat-value money">₦${Number(r.month_revenue).toLocaleString()}</div>
-          <div class="stat-label">This Month</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon">🏆</div>
-          <div class="stat-value money">₦${Number(r.total_revenue).toLocaleString()}</div>
-          <div class="stat-label">All-Time Revenue</div>
-        </div>
-      </div>
-
-      <!-- User Stats -->
-      <div class="stats-grid">
-        <div class="stat-card">
-          <div class="stat-icon">👥</div>
-          <div class="stat-value">${s.total_payments}</div>
-          <div class="stat-label">Total Users</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon">✅</div>
-          <div class="stat-value" style="color: #10b981;">${activeCount}</div>
-          <div class="stat-label">Active Now</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon">❌</div>
-          <div class="stat-value" style="color: #ef4444;">${expiredCount}</div>
-          <div class="stat-label">Expired</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon">📈</div>
-          <div class="stat-value">${s.today_count}</div>
-          <div class="stat-label">Today's Signups</div>
-        </div>
-      </div>
-
-      <!-- Admin Tools -->
-      <div class="section">
-        <h2>🛠️ Admin Tools</h2>
-        <div class="tools-grid">
-          <div class="tool-card">
-            <h3>🔍 Search User</h3>
-            <p>Find user by username or MAC address</p>
-            <input type="text" id="searchInput" placeholder="Enter username or MAC..." onkeyup="searchTable()">
-          </div>
-          <div class="tool-card">
-            <h3>📊 Export Data</h3>
-            <p>Download payment records as CSV</p>
-            <button class="btn btn-primary" onclick="exportCSV()" style="width: 100%;">📥 Download CSV</button>
-          </div>
-          <div class="tool-card">
-            <h3>🧹 Cleanup Expired</h3>
-            <p>Remove expired users from database</p>
-            <a href="/admin?pwd=${pwd}&action=cleanup" class="btn btn-danger" style="width: 100%; justify-content: center;" onclick="return confirm('Delete all expired users?')">🗑️ Delete Expired</a>
-          </div>
-        </div>
-      </div>
-
-      <!-- Recent Payments Table -->
-      <div class="section">
-        <h2>📋 All Users (${recent.rows.length})</h2>
-        <div style="overflow-x: auto;">
-          <table id="usersTable">
-            <thead>
-              <tr>
-                <th>Username</th>
-                <th>Password</th>
-                <th>Plan</th>
-                <th>Status</th>
-                <th>Expires</th>
-                <th>MAC</th>
-                <th>Created</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${recent.rows.map(row => `
-                <tr data-search="${row.mikrotik_username} ${row.mac_address || ''}">
-                  <td><strong>${row.mikrotik_username}</strong></td>
-                  <td><span class="password" onclick="copyText(this)" title="Click to copy">${row.mikrotik_password}</span></td>
-                  <td>
-                    <span class="badge badge-${row.plan === '24hr' ? 'daily' : row.plan === '7d' ? 'weekly' : 'monthly'}">
-                      ${row.plan === '24hr' ? '⚡ Daily' : row.plan === '7d' ? '🚀 Weekly' : '👑 Monthly'}
-                    </span>
-                  </td>
-                  <td>
-                    <span class="badge ${row.real_status === 'active' ? 'badge-active' : row.real_status === 'expired' ? 'badge-expired' : 'badge-pending'}">
-                      ${row.real_status === 'active' ? '✅ Active' : row.real_status === 'expired' ? '❌ Expired' : '⏳ Pending'}
-                    </span>
-                  </td>
-                  <td class="time">${row.expires_at ? new Date(row.expires_at).toLocaleString('en-NG', { dateStyle: 'short', timeStyle: 'short' }) : 'N/A'}</td>
-                  <td class="mac">${row.mac_address || 'N/A'}</td>
-                  <td class="time">${new Date(row.created_at).toLocaleString('en-NG', { dateStyle: 'short', timeStyle: 'short' })}</td>
-                  <td class="actions">
-                    <button class="action-btn extend" onclick="openExtendModal('${row.id}', '${row.mikrotik_username}')" title="Extend Plan">⏰</button>
-                    <a href="/admin?pwd=${pwd}&action=reset&userId=${row.id}" class="action-btn" onclick="return confirm('Reset this user to pending?')" title="Reset">🔄</a>
-                    <a href="/admin?pwd=${pwd}&action=delete&userId=${row.id}" class="action-btn delete" onclick="return confirm('Delete this user permanently?')" title="Delete">🗑️</a>
-                  </td>
+// ========== DASHBOARD RENDERER ==========
+function renderDashboard(data) {
+    const { 
+        session,
+        sessionId, 
+        stats, 
+        users, 
+        activeCount, 
+        expiredCount, 
+        pendingCount,
+        suspendedCount,
+        planData,
+        activeAdmins,
+        adminHistory,
+        activeSessions,
+        currentAdminIdleSeconds,
+        currentAdminIP,
+        actionMessage, 
+        messageType 
+    } = data;
+    
+    const now = new Date();
+    const sessionEnd = now.getTime() + (5 * 60 * 1000);
+    
+    // Build user table rows WITH CORRECT COLUMN ORDER: Created, Expires, MAC
+    let userRows = '';
+    if (users.length === 0) {
+        userRows = '<tr><td colspan="10" style="text-align:center;padding:48px;color:var(--text-muted);">No users found</td></tr>';
+    } else {
+        users.forEach(user => {
+            const created = new Date(user.created_at);
+            const expires = user.expires_at ? new Date(user.expires_at) : null;
+            const lastSync = user.last_sync ? new Date(user.last_sync) : null;
+            const isExpired = user.realtime_status === 'expired';
+            
+            const statusBadge = 'badge-' + user.realtime_status;
+            const statusIcon = user.realtime_status === 'active' ? 'fa-circle-check' :
+                             user.realtime_status === 'expired' ? 'fa-circle-xmark' :
+                             user.realtime_status === 'pending' ? 'fa-hourglass-half' :
+                             user.realtime_status === 'suspended' ? 'fa-pause-circle' : 'fa-question-circle';
+            const statusLabel = user.realtime_status.charAt(0).toUpperCase() + user.realtime_status.slice(1);
+            
+            // Check permissions for action buttons
+            const showDelete = hasPermission(session, 'delete');
+            const showExtend = hasPermission(session, 'extend');
+            const showReset = hasPermission(session, 'update');
+            const showToggle = hasPermission(session, 'toggle_status');
+            
+            userRows += `
+                <tr data-status="${user.realtime_status}" data-search="${escapeHtml(user.mikrotik_username || '')} ${escapeHtml(user.mac_address || '')} ${escapeHtml(user.customer_email || '')}">
+                    <td class="user-cell">
+                        <strong>${escapeHtml(user.mikrotik_username || 'N/A')}</strong>
+                        ${user.customer_email ? '<small>' + escapeHtml(user.customer_email) + '</small>' : ''}
+                    </td>
+                    <td><span class="pw" onclick="copyPw('${escapeHtml(user.mikrotik_password || '')}')" title="Click to copy">${escapeHtml(user.mikrotik_password || 'N/A')}</span></td>
+                    <td>
+                        <span class="plan-tag plan-${user.plan === '24hr' ? 'daily' : user.plan === '7d' ? 'weekly' : 'monthly'}">
+                            <i class="fa-solid ${user.plan === '24hr' ? 'fa-bolt' : user.plan === '7d' ? 'fa-rocket' : 'fa-crown'}"></i> 
+                            ${planLabel(user.plan)}
+                        </span>
+                    </td>
+                    <td>
+                        <span class="badge ${statusBadge}">
+                            <i class="fa-solid ${statusIcon}"></i> ${statusLabel}
+                        </span>
+                    </td>
+                    <td class="time-cell">
+                        ${created.toLocaleDateString('en-NG')}<br>
+                        <small>${created.toLocaleTimeString('en-NG', {hour:'2-digit',minute:'2-digit'})}</small>
+                    </td>
+                    <td>
+                        ${expires ? 
+                            `<span class="time-cell ${isExpired ? 'expires-gone' : 'expires-ok'}">
+                                ${expires.toLocaleDateString('en-NG')}<br>
+                                <small>${expires.toLocaleTimeString('en-NG', {hour:'2-digit',minute:'2-digit'})}</small>
+                            </span>` : 
+                            '<span style="color:var(--text-muted);">N/A</span>'
+                        }
+                    </td>
+                    <td>${user.mac_address ? `<span class="mac">${escapeHtml(user.mac_address)}</span>` : '<span style="color:var(--text-muted);">N/A</span>'}</td>
+                    <td>
+                        ${lastSync ? 
+                            `<span class="time-cell">
+                                ${lastSync.toLocaleDateString('en-NG')}<br>
+                                <small>${lastSync.toLocaleTimeString('en-NG', {hour:'2-digit',minute:'2-digit'})}</small>
+                            </span>` : 
+                            '<span style="color:var(--text-muted);">Never</span>'
+                        }
+                    </td>
+                    <td>
+                        <div class="row-actions">
+                            ${showExtend ? `
+                                <button class="act-btn a-extend" title="Extend Plan" onclick="openExtend(${user.id}, '${escapeHtml(user.mikrotik_username || '')}')">
+                                    <i class="fa-solid fa-clock-rotate-left"></i>
+                                </button>
+                            ` : ''}
+                            ${showToggle ? `
+                                <a href="/admin?sessionId=${sessionId}&action=toggle_status&userId=${user.id}" class="act-btn a-reset" title="Toggle Status">
+                                    <i class="fa-solid fa-power-off"></i>
+                                </a>
+                            ` : ''}
+                            ${showReset ? `
+                                <a href="/admin?sessionId=${sessionId}&action=reset&userId=${user.id}" class="act-btn a-reset" onclick="return confirm('Reset user to pending?')" title="Reset to Pending">
+                                    <i class="fa-solid fa-arrow-rotate-left"></i>
+                                </a>
+                            ` : ''}
+                            ${showDelete ? `
+                                <a href="/admin?sessionId=${sessionId}&action=delete&userId=${user.id}" class="act-btn a-delete" onclick="return confirm('Permanently delete this user?')" title="Delete User">
+                                    <i class="fa-solid fa-trash-can"></i>
+                                </a>
+                            ` : ''}
+                        </div>
+                    </td>
                 </tr>
-              `).join('')}
-            </tbody>
-          </table>
+            `;
+        });
+    }
+    
+    // Build admin sessions rows (unique per user)
+    let adminSessionsRows = '';
+    activeAdmins.forEach(admin => {
+        const loginTime = new Date(admin.login_time);
+        const lastActivity = new Date(admin.last_activity);
+        const idleMinutes = Math.floor(admin.idle_seconds / 60);
+        const idleSeconds = Math.floor(admin.idle_seconds % 60);
+        const isCurrentUser = admin.username === session.username;
+        
+        adminSessionsRows += `
+            <tr style="${isCurrentUser ? 'background: rgba(139, 92, 246, 0.1);' : ''}">
+                <td style="padding: 12px;">
+                    <div style="font-weight: 600; color: ${isCurrentUser ? 'var(--purple)' : 'var(--text-primary)'}">
+                        ${admin.username}
+                        ${isCurrentUser ? '<span style="color: var(--success); font-size: 11px; margin-left: 5px;">(You)</span>' : ''}
+                    </div>
+                    <div style="font-size: 11px; color: var(--text-muted);">
+                        ${admin.role.replace('_', ' ').toUpperCase()}
+                    </div>
+                </td>
+                <td style="padding: 12px; font-size: 13px; font-family: monospace;">
+                    ${admin.admin_ip}
+                </td>
+                <td style="padding: 12px; font-size: 13px;">
+                    ${loginTime.toLocaleTimeString('en-NG', {hour:'2-digit', minute:'2-digit'})}<br>
+                    <small style="color: var(--text-muted);">
+                        ${loginTime.toLocaleDateString('en-NG', {day:'numeric', month:'short'})}
+                    </small>
+                </td>
+                <td style="padding: 12px; font-size: 13px;">
+                    ${lastActivity.toLocaleTimeString('en-NG', {hour:'2-digit', minute:'2-digit'})}<br>
+                    <small style="color: var(--text-muted);">
+                        ${idleMinutes}m ago
+                    </small>
+                </td>
+                <td style="padding: 12px;">
+                    <span class="${admin.idle_seconds > 300 ? 'badge-expired' : 'badge-active'}" style="font-size: 12px; padding: 4px 10px;">
+                        ${idleMinutes}m ${idleSeconds}s
+                    </span>
+                </td>
+            </tr>
+        `;
+    });
+    
+    // Plan distribution percentages
+    const totalUsers = Number(stats.total_users) || 1;
+    const dailyPct = ((planData.daily.count / totalUsers) * 100).toFixed(1);
+    const weeklyPct = ((planData.weekly.count / totalUsers) * 100).toFixed(1);
+    const monthlyPct = ((planData.monthly.count / totalUsers) * 100).toFixed(1);
+    
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dream Hatcher Admin Dashboard v4.1</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-card: #334155;
+            --bg-hover: #475569;
+            --border: #475569;
+            --border-light: #64748b;
+            --text-primary: #f1f5f9;
+            --text-secondary: #cbd5e1;
+            --text-muted: #94a3b8;
+            --accent: #3b82f6;
+            --accent-dark: #2563eb;
+            --success: #10b981;
+            --success-bg: rgba(16, 185, 129, 0.2);
+            --danger: #ef4444;
+            --danger-bg: rgba(239, 68, 68, 0.2);
+            --warning: #f59e0b;
+            --warning-bg: rgba(245, 158, 11, 0.2);
+            --purple: #8b5cf6;
+            --purple-bg: rgba(139, 92, 246, 0.2);
+            --pink: #ec4899;
+            --pink-bg: rgba(236, 72, 153, 0.2);
+            --radius: 12px;
+            --radius-sm: 8px;
+            --shadow: 0 4px 6px rgba(0,0,0,0.3);
+            --shadow-lg: 0 10px 25px rgba(0,0,0,0.5);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* =================== TOPBAR =================== */
+        .topbar {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: rgba(15, 23, 42, 0.95);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--border);
+            padding: 0 32px;
+            height: 70px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .brand-mark {
+            width: 40px;
+            height: 40px;
+            border-radius: var(--radius-sm);
+            background: linear-gradient(135deg, var(--accent), var(--purple));
+            display: grid;
+            place-items: center;
+            color: white;
+            font-weight: 800;
+            font-size: 18px;
+            box-shadow: var(--shadow);
+        }
+
+        .brand-info {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .brand-name {
+            font-size: 17px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .brand-user {
+            font-size: 13px;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .user-role {
+            background: ${session.role === 'super_admin' ? 'var(--purple-bg)' : 'var(--success-bg)'};
+            color: ${session.role === 'super_admin' ? 'var(--purple)' : 'var(--success)'};
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .nav-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+            background: var(--success-bg);
+            color: var(--success);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 9px 18px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            color: var(--text-primary);
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+
+        .btn:hover {
+            background: var(--bg-hover);
+            border-color: var(--border-light);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow);
+        }
+
+        .btn-accent {
+            background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+            border: none;
+            color: white;
+        }
+
+        .btn-accent:hover {
+            background: linear-gradient(135deg, var(--accent-dark), #1d4ed8);
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+        }
+
+        .btn-danger {
+            color: var(--danger);
+            border-color: rgba(239, 68, 68, 0.3);
+            background: var(--danger-bg);
+        }
+
+        .btn-danger:hover {
+            background: rgba(239, 68, 68, 0.3);
+        }
+
+        /* =================== MAIN CONTENT =================== */
+        .page {
+            padding: 32px;
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            margin-bottom: 32px;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .page-title {
+            font-size: 32px;
+            font-weight: 800;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+        }
+
+        .page-subtitle {
+            color: var(--text-secondary);
+            font-size: 16px;
+        }
+
+        /* =================== TOAST =================== */
+        .toast {
+            padding: 16px 20px;
+            border-radius: var(--radius-sm);
+            margin-bottom: 24px;
+            display: ${actionMessage ? 'flex' : 'none'};
+            align-items: center;
+            gap: 12px;
+            font-size: 15px;
+            font-weight: 500;
+            animation: slideDown 0.3s ease-out;
+            border-left: 4px solid;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow);
+        }
+
+        .toast-success { border-left-color: var(--success); color: var(--success); }
+        .toast-warning { border-left-color: var(--warning); color: var(--warning); }
+        .toast-error { border-left-color: var(--danger); color: var(--danger); }
+        .toast-info { border-left-color: var(--accent); color: var(--accent); }
+
+        /* =================== METRICS GRID =================== */
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-bottom: 32px;
+        }
+
+        .metric {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 24px;
+            transition: all 0.3s;
+            box-shadow: var(--shadow);
+        }
+
+        .metric:hover {
+            transform: translateY(-4px);
+            box-shadow: var(--shadow-lg);
+            border-color: var(--accent);
+        }
+
+        .metric-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .metric-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: var(--radius-sm);
+            display: grid;
+            place-items: center;
+            font-size: 22px;
+            background: var(--bg-secondary);
+            color: var(--accent);
+        }
+
+        .metric-tag {
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 4px 12px;
+            border-radius: 20px;
+        }
+
+        .metric-value {
+            font-size: 32px;
+            font-weight: 800;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+
+        .metric-value.currency { color: var(--success); }
+
+        .metric-label {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+        }
+
+        .metric-footer {
+            padding-top: 16px;
+            border-top: 1px solid var(--border);
+            font-size: 13px;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* =================== CARDS =================== */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            margin-bottom: 32px;
+            overflow: hidden;
+            box-shadow: var(--shadow);
+        }
+
+        .card-header {
+            padding: 24px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+            background: var(--bg-secondary);
+        }
+
+        .card-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .card-subtitle {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+
+        .card-tools {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .card-body { padding: 24px; }
+
+        /* =================== TABLE =================== */
+        .tbl-wrap {
+            overflow-x: auto;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 1000px;
+        }
+
+        thead {
+            background: var(--bg-secondary);
+            border-bottom: 2px solid var(--border);
+        }
+
+        th {
+            padding: 16px;
+            text-align: left;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+            white-space: nowrap;
+        }
+
+        td {
+            padding: 16px;
+            border-bottom: 1px solid var(--border);
+            font-size: 14px;
+            vertical-align: middle;
+        }
+
+        tbody tr { transition: background 0.2s; }
+        tbody tr:hover { background: var(--bg-hover); }
+        tbody tr:last-child td { border-bottom: none; }
+
+        /* =================== BADGES & TAGS =================== */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .badge-active { background: var(--success-bg); color: var(--success); }
+        .badge-expired { background: var(--danger-bg); color: var(--danger); }
+        .badge-pending { background: var(--warning-bg); color: var(--warning); }
+        .badge-suspended { background: #475569; color: var(--text-secondary); }
+
+        .plan-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: var(--radius-sm);
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .plan-daily { background: rgba(59, 130, 246, 0.2); color: var(--accent); }
+        .plan-weekly { background: rgba(139, 92, 246, 0.2); color: var(--purple); }
+        .plan-monthly { background: rgba(236, 72, 153, 0.2); color: var(--pink); }
+
+        /* =================== ACTIONS =================== */
+        .row-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .act-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: grid;
+            place-items: center;
+            font-size: 14px;
+            transition: all 0.2s;
+            text-decoration: none;
+        }
+
+        .act-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow);
+        }
+
+        .act-btn.a-extend:hover { color: var(--success); border-color: var(--success); }
+        .act-btn.a-reset:hover { color: var(--warning); border-color: var(--warning); }
+        .act-btn.a-delete:hover { color: var(--danger); border-color: var(--danger); }
+
+        /* =================== SEARCH & FILTERS =================== */
+        .search-wrap {
+            position: relative;
+            min-width: 240px;
+        }
+
+        .search-wrap i {
+            position: absolute;
+            left: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 11px 16px 11px 40px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+        }
+
+        .filter-tabs {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .filter-tab {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+            border: 1px solid var(--border);
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .filter-tab:hover { background: var(--bg-hover); }
+        .filter-tab.active { background: var(--accent); border-color: var(--accent); color: white; }
+
+        /* =================== MODALS =================== */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(4px);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .modal-overlay.open { display: flex; animation: fadeIn 0.3s; }
+
+        .modal-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            width: 100%;
+            max-width: 500px;
+            box-shadow: var(--shadow-lg);
+            animation: modalSlide 0.3s ease-out;
+        }
+
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes modalSlide { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
+
+        .modal-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-title { font-size: 18px; font-weight: 700; }
+
+        .modal-close {
+            width: 36px;
+            height: 36px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+            background: var(--bg-secondary);
+            color: var(--text-muted);
+            cursor: pointer;
+            display: grid;
+            place-items: center;
+            font-size: 20px;
+            transition: all 0.2s;
+        }
+
+        .modal-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+        .modal-body { padding: 24px; }
+        .modal-footer {
+            padding: 20px 24px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+        }
+
+        /* =================== FOOTER =================== */
+        .page-footer {
+            text-align: center;
+            padding: 32px;
+            border-top: 1px solid var(--border);
+            margin-top: 32px;
+            color: var(--text-muted);
+            font-size: 14px;
+            background: var(--bg-card);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+        }
+
+        .footer-stats {
+            display: flex;
+            justify-content: center;
+            gap: 32px;
+            margin-top: 16px;
+            flex-wrap: wrap;
+            font-size: 13px;
+        }
+
+        /* =================== RESPONSIVE =================== */
+        @media (max-width: 1200px) {
+            .plan-grid { grid-template-columns: 1fr; }
+        }
+
+        @media (max-width: 768px) {
+            .topbar { height: 60px; padding: 0 20px; }
+            .page { padding: 20px; }
+            .metrics { grid-template-columns: 1fr; }
+            .card-header { padding: 16px; }
+            .card-body { padding: 16px; }
+            .card-tools { width: 100%; }
+            .search-wrap { min-width: 100%; }
+        }
+
+        @media (max-width: 480px) {
+            .filter-tabs { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 8px; }
+            .footer-stats { gap: 16px; }
+            .row-actions { flex-wrap: wrap; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Copy Toast -->
+    <div class="copy-feedback" id="copyToast" style="position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(100px); background:var(--success); color:white; padding:12px 24px; border-radius:8px; font-size:14px; font-weight:600; z-index:9999; opacity:0; transition:all 0.3s;">
+        <i class="fa-solid fa-check"></i> Copied to clipboard
+    </div>
+
+    <!-- Extend Modal -->
+    <div class="modal-overlay" id="extendModal">
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3 class="modal-title">Extend User Plan</h3>
+                <button class="modal-close" onclick="closeExtend()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="color: var(--text-secondary); margin-bottom: 20px;">
+                    Extending plan for: <strong id="extendUser" style="color: var(--text-primary);"></strong>
+                </p>
+                <div class="plan-options">
+                    <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer; transition:all 0.2s;" onclick="selectPlan(this)">
+                        <input type="radio" name="extPlan" value="24hr" checked style="margin-right:12px;">
+                        <span style="font-weight:600; color:var(--accent);">Daily Plan</span>
+                        <div style="margin-left:28px; font-size:14px; color:var(--text-secondary);">24 hours • ₦350</div>
+                    </label>
+                    <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer; transition:all 0.2s;" onclick="selectPlan(this)">
+                        <input type="radio" name="extPlan" value="7d" style="margin-right:12px;">
+                        <span style="font-weight:600; color:var(--purple);">Weekly Plan</span>
+                        <div style="margin-left:28px; font-size:14px; color:var(--text-secondary);">7 days • ₦2,400</div>
+                    </label>
+                    <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer; transition:all 0.2s;" onclick="selectPlan(this)">
+                        <input type="radio" name="extPlan" value="30d" style="margin-right:12px;">
+                        <span style="font-weight:600; color:var(--pink);">Monthly Plan</span>
+                        <div style="margin-left:28px; font-size:14px; color:var(--text-secondary);">30 days • ₦7,500</div>
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeExtend()">Cancel</button>
+                <button class="btn btn-accent" id="extendConfirmBtn">
+                    <i class="fa-solid fa-check"></i> Confirm Extension
+                </button>
+            </div>
         </div>
-      </div>
+    </div>
 
-      <div style="text-align: center; padding: 20px; color: #64748b; font-size: 0.8rem;">
-        <p>Dream Hatcher Tech Admin Dashboard v2.0</p>
-        <p>Last refreshed: ${new Date().toLocaleString('en-NG')}</p>
-      </div>
+    <!-- Admin Sessions Modal -->
+    <div class="modal-overlay" id="adminSessionsModal">
+        <div class="modal-box" style="max-width: 700px;">
+            <div class="modal-header">
+                <h3 class="modal-title"><i class="fa-solid fa-user-shield"></i> Active Admin Sessions</h3>
+                <button class="modal-close" onclick="closeModal('adminSessionsModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="max-height: 400px; overflow-y: auto;">
+                    <table style="width: 100%;">
+                        <thead>
+                            <tr>
+                                <th style="padding: 12px;">Username</th>
+                                <th style="padding: 12px;">IP Address</th>
+                                <th style="padding: 12px;">Login Time</th>
+                                <th style="padding: 12px;">Last Activity</th>
+                                <th style="padding: 12px;">Idle Time</th>
+                            </tr>
+                        </thead>
+                        <tbody id="adminSessionsBody">
+                            ${activeAdmins.length > 0 ? adminSessionsRows : `
+                                <tr>
+                                    <td colspan="5" style="text-align: center; padding: 40px; color: var(--text-muted);">
+                                        <i class="fa-solid fa-user-slash" style="font-size: 24px; display: block; margin-bottom: 10px;"></i>
+                                        No active admin sessions
+                                    </td>
+                                </tr>
+                            `}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeModal('adminSessionsModal')">Close</button>
+                ${activeSessions > 1 && hasPermission(session, 'force_logout') ? `
+                    <button class="btn btn-danger" onclick="forceLogoutAll()">
+                        <i class="fa-solid fa-power-off"></i> Force Logout All Others
+                    </button>
+                ` : ''}
+            </div>
+        </div>
+    </div>
 
-      <script>
-        // ============================================
-        // SESSION TIMEOUT (5 minutes)
-        // ============================================
-        let sessionTime = 5 * 60; // 5 minutes in seconds
-        let lastActivity = Date.now();
+    <!-- Topbar -->
+    <nav class="topbar">
+        <div class="brand">
+            <div class="brand-mark">DH</div>
+            <div class="brand-info">
+                <div class="brand-name">Dream Hatcher Admin</div>
+                <div class="brand-user">
+                    <span>${session.username}</span>
+                    <span class="user-role">${session.role.replace('_', ' ')}</span>
+                </div>
+            </div>
+        </div>
+        <div class="nav-actions">
+            <div class="chip">
+                <i class="fa-solid fa-circle" style="font-size: 8px; color: var(--success);"></i>
+                System Online
+            </div>
+            ${hasPermission(session, 'export') ? `
+                <a href="/admin?sessionId=${sessionId}&exportData=csv" class="btn">
+                    <i class="fa-solid fa-download"></i> Export CSV
+                </a>
+            ` : ''}
+            ${hasPermission(session, 'delete') ? `
+                <a href="/admin?sessionId=${sessionId}&action=cleanup" class="btn btn-danger" onclick="return confirm('Cleanup expired/pending users?')">
+                    <i class="fa-solid fa-broom"></i> Cleanup
+                </a>
+            ` : ''}
+            ${hasPermission(session, 'update') ? `
+                <a href="/admin?sessionId=${sessionId}&action=sync_expired" class="btn" title="Sync expired users with MikroTik">
+                    <i class="fa-solid fa-rotate"></i> Sync Expired
+                </a>
+            ` : ''}
+            <button class="btn" onclick="location.reload()">
+                <i class="fa-solid fa-rotate"></i> Refresh
+            </button>
+            <button class="btn btn-danger" onclick="logout()">
+                <i class="fa-solid fa-right-from-bracket"></i> Logout
+            </button>
+        </div>
+    </nav>
 
-        function updateTimer() {
-          const minutes = Math.floor(sessionTime / 60);
-          const seconds = sessionTime % 60;
-          document.getElementById('sessionTimer').textContent =
-            minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
+    <!-- Main Content -->
+    <main class="page">
+        <div class="page-header">
+            <div>
+                <h1 class="page-title">Dashboard Overview</h1>
+                <p class="page-subtitle">Real-time business insights & user management</p>
+            </div>
+            <div style="font-size: 14px; color: var(--text-secondary);">
+                <i class="fa-solid fa-clock"></i> Last refreshed: ${new Date().toLocaleString('en-NG')}
+            </div>
+        </div>
 
-          if (sessionTime <= 0) {
-            document.getElementById('logoutOverlay').classList.add('active');
-            return;
-          }
+        ${actionMessage ? `
+            <div class="toast toast-${messageType}">
+                <i class="fa-solid fa-${messageType === 'success' ? 'check-circle' : messageType === 'warning' ? 'triangle-exclamation' : messageType === 'error' ? 'circle-xmark' : 'circle-info'}"></i>
+                ${actionMessage}
+            </div>
+        ` : ''}
 
-          sessionTime--;
-          setTimeout(updateTimer, 1000);
+        <!-- Metrics Grid -->
+        <div class="metrics">
+            <!-- Lifetime Revenue -->
+            <div class="metric">
+                <div class="metric-header">
+                    <div class="metric-icon">
+                        <i class="fa-solid fa-vault"></i>
+                    </div>
+                    <span class="metric-tag" style="background:var(--success-bg); color:var(--success);">ALL-TIME</span>
+                </div>
+                <div class="metric-value currency">${naira(stats.total_revenue_lifetime)}</div>
+                <div class="metric-label">Lifetime Revenue</div>
+                <div class="metric-footer">
+                    <i class="fa-solid fa-info-circle"></i> All payments received
+                </div>
+            </div>
+            
+            <!-- Today's Revenue -->
+            <div class="metric">
+                <div class="metric-header">
+                    <div class="metric-icon" style="background:rgba(59, 130, 246, 0.2); color:var(--accent);">
+                        <i class="fa-solid fa-calendar-day"></i>
+                    </div>
+                    <span class="metric-tag" style="background:rgba(59, 130, 246, 0.2); color:var(--accent);">TODAY</span>
+                </div>
+                <div class="metric-value currency" style="color:var(--accent);">${naira(stats.revenue_today)}</div>
+                <div class="metric-label">Today's Revenue</div>
+                <div class="metric-footer">
+                    <i class="fa-solid fa-user-plus"></i> ${stats.signups_today} signups today
+                </div>
+            </div>
+            
+            <!-- Active Users -->
+            <div class="metric">
+                <div class="metric-header">
+                    <div class="metric-icon" style="background:var(--success-bg); color:var(--success);">
+                        <i class="fa-solid fa-users"></i>
+                    </div>
+                    <span class="metric-tag" style="background:var(--success-bg); color:var(--success);">ACTIVE</span>
+                </div>
+                <div class="metric-value" style="color:var(--success);">${activeCount}</div>
+                <div class="metric-label">Currently Active Users</div>
+                <div class="metric-footer">
+                    <span style="color:var(--danger);"><i class="fa-solid fa-xmark"></i> ${expiredCount} expired</span>
+                    <span style="color:var(--warning);"><i class="fa-solid fa-clock"></i> ${pendingCount} pending</span>
+                </div>
+            </div>
+            
+            <!-- Admin Sessions -->
+            <div class="metric" onclick="showAdminSessions()" style="cursor:pointer;">
+                <div class="metric-header">
+                    <div class="metric-icon" style="background:var(--purple-bg); color:var(--purple);">
+                        <i class="fa-solid fa-user-shield"></i>
+                    </div>
+                    <span class="metric-tag" style="background:var(--purple-bg); color:var(--purple);">SESSIONS</span>
+                </div>
+                <div class="metric-value" style="color:var(--purple);">${activeSessions}</div>
+                <div class="metric-label">Active Admin Sessions</div>
+                <div class="metric-footer">
+                    <i class="fa-solid fa-user"></i> ${session.username}
+                    <i class="fa-solid fa-clock" style="margin-left:12px;"></i> ${Math.floor(currentAdminIdleSeconds / 60)}m idle
+                </div>
+            </div>
+        </div>
+
+        <!-- User Management -->
+        <div class="card">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">
+                        <i class="fa-solid fa-users-gear" style="color:var(--accent); margin-right:10px;"></i>
+                        User Management
+                    </div>
+                    <div class="card-subtitle">
+                        ${users.length} users • 
+                        <span style="color:var(--success);">${activeCount} active</span> • 
+                        <span style="color:var(--danger);">${expiredCount} expired</span> • 
+                        <span style="color:var(--warning);">${pendingCount} pending</span>
+                        ${suspendedCount > 0 ? `• <span style="color:var(--text-secondary);">${suspendedCount} suspended</span>` : ''}
+                    </div>
+                </div>
+                <div class="card-tools">
+                    <div class="search-wrap">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                        <input class="search-input" type="text" id="searchInput" placeholder="Search users, MAC, email..." oninput="filterTable()">
+                    </div>
+                    <div class="filter-tabs">
+                        <button class="filter-tab active" data-filter="all" onclick="setFilter('all')">All</button>
+                        <button class="filter-tab" data-filter="active" onclick="setFilter('active')">Active</button>
+                        <button class="filter-tab" data-filter="pending" onclick="setFilter('pending')">Pending</button>
+                        <button class="filter-tab" data-filter="expired" onclick="setFilter('expired')">Expired</button>
+                        ${suspendedCount > 0 ? '<button class="filter-tab" data-filter="suspended" onclick="setFilter(\'suspended\')">Suspended</button>' : ''}
+                    </div>
+                </div>
+            </div>
+            <div class="tbl-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Username</th>
+                            <th>Password</th>
+                            <th>Plan</th>
+                            <th>Status</th>
+                            <th>Created</th>
+                            <th>Expires</th>
+                            <th>MAC Address</th>
+                            <th>Last Sync</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="usersTbody">
+                        ${userRows}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="page-footer">
+            <p>Dream Hatcher Admin Dashboard v4.1 — Professional WiFi Management System</p>
+            <div class="footer-stats">
+                <span><i class="fa-solid fa-database"></i> ${stats.total_users} Total Users</span>
+                <span><i class="fa-solid fa-money-bill-wave"></i> ${naira(stats.total_revenue_lifetime)} Lifetime Revenue</span>
+                <span><i class="fa-solid fa-user-shield"></i> ${activeSessions} Admin Sessions</span>
+                <span><i class="fa-solid fa-shield-halved"></i> Role: ${session.role.replace('_', ' ').toUpperCase()}</span>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // Session Management
+        let sessionEndTime = ${sessionEnd};
+        let extendTargetId = null;
+        let currentFilter = 'all';
+
+        function updateSessionTimer() {
+            const now = Date.now();
+            const timeLeft = Math.max(0, sessionEndTime - now);
+            
+            if (timeLeft <= 0) {
+                logout();
+                return;
+            }
+            
+            setTimeout(updateSessionTimer, 1000);
         }
 
-        // Reset timer on activity
-        document.addEventListener('mousemove', resetTimer);
-        document.addEventListener('keypress', resetTimer);
-        document.addEventListener('click', resetTimer);
-        document.addEventListener('scroll', resetTimer);
-
-        function resetTimer() {
-          sessionTime = 5 * 60;
+        function resetSessionTimer() {
+            sessionEndTime = Date.now() + (5 * 60 * 1000);
         }
 
-        updateTimer();
-
-        // ============================================
-        // SEARCH FUNCTION
-        // ============================================
-        function searchTable() {
-          const input = document.getElementById('searchInput').value.toLowerCase();
-          const rows = document.querySelectorAll('#usersTable tbody tr');
-
-          rows.forEach(row => {
-            const searchData = row.getAttribute('data-search').toLowerCase();
-            row.style.display = searchData.includes(input) ? '' : 'none';
-          });
+        function logout() {
+            window.location.href = "/admin";
         }
 
-        // ============================================
-        // COPY TEXT
-        // ============================================
-        function copyText(element) {
-          const text = element.textContent;
-          navigator.clipboard.writeText(text).then(() => {
-            const original = element.textContent;
-            element.textContent = '✓ Copied!';
-            element.style.color = '#10b981';
-            setTimeout(() => {
-              element.textContent = original;
-              element.style.color = '';
-            }, 1000);
-          });
-        }
-
-        // ============================================
-        // EXTEND MODAL
-        // ============================================
-        function openExtendModal(userId, username) {
-          document.getElementById('extendUserId').value = userId;
-          document.getElementById('extendUsername').textContent = username;
-          document.getElementById('extendModal').classList.add('active');
-        }
-
-        function closeExtendModal() {
-          document.getElementById('extendModal').classList.remove('active');
-        }
-
-        // Close modal on outside click
-        document.getElementById('extendModal').addEventListener('click', function(e) {
-          if (e.target === this) closeExtendModal();
+        // Activity detection
+        ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'].forEach(event => {
+            document.addEventListener(event, resetSessionTimer, { passive: true });
         });
 
-        // ============================================
-        // EXPORT CSV
-        // ============================================
-        function exportCSV() {
-          const rows = document.querySelectorAll('#usersTable tr');
-          let csv = [];
-
-          rows.forEach(row => {
-            const cols = row.querySelectorAll('td, th');
-            const rowData = [];
-            cols.forEach((col, index) => {
-              if (index < cols.length - 1) { // Skip actions column
-                rowData.push('"' + col.textContent.trim().replace(/"/g, '""') + '"');
-              }
+        // Copy password
+        function copyPw(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                const toast = document.getElementById('copyToast');
+                toast.style.transform = 'translateX(-50%) translateY(0)';
+                toast.style.opacity = '1';
+                setTimeout(() => {
+                    toast.style.transform = 'translateX(-50%) translateY(100px)';
+                    toast.style.opacity = '0';
+                }, 2000);
             });
-            csv.push(rowData.join(','));
-          });
-
-          const blob = new Blob([csv.join('\\n')], { type: 'text/csv' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = 'dreamhatcher_users_' + new Date().toISOString().slice(0,10) + '.csv';
-          a.click();
         }
-      </script>
-    </body>
-    </html>
-    `;
 
-    res.send(html);
+        // Extend modal
+        function openExtend(userId, username) {
+            extendTargetId = userId;
+            document.getElementById('extendUser').textContent = username;
+            document.getElementById('extendModal').classList.add('open');
+        }
 
-  } catch (error) {
-    console.error('Dashboard error:', error);
-    res.status(500).send('Dashboard error: ' + error.message);
-  }
-});
+        function closeExtend() {
+            document.getElementById('extendModal').classList.remove('open');
+            extendTargetId = null;
+        }
 
-// ========== CLEANUP EXPIRED USERS ==========
-app.get('/admin', async (req, res, next) => {
-  if (req.query.action === 'cleanup' && req.query.pwd === ADMIN_PASSWORD) {
-    try {
-      const result = await pool.query(`
-        DELETE FROM payment_queue
-        WHERE status = 'processed'
-        AND (
-          (plan = '24hr' AND created_at + INTERVAL '24 hours' < NOW())
-          OR (plan = '7d' AND created_at + INTERVAL '7 days' < NOW())
-          OR (plan = '30d' AND created_at + INTERVAL '30 days' < NOW())
-        )
-      `);
-      // Redirect back with success message (handled by main route)
-      return res.redirect('/admin?pwd=' + req.query.pwd + '&cleaned=' + result.rowCount);
-    } catch (error) {
-      console.error('Cleanup error:', error);
-    }
-  }
-  next();
-});
+        function selectPlan(element) {
+            document.querySelectorAll('.plan-option').forEach(opt => {
+                opt.style.borderColor = 'var(--border)';
+                opt.style.background = 'var(--bg-secondary)';
+            });
+            element.style.borderColor = 'var(--accent)';
+            element.style.background = 'rgba(59, 130, 246, 0.1)';
+            element.querySelector('input').checked = true;
+        }
 
+        document.getElementById('extendConfirmBtn').addEventListener('click', function() {
+            if (!extendTargetId) return;
+            const sel = document.querySelector('input[name="extPlan"]:checked');
+            if (!sel) return;
+            window.location.href = '/admin?sessionId=${sessionId}&action=extend&userId=' + extendTargetId + '&newPlan=' + sel.value;
+        });
+
+        // Admin sessions modal
+        function showAdminSessions() {
+            document.getElementById('adminSessionsModal').classList.add('open');
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.remove('open');
+        }
+
+        // Close modals on outside click
+        document.querySelectorAll('.modal-overlay').forEach(modal => {
+            modal.addEventListener('click', function(e) {
+                if (e.target === this) {
+                    if (this.id === 'extendModal') closeExtend();
+                    else if (this.id === 'adminSessionsModal') closeModal('adminSessionsModal');
+                }
+            });
+        });
+
+        // Force logout all other sessions
+        function forceLogoutAll() {
+            if (confirm('Force logout all other admin sessions? Only you will remain logged in.')) {
+                window.location.href = '/admin?sessionId=${sessionId}&forceLogout=all';
+            }
+        }
+
+        // Table filtering
+        function setFilter(filter) {
+            currentFilter = filter;
+            document.querySelectorAll('.filter-tab').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.filter === filter);
+            });
+            filterTable();
+        }
+
+        function filterTable() {
+            const search = document.getElementById('searchInput').value.toLowerCase();
+            const rows = document.querySelectorAll('#usersTbody tr');
+            
+            rows.forEach(row => {
+                if (!row.dataset.search) {
+                    row.style.display = 'none';
+                    return;
+                }
+                
+                const matchSearch = search === '' || row.dataset.search.toLowerCase().includes(search);
+                const matchFilter = currentFilter === 'all' || row.dataset.status === currentFilter;
+                
+                row.style.display = (matchSearch && matchFilter) ? '' : 'none';
+            });
+        }
+
+        // Auto-refresh every 60 seconds
+        setInterval(() => {
+            window.location.reload();
+        }, 60000);
+
+        // Initialize
+        updateSessionTimer();
+        
+        // Highlight search on focus
+        document.getElementById('searchInput')?.addEventListener('focus', function() {
+            this.select();
+        });
+    </script>
+</body>
+</html>`;
+}
 // ========== ERROR HANDLER ==========
 app.use((err, req, res, next) => {
   console.error('💥 Uncaught error:', err.message);
@@ -2014,3 +3618,4 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
