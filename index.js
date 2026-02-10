@@ -2328,19 +2328,7 @@ function getLoginForm(sessionExpired) {
                     Access Dashboard
                 </button>
             </form>
-            
-            <div class="credentials-hint">
-                <h4>Available Accounts:</h4>
-                <div class="cred-item">
-                    <span><strong>superadmin</strong> (Full Access)</span>
-                    <span>Super Admin</span>
-                </div>
-                <div class="cred-item">
-                    <span><strong>admin</strong> (admin check)</span>
-                    <span>Admin</span>
-                </div>
-            </div>
-            
+                     
             <div class="security-note">
                 Session Timeout: 5 minutes • Encrypted Connection
             </div>
@@ -3618,4 +3606,5 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
