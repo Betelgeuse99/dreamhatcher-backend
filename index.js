@@ -1617,11 +1617,11 @@ async function checkExpiredUsers() {
         `, [now]);
         
         if (result.rows.length > 0) {
-            console.log(`⏰ Auto-expiring ${result.rows.length} user(s) via scheduled check`);
+            // Removed log: ⏰ Auto-expiring X user(s) via scheduled check
             
             // Mark them as expired
             for (const user of result.rows) {
-                console.log(`⏰ Auto-expired: ${user.mikrotik_username} (ID: ${user.id})`);
+                // Removed log: ⏰ Auto-expired: user_... (ID: ...)
                 await pool.query(
                     `UPDATE payment_queue SET status = 'expired' WHERE id = $1`,
                     [user.id]
@@ -1657,7 +1657,7 @@ async function syncExpiredWithMikroTik() {
         `);
         
         if (result.rows.length > 0) {
-            console.log(`🔄 Syncing ${result.rows.length} expired users with MikroTik`);
+            // Removed log: 🔄 Syncing X expired users with MikroTik
             
             // Update last_sync timestamp
             for (const user of result.rows) {
@@ -1675,7 +1675,6 @@ async function syncExpiredWithMikroTik() {
         return [];
     }
 }
-
 // Run sync every 5 minutes
 setInterval(syncExpiredWithMikroTik, 300000);
 
@@ -3593,6 +3592,7 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
 
