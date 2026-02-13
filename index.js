@@ -64,10 +64,8 @@ async function getMonnifyToken() {
 // ========== KEEP ALIVE (prevents Render sleep) ==========
 function keepAlive() {
   https.get('https://dreamhatcher-backend.onrender.com/health', (res) => {
-    console.log('🏓 Keep-alive ping, status:', res.statusCode);
-  }).on('error', (err) => {
-    console.log('🏓 Keep-alive error:', err.message);
-  });
+    // No logging
+  }).on('error', (err) => {});
 }
 setInterval(keepAlive, 14 * 60 * 1000);
 
@@ -3606,5 +3604,6 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
