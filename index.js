@@ -691,8 +691,8 @@ app.get('/success', async (req, res) => {
         </div>
 
         <div id="credentials-state" class="hidden">
-          <div class="success-icon">🎉</div>
-          <h2>Your WiFi Credentials</h2>
+          <div class="success-icon">🛜🔑</div>
+          <h4>User & Password</h4>
 
           <div class="credentials-box">
             <h3>Login Details</h3>
@@ -704,17 +704,6 @@ app.get('/success', async (req, res) => {
             <div class="credential" id="plan-display">---</div>
             <div class="credential-label">Expires</div>
             <div class="credential" id="expires-display">---</div>
-          </div>
-
-          <div class="steps">
-            <h4>📶 How to Connect</h4>
-            <ol>
-              <li>Connect to <strong>Dream Hatcher WiFi</strong> network</li>
-              <li>A login page will open automatically or a pop-up window</li>
-              <li>If not, open browser and type:<br><strong>dreamhatcher.login</strong></li>
-              <li>Enter your username and password above</li>
-              <li>Click Login and enjoy!</li>
-            </ol>
           </div>
 
           <button class="btn" onclick="copyCredentials()">📋 Copy Credentials</button>
@@ -3604,6 +3593,7 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
 
