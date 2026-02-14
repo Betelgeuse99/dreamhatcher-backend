@@ -1678,6 +1678,66 @@ async function syncExpiredWithMikroTik() {
 // Run sync every 5 minutes
 setInterval(syncExpiredWithMikroTik, 300000);
 
+// ========== CHECK MAC FOR EXISTING CREDENTIALS (Captive Portal Use) ==========
+app.get('/api/check-mac', async (req, res) => {
+  const mac = (req.query.mac || '').trim().toUpperCase();
+
+  // Always return JSON with CORS for captive portal
+  res.set({
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Cache-Control': 'no-store'
+  });
+
+  if (!mac || mac === 'UNKNOWN' || mac.length < 10) {
+    return res.json({ found: false });
+  }
+
+  try {
+    // Find the most recent non-expired payment for this MAC
+    const result = await pool.query(
+      `SELECT mikrotik_username, mikrotik_password, plan, status, expires_at, transaction_id
+       FROM payment_queue
+       WHERE UPPER(mac_address) = $1
+       AND status IN ('pending', 'processed')
+       AND (expires_at IS NULL OR expires_at > NOW())
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [mac]
+    );
+
+    if (result.rows.length === 0) {
+      return res.json({ found: false });
+    }
+
+    const row = result.rows[0];
+
+    if (row.status === 'pending') {
+      // Payment received but not yet provisioned on MikroTik
+      return res.json({
+        found: true,
+        ready: false,
+        message: 'Account is being created, please wait...'
+      });
+    }
+
+    // Status is 'processed' — credentials are ready
+    return res.json({
+      found: true,
+      ready: true,
+      username: row.mikrotik_username,
+      password: row.mikrotik_password,
+      plan: row.plan,
+      expires: row.expires_at ? row.expires_at.toISOString() : '',
+      reference: row.transaction_id
+    });
+
+  } catch (error) {
+    console.error('Check-MAC error:', error.message);
+    return res.json({ found: false });
+  }
+});
+
 // ========== ADMIN DASHBOARD ROUTE ==========
 app.get('/admin', async (req, res) => {
     const { user, pwd, action, userId, newPlan, sessionId, exportData, forceLogout } = req.query;
@@ -3592,6 +3652,7 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
 
