@@ -151,7 +151,7 @@ app.get('/pay/:plan', async (req, res) => {
       description: `Dream Hatcher WiFi - ${selectedPlan.duration}`
     });
 
-    console.log(`💳 Payment: ${plan} | MAC: ${mac} | Email: ${email} | Ref: ${paymentReference}`);
+    console.log(`💵 Payment: ${plan} | MAC: ${mac} | Email: ${email} | Ref: ${paymentReference}`);
 
     res.redirect(checkoutUrl);
 
@@ -280,7 +280,7 @@ app.post('/api/monnify-webhook', async (req, res) => {
       ]
     );
 
-    console.log(`✅ Queued user ${username} | Plan: ${plan} | Expires: ${expiresAt.toISOString()}`);
+    console.log(`🙋 Queued user ${username} | Plan: ${plan} | Expires: ${expiresAt.toISOString()}`);
     return res.status(200).json({ received: true });
 
   } catch (error) {
@@ -545,7 +545,7 @@ app.get('/success', async (req, res) => {
     const { reference, trxref, paymentReference } = req.query;
     const ref = reference || trxref || paymentReference;
 
-    console.log('📄 Success page accessed, ref:', ref);
+    console.log('🛜 Success page accessed, ref:', ref);
 
     if (!ref) {
       return res.send(`
@@ -987,7 +987,7 @@ app.get('/api/mikrotik-queue-text', async (req, res) => {
       return res.send('');
     }
 
-    console.log(`📤 Preparing ${result.rows.length} users for MikroTik`);
+    console.log(`✒️ Preparing ${result.rows.length} users for MikroTik`);
 
     const lines = result.rows.map(row => {
       const expires = row.expires_at ? row.expires_at.toISOString() : '';
@@ -1002,7 +1002,7 @@ app.get('/api/mikrotik-queue-text', async (req, res) => {
     });
 
     const output = lines.join('\n');
-    console.log(`✅ Sending ${result.rows.length} users to MikroTik`);
+    console.log(`🚀 Sending ${result.rows.length} users to MikroTik`);
 
     res.set('Content-Type', 'text/plain');
     res.send(output);
@@ -3652,6 +3652,7 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
 
