@@ -545,7 +545,7 @@ app.get('/success', async (req, res) => {
     const { reference, trxref, paymentReference } = req.query;
     const ref = reference || trxref || paymentReference;
 
-    console.log('🛜 Success page accessed, ref:', ref);
+    console.log('💱 Success page accessed, ref:', ref);
 
     if (!ref) {
       return res.send(`
@@ -1016,7 +1016,7 @@ app.get('/api/mikrotik-queue-text', async (req, res) => {
 
 app.post('/api/mark-processed/:id', async (req, res) => {
   try {
-    console.log(`🔄 Processing mark-processed for: ${req.params.id}`);
+    console.log(`⌛ Processing mark-processed for: ${req.params.id}`);
     let userId = req.params.id;
 
     if (userId.includes('|')) {
@@ -3652,6 +3652,7 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
+
 
 
 
