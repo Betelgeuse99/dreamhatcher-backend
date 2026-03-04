@@ -40,7 +40,10 @@ function generatePassword(length = 8) {
 function getPlanDuration(planCode) {
   switch(planCode) {
     case '24hr': return '24 hours';
+    case '3d': return '3 days';
+    case '5d': return '5 days';
     case '7d': return '7 days';
+    case '14d': return '14 days';
     case '30d': return '30 days';
     default: return planCode;
   }
@@ -125,8 +128,11 @@ const initializeMonnifyPayment = async ({ email, amount, plan, mac_address, desc
 
 // ========== PLAN CONFIGURATION ==========
 const planConfig = {
-  daily: { amount: 350, code: '24hr', duration: '24 Hours' },
-  weekly: { amount: 2400, code: '7d', duration: '7 Days' },
+  daily:   { amount: 350, code: '24hr', duration: '24 Hours' },
+  '3day':  { amount: 1050, code: '3d', duration: '3 Days' },
+  '5day':  { amount: 1750, code: '5d', duration: '5 Days' },
+  weekly:  { amount: 2400, code: '7d', duration: '7 Days' },
+  '2week': { amount: 4100, code: '14d', duration: '14 Days' },
   monthly: { amount: 7500, code: '30d', duration: '30 Days' }
 };
 
@@ -241,7 +247,10 @@ app.post('/api/monnify-webhook', async (req, res) => {
     let plan = planFromMetadata;
     if (!plan) {
       if (amountNaira === 350) plan = '24hr';
+      else if (amountNaira === 1050) plan = '3d';
+      else if (amountNaira === 1750) plan = '5d';
       else if (amountNaira === 2400) plan = '7d';
+      else if (amountNaira === 4100) plan = '14d';
       else if (amountNaira === 7500) plan = '30d';
       else {
         console.error('❌ Invalid amount:', amountNaira);
@@ -257,8 +266,14 @@ app.post('/api/monnify-webhook', async (req, res) => {
     const now = new Date();
     if (plan === '24hr') {
       expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    } else if (plan === '3d') {
+      expiresAt = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+    } else if (plan === '5d') {
+      expiresAt = new Date(now.getTime() + 5 * 24 * 60 * 60 * 1000);
     } else if (plan === '7d') {
       expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    } else if (plan === '14d') {
+      expiresAt = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
     } else if (plan === '30d') {
       expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
     }
@@ -1375,12 +1390,12 @@ function naira(amount) {
 }
 
 function planPrice(plan) {
-    const prices = { '24hr': 350, '7d': 2400, '30d': 7500 };
+    const prices = { '24hr': 350, '3d': 1050, '5d': 1750, '7d': 2400, '14d': 4100, '30d': 7500 };
     return prices[plan] || 0;
 }
 
 function planLabel(plan) {
-    const labels = { '24hr': 'Daily', '7d': 'Weekly', '30d': 'Monthly' };
+    const labels = { '24hr': 'Daily', '3d': '3-Day', '5d': '5-Day', '7d': 'Weekly', '14d': '2-Week', '30d': 'Monthly' };
     return labels[plan] || plan || 'Unknown';
 }
 
@@ -1858,7 +1873,10 @@ async function handleAdminDashboard(req, res, sessionId) {
                 // Calculate proper expiry based on plan
                 let interval = '';
                 if (newPlan === '24hr') interval = '24 hours';
+                else if (newPlan === '3d') interval = '3 days';
+                else if (newPlan === '5d') interval = '5 days';
                 else if (newPlan === '7d') interval = '7 days';
+                else if (newPlan === '14d') interval = '14 days';
                 else if (newPlan === '30d') interval = '30 days';
                 
                 await pool.query(
@@ -2012,7 +2030,10 @@ async function handleAdminDashboard(req, res, sessionId) {
                     COALESCE(SUM(
                         CASE 
                             WHEN plan = '24hr' THEN 350
+                            WHEN plan = '3d' THEN 1050
+                            WHEN plan = '5d' THEN 1750
                             WHEN plan = '7d' THEN 2400
+                            WHEN plan = '14d' THEN 4100
                             WHEN plan = '30d' THEN 7500
                             ELSE 0
                         END
@@ -2022,7 +2043,10 @@ async function handleAdminDashboard(req, res, sessionId) {
                         CASE WHEN created_at::date = CURRENT_DATE
                         THEN CASE 
                             WHEN plan = '24hr' THEN 350
+                            WHEN plan = '3d' THEN 1050
+                            WHEN plan = '5d' THEN 1750
                             WHEN plan = '7d' THEN 2400
+                            WHEN plan = '14d' THEN 4100
                             WHEN plan = '30d' THEN 7500
                             ELSE 0
                         END ELSE 0 END
@@ -2032,7 +2056,10 @@ async function handleAdminDashboard(req, res, sessionId) {
                         CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days'
                         THEN CASE 
                             WHEN plan = '24hr' THEN 350
+                            WHEN plan = '3d' THEN 1050
+                            WHEN plan = '5d' THEN 1750
                             WHEN plan = '7d' THEN 2400
+                            WHEN plan = '14d' THEN 4100
                             WHEN plan = '30d' THEN 7500
                         END ELSE 0 END
                     ), 0) as revenue_week,
@@ -2041,7 +2068,10 @@ async function handleAdminDashboard(req, res, sessionId) {
                         CASE WHEN created_at >= CURRENT_DATE - INTERVAL '30 days'
                         THEN CASE 
                             WHEN plan = '24hr' THEN 350
+                            WHEN plan = '3d' THEN 1050
+                            WHEN plan = '5d' THEN 1750
                             WHEN plan = '7d' THEN 2400
+                            WHEN plan = '14d' THEN 4100
                             WHEN plan = '30d' THEN 7500
                         END ELSE 0 END
                     ), 0) as revenue_month
@@ -2054,7 +2084,10 @@ async function handleAdminDashboard(req, res, sessionId) {
                     SUM(
                         CASE 
                             WHEN plan = '24hr' THEN 350
+                            WHEN plan = '3d' THEN 1050
+                            WHEN plan = '5d' THEN 1750
                             WHEN plan = '7d' THEN 2400
+                            WHEN plan = '14d' THEN 4100
                             WHEN plan = '30d' THEN 7500
                             ELSE 0
                         END
@@ -2073,34 +2106,34 @@ async function handleAdminDashboard(req, res, sessionId) {
                 r.revenue_week, r.revenue_month
         `);
 
-      // 2. USERS WITH FIXED EXPIRY CALCULATION (REAL-TIME CHECK)
-const recentActivity = await pool.query(`
-  SELECT 
-    id,
-    mikrotik_username,
-    mikrotik_password,
-    plan,
-    status,
-    mac_address,
-    customer_email,
-    created_at,
-    expires_at,
-    -- Use COALESCE to handle missing last_sync column gracefully
-    COALESCE(last_sync, created_at) as last_sync,
-    -- FIXED: REAL-TIME STATUS CHECK (IMMEDIATE EXPIRY)
-    CASE 
-      WHEN status = 'expired' THEN 'expired'
-      WHEN status = 'pending' THEN 'pending'
-      WHEN status = 'suspended' THEN 'suspended'
-      WHEN status = 'processed' AND (expires_at IS NULL) THEN 'active'
-      WHEN status = 'processed' AND (expires_at > NOW()) THEN 'active'
-      WHEN status = 'processed' AND (expires_at <= NOW()) THEN 'expired'
-      ELSE 'unknown'
-    END as realtime_status
-  FROM payment_queue
-  ORDER BY created_at DESC
-  LIMIT 100
-`);
+        // 2. USERS WITH FIXED EXPIRY CALCULATION (REAL-TIME CHECK)
+        const recentActivity = await pool.query(`
+          SELECT 
+            id,
+            mikrotik_username,
+            mikrotik_password,
+            plan,
+            status,
+            mac_address,
+            customer_email,
+            created_at,
+            expires_at,
+            -- Use COALESCE to handle missing last_sync column gracefully
+            COALESCE(last_sync, created_at) as last_sync,
+            -- FIXED: REAL-TIME STATUS CHECK (IMMEDIATE EXPIRY)
+            CASE 
+              WHEN status = 'expired' THEN 'expired'
+              WHEN status = 'pending' THEN 'pending'
+              WHEN status = 'suspended' THEN 'suspended'
+              WHEN status = 'processed' AND (expires_at IS NULL) THEN 'active'
+              WHEN status = 'processed' AND (expires_at > NOW()) THEN 'active'
+              WHEN status = 'processed' AND (expires_at <= NOW()) THEN 'expired'
+              ELSE 'unknown'
+            END as realtime_status
+          FROM payment_queue
+          ORDER BY created_at DESC
+          LIMIT 100
+        `);
         // 3. GET ACTIVE ADMINS (UNIQUE BY USER)
         const activeAdmins = await getActiveAdmins();
         const adminHistory = await getAdminLoginHistory(10);
@@ -2117,7 +2150,10 @@ const recentActivity = await pool.query(`
         // Plan distribution
         const planData = {
             daily: { count: 0, revenue: 0 },
+            '3day': { count: 0, revenue: 0 },
+            '5day': { count: 0, revenue: 0 },
             weekly: { count: 0, revenue: 0 },
+            '2week': { count: 0, revenue: 0 },
             monthly: { count: 0, revenue: 0 }
         };
         
@@ -2126,9 +2162,18 @@ const recentActivity = await pool.query(`
                 if (p.plan === '24hr') {
                     planData.daily.count = p.count;
                     planData.daily.revenue = p.revenue;
+                } else if (p.plan === '3d') {
+                    planData['3day'].count = p.count;
+                    planData['3day'].revenue = p.revenue;
+                } else if (p.plan === '5d') {
+                    planData['5day'].count = p.count;
+                    planData['5day'].revenue = p.revenue;
                 } else if (p.plan === '7d') {
                     planData.weekly.count = p.count;
                     planData.weekly.revenue = p.revenue;
+                } else if (p.plan === '14d') {
+                    planData['2week'].count = p.count;
+                    planData['2week'].revenue = p.revenue;
                 } else if (p.plan === '30d') {
                     planData.monthly.count = p.count;
                     planData.monthly.revenue = p.revenue;
@@ -2506,8 +2551,8 @@ function renderDashboard(data) {
                     </td>
                     <td><span class="pw" onclick="copyPw('${escapeHtml(user.mikrotik_password || '')}')" title="Click to copy">${escapeHtml(user.mikrotik_password || 'N/A')}</span></td>
                     <td>
-                        <span class="plan-tag plan-${user.plan === '24hr' ? 'daily' : user.plan === '7d' ? 'weekly' : 'monthly'}">
-                            <i class="fa-solid ${user.plan === '24hr' ? 'fa-bolt' : user.plan === '7d' ? 'fa-rocket' : 'fa-crown'}"></i> 
+                        <span class="plan-tag plan-${user.plan === '24hr' ? 'daily' : user.plan === '3d' ? '3day' : user.plan === '5d' ? '5day' : user.plan === '7d' ? 'weekly' : user.plan === '14d' ? '2week' : 'monthly'}">
+                            <i class="fa-solid ${user.plan === '24hr' ? 'fa-bolt' : user.plan === '3d' ? 'fa-clock' : user.plan === '5d' ? 'fa-calendar' : user.plan === '7d' ? 'fa-rocket' : user.plan === '14d' ? 'fa-star' : 'fa-crown'}"></i> 
                             ${planLabel(user.plan)}
                         </span>
                     </td>
@@ -2649,6 +2694,9 @@ function renderDashboard(data) {
             --purple-bg: rgba(139, 92, 246, 0.2);
             --pink: #ec4899;
             --pink-bg: rgba(236, 72, 153, 0.2);
+            --tier-3day: #06b6d4;
+            --tier-5day: #8b5cf6;
+            --tier-2week: #f59e0b;
             --radius: 12px;
             --radius-sm: 8px;
             --shadow: 0 4px 6px rgba(0,0,0,0.3);
@@ -3026,7 +3074,10 @@ function renderDashboard(data) {
         }
 
         .plan-daily { background: rgba(59, 130, 246, 0.2); color: var(--accent); }
+        .plan-3day { background: rgba(6, 182, 212, 0.2); color: #06b6d4; }
+        .plan-5day { background: rgba(139, 92, 246, 0.2); color: var(--purple); }
         .plan-weekly { background: rgba(139, 92, 246, 0.2); color: var(--purple); }
+        .plan-2week { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
         .plan-monthly { background: rgba(236, 72, 153, 0.2); color: var(--pink); }
 
         /* =================== ACTIONS =================== */
@@ -3243,9 +3294,24 @@ function renderDashboard(data) {
                         <div style="margin-left:28px; font-size:14px; color:var(--text-secondary);">24 hours • ₦350</div>
                     </label>
                     <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer; transition:all 0.2s;" onclick="selectPlan(this)">
+                        <input type="radio" name="extPlan" value="3d" style="margin-right:12px;">
+                        <span style="font-weight:600; color:#06b6d4;">3-Day Plan</span>
+                        <div style="margin-left:28px; font-size:14px; color:var(--text-secondary);">3 days • ₦1,050</div>
+                    </label>
+                    <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer; transition:all 0.2s;" onclick="selectPlan(this)">
+                        <input type="radio" name="extPlan" value="5d" style="margin-right:12px;">
+                        <span style="font-weight:600; color:var(--purple);">5-Day Plan</span>
+                        <div style="margin-left:28px; font-size:14px; color:var(--text-secondary);">5 days • ₦1,750</div>
+                    </label>
+                    <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer; transition:all 0.2s;" onclick="selectPlan(this)">
                         <input type="radio" name="extPlan" value="7d" style="margin-right:12px;">
                         <span style="font-weight:600; color:var(--purple);">Weekly Plan</span>
                         <div style="margin-left:28px; font-size:14px; color:var(--text-secondary);">7 days • ₦2,400</div>
+                    </label>
+                    <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer; transition:all 0.2s;" onclick="selectPlan(this)">
+                        <input type="radio" name="extPlan" value="14d" style="margin-right:12px;">
+                        <span style="font-weight:600; color:#f59e0b;">2-Week Plan</span>
+                        <div style="margin-left:28px; font-size:14px; color:var(--text-secondary);">14 days • ₦4,100</div>
                     </label>
                     <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer; transition:all 0.2s;" onclick="selectPlan(this)">
                         <input type="radio" name="extPlan" value="30d" style="margin-right:12px;">
@@ -3652,11 +3718,3 @@ const server = app.listen(PORT, () => {
 });
 
 server.setTimeout(30000);
-
-
-
-
-
-
-
-
