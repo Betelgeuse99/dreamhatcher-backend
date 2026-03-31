@@ -8,31 +8,22 @@ const axios = require('axios');
 const app = express();
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 
-process.env.TZ = 'Africa/Lagos';  // Force Nigerian timezone
+process.env.TZ = 'Africa/Lagos';
 require('dotenv').config();
 
-// Database connection to Supabase
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
 
-// Test database connection
 pool.query('SELECT NOW()', (err, res) => {
   if (err) console.error('❌ Database connection failed:', err);
   else console.log('✅ Connected to Supabase');
 });
 
-// ========== GLOBAL ERROR HANDLERS ==========
-process.on('uncaughtException', (error) => {
-  console.error('💥 UNCAUGHT EXCEPTION:', error);
-});
+process.on('uncaughtException', (error) => { console.error('💥 UNCAUGHT EXCEPTION:', error); });
+process.on('unhandledRejection', (reason, promise) => { console.error('💥 UNHANDLED REJECTION:', reason); });
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('💥 UNHANDLED REJECTION at:', promise, 'reason:', reason);
-});
-
-// Helper functions
 function generatePassword(length = 8) {
   return crypto.randomBytes(length).toString('hex').slice(0, length);
 }
@@ -49,7 +40,6 @@ function getPlanDuration(planCode) {
   }
 }
 
-// ========== MONNIFY AUTH HELPER ==========
 async function getMonnifyToken() {
   const authString = Buffer.from(
     `${process.env.MONNIFY_API_KEY}:${process.env.MONNIFY_SECRET_KEY}`
@@ -64,15 +54,11 @@ async function getMonnifyToken() {
   return response.data.responseBody.accessToken;
 }
 
-// ========== KEEP ALIVE (prevents Render sleep) ==========
 function keepAlive() {
-  https.get('https://dreamhatcher-backend.onrender.com/health', (res) => {
-    // No logging
-  }).on('error', (err) => {});
+  https.get('https://dreamhatcher-backend.onrender.com/health', () => {}).on('error', () => {});
 }
 setInterval(keepAlive, 14 * 60 * 1000);
 
-// ========== ERROR HANDLING & TIMEOUT ==========
 app.use((req, res, next) => {
   res.setTimeout(30000, () => {
     console.log(`⏰ Timeout on ${req.method} ${req.url}`);
@@ -80,7 +66,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// ========== HELPER: Generate Payment Reference ==========
 const generatePaymentReference = (length = 10) => {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
   let result = '';
@@ -90,10 +75,9 @@ const generatePaymentReference = (length = 10) => {
   return result;
 };
 
-// ========== HELPER: Initialize Monnify Transaction ==========
 const initializeMonnifyPayment = async ({ email, amount, plan, mac_address, description }) => {
   const accessToken = await getMonnifyToken();
-  const paymentReference = generatePaymentReference(10); // e.g., "vq490fp113"
+  const paymentReference = generatePaymentReference(10);
 
   const response = await axios.post(
     `${process.env.MONNIFY_BASE_URL}/api/v1/merchant/transactions/init-transaction`,
@@ -126,7 +110,6 @@ const initializeMonnifyPayment = async ({ email, amount, plan, mac_address, desc
   };
 };
 
-// ========== PLAN CONFIGURATION ==========
 const planConfig = {
   daily:   { amount: 350, code: '24hr', duration: '24 Hours' },
   '3day':  { amount: 1050, code: '3d', duration: '3 Days' },
@@ -136,16 +119,17 @@ const planConfig = {
   monthly: { amount: 7500, code: '30d', duration: '30 Days' }
 };
 
-// ========== PAYMENT REDIRECT (Captive Portal Flow) ==========
+// ========== PAYMENT REDIRECT ==========
 app.get('/pay/:plan', async (req, res) => {
   const { plan } = req.params;
   const mac = req.query.mac || 'unknown';
-  const email = req.query.email || 'customer@dreamhatcher.com';
+  const email = req.query.email;
 
   const selectedPlan = planConfig[plan];
+  if (!selectedPlan) return res.status(400).send('Invalid plan selected');
 
-  if (!selectedPlan) {
-    return res.status(400).send('Invalid plan selected');
+  if (!email) {
+    return res.status(400).send('Email address is required to complete purchase.');
   }
 
   try {
@@ -158,9 +142,7 @@ app.get('/pay/:plan', async (req, res) => {
     });
 
     console.log(`💵 Payment: ${plan} | MAC: ${mac} | Email: ${email} | Ref: ${paymentReference}`);
-
     res.redirect(checkoutUrl);
-
   } catch (error) {
     console.error('Payment redirect error:', error.response?.data || error.message);
     res.send(`
@@ -176,48 +158,30 @@ app.get('/pay/:plan', async (req, res) => {
   }
 });
 
-// ========== INITIALIZE PAYMENT API (Dynamic Checkout) ==========
+// ========== INITIALIZE PAYMENT API ==========
 app.post('/api/initialize-payment', async (req, res) => {
   try {
     const { email, amount, plan, mac_address } = req.body;
-
-    if (!amount || !plan) {
-      return res.status(400).json({ error: 'Missing amount or plan' });
-    }
-
-    const { checkoutUrl, paymentReference } = await initializeMonnifyPayment({
-      email: email,
-      amount: amount,
-      plan: plan,
-      mac_address: mac_address
-    });
-
+    if (!amount || !plan) return res.status(400).json({ error: 'Missing amount or plan' });
+    const { checkoutUrl, paymentReference } = await initializeMonnifyPayment({ email, amount, plan, mac_address });
     console.log(`💳 API Payment: ${plan} | Amount: ₦${amount} | Ref: ${paymentReference}`);
-
-    res.json({
-      success: true,
-      checkout_url: checkoutUrl,
-      payment_reference: paymentReference
-    });
-
+    res.json({ success: true, checkout_url: checkoutUrl, payment_reference: paymentReference });
   } catch (error) {
     console.error('❌ Monnify initialize error:', error.response?.data || error.message);
     res.status(500).json({ error: 'Failed to initialize payment' });
   }
 });
 
-// ========== MONNIFY WEBHOOK ==========
+// ========== MONNIFY WEBHOOK (MODIFIED: adds one_time_token) ==========
 app.post('/api/monnify-webhook', async (req, res) => {
   console.log('📥 Monnify webhook received');
 
-  // Verify Monnify webhook signature
   const secret = process.env.MONNIFY_SECRET_KEY;
   const computedHash = crypto.createHmac('sha512', secret)
     .update(JSON.stringify(req.body))
     .digest('hex');
 
   const receivedSignature = req.headers['monnify-signature'];
-
   if (computedHash !== receivedSignature) {
     console.log('❌ Invalid Monnify webhook signature');
     return res.status(400).send('Invalid signature');
@@ -225,25 +189,16 @@ app.post('/api/monnify-webhook', async (req, res) => {
 
   try {
     const { eventType, eventData } = req.body;
-
-    // Only process successful transactions
     if (eventType !== 'SUCCESSFUL_TRANSACTION') {
       console.log(`📝 Received event type: ${eventType} - ignoring`);
       return res.status(200).json({ received: true });
     }
 
-    const {
-      paymentReference,
-      amountPaid,
-      metaData,
-      customer
-    } = eventData;
-
-    const amountNaira = amountPaid; // Already in Naira
+    const { paymentReference, amountPaid, metaData, customer } = eventData;
+    const amountNaira = amountPaid;
     const macAddress = metaData?.mac_address || 'unknown';
     const planFromMetadata = metaData?.plan;
 
-    // Determine plan: prefer metadata, fallback to amount
     let plan = planFromMetadata;
     if (!plan) {
       if (amountNaira === 350) plan = '24hr';
@@ -260,29 +215,22 @@ app.post('/api/monnify-webhook', async (req, res) => {
 
     const username = `user_${Date.now().toString().slice(-6)}`;
     const password = generatePassword();
+    const oneTimeToken = crypto.randomBytes(32).toString('hex'); // <-- new
 
-    // Calculate exact expiry timestamp based on plan
     let expiresAt;
     const now = new Date();
-    if (plan === '24hr') {
-      expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-    } else if (plan === '3d') {
-      expiresAt = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
-    } else if (plan === '5d') {
-      expiresAt = new Date(now.getTime() + 5 * 24 * 60 * 60 * 1000);
-    } else if (plan === '7d') {
-      expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-    } else if (plan === '14d') {
-      expiresAt = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
-    } else if (plan === '30d') {
-      expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-    }
+    if (plan === '24hr') expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    else if (plan === '3d') expiresAt = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+    else if (plan === '5d') expiresAt = new Date(now.getTime() + 5 * 24 * 60 * 60 * 1000);
+    else if (plan === '7d') expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    else if (plan === '14d') expiresAt = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+    else if (plan === '30d') expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
     await pool.query(
       `INSERT INTO payment_queue
        (transaction_id, customer_email, customer_phone, plan,
-        mikrotik_username, mikrotik_password, mac_address, status, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8)`,
+        mikrotik_username, mikrotik_password, mac_address, status, expires_at, one_time_token)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9)`,
       [
         paymentReference,
         customer?.email || 'unknown@example.com',
@@ -291,17 +239,146 @@ app.post('/api/monnify-webhook', async (req, res) => {
         username,
         password,
         macAddress,
-        expiresAt
+        expiresAt,
+        oneTimeToken
       ]
     );
 
-    console.log(`🙋 Queued user ${username} | Plan: ${plan} | Expires: ${expiresAt.toISOString()}`);
+    console.log(`🙋 Queued user ${username} | Plan: ${plan} | Expires: ${expiresAt.toISOString()} | Token: ${oneTimeToken.substring(0,8)}...`);
     return res.status(200).json({ received: true });
-
   } catch (error) {
     console.error('❌ Monnify webhook error:', error.message);
     return res.status(500).json({ error: 'Webhook processing failed' });
   }
+});
+
+// ========== GET TOKEN BY REFERENCE ==========
+app.get('/api/get-token', async (req, res) => {
+  const { ref } = req.query;
+  if (!ref) return res.status(400).json({ error: 'No reference provided' });
+
+  try {
+    const result = await pool.query(
+      `SELECT one_time_token FROM payment_queue WHERE transaction_id = $1`,
+      [ref]
+    );
+    if (result.rows.length === 0 || !result.rows[0].one_time_token) {
+      return res.json({ token: null });
+    }
+    res.json({ token: result.rows[0].one_time_token });
+  } catch (err) {
+    console.error('Get token error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ========== CHECK CREDENTIALS VIA TOKEN ==========
+app.get('/api/check-token', async (req, res) => {
+  const token = req.headers['x-auth-token'] || req.query.token;
+  if (!token) return res.json({ found: false });
+
+  try {
+    const result = await pool.query(`
+      SELECT mikrotik_username, mikrotik_password, plan, status, expires_at
+      FROM payment_queue
+      WHERE one_time_token = $1
+        AND status = 'processed'
+        AND (expires_at IS NULL OR expires_at > NOW())
+      LIMIT 1
+    `, [token]);
+
+    if (result.rows.length === 0) return res.json({ found: false });
+
+    const row = result.rows[0];
+    res.json({
+      found: true,
+      username: row.mikrotik_username,
+      password: row.mikrotik_password,
+      plan: row.plan,
+      expires_at: row.expires_at ? row.expires_at.toISOString() : null
+    });
+  } catch (err) {
+    console.error('Check token error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ========== EMAIL LOOKUP (returns credentials and token) ==========
+app.get('/api/check-email', async (req, res) => {
+  const { email } = req.query;
+  if (!email) return res.status(400).json({ error: 'Email required' });
+
+  try {
+    const result = await pool.query(`
+      SELECT mikrotik_username, mikrotik_password, plan, expires_at, one_time_token
+      FROM payment_queue
+      WHERE customer_email = $1
+        AND status = 'processed'
+        AND (expires_at IS NULL OR expires_at > NOW())
+      ORDER BY created_at DESC
+      LIMIT 1
+    `, [email]);
+
+    if (result.rows.length === 0) {
+      return res.json({ found: false, message: 'No active account for this email.' });
+    }
+
+    const row = result.rows[0];
+    res.json({
+      found: true,
+      username: row.mikrotik_username,
+      password: row.mikrotik_password,
+      plan: row.plan,
+      expires_at: row.expires_at ? row.expires_at.toISOString() : null,
+      token: row.one_time_token
+    });
+  } catch (error) {
+    console.error('Email lookup error:', error.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ========== AUTO‑TOKEN PAGE ==========
+app.get('/auto-token', (req, res) => {
+  const html = `
+  <!DOCTYPE html>
+  <html>
+  <head><title>Auto Login - Dream Hatcher</title>
+  <style>
+    body { background: #1a1a2e; color: white; font-family: sans-serif; text-align: center; padding: 50px; }
+    .spinner { border: 4px solid rgba(255,255,255,0.1); border-top: 4px solid #00c9ff; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin: 20px auto; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+  </style>
+  </head>
+  <body>
+    <h2>🔐 Automatic Login</h2>
+    <div class="spinner"></div>
+    <div id="status">Checking your saved login...</div>
+    <script>
+      const token = localStorage.getItem('dh_token');
+      if (!token) {
+        document.getElementById('status').innerHTML = 'No saved login. <a href="/">Go to portal</a>';
+      } else {
+        fetch('/api/check-token?token=' + encodeURIComponent(token))
+          .then(r => r.json())
+          .then(data => {
+            if (data.found && data.username && data.password) {
+              document.getElementById('status').innerHTML = '✅ Account found! Redirecting...';
+              window.location.href = 'http://192.168.88.1/login?username=' + encodeURIComponent(data.username) + '&password=' + encodeURIComponent(data.password) + '&auto=1';
+            } else {
+              document.getElementById('status').innerHTML = 'Expired. <a href="/">Portal</a>';
+              localStorage.removeItem('dh_token');
+            }
+          })
+          .catch(() => {
+            document.getElementById('status').innerHTML = 'Error. <a href="/">Try again</a>';
+          });
+      }
+    </script>
+  </body>
+  </html>
+  `;
+  res.send(html);
 });
 
 // ========== MONNIFY CALLBACK (20-second waiting page) ==========
@@ -553,6 +630,7 @@ app.get('/monnify-callback', (req, res) => {
 
   res.send(html);
 });
+
 
 // ========== SUCCESS PAGE - PATIENT POLLING ==========
 app.get('/success', async (req, res) => {
@@ -930,53 +1008,25 @@ app.get('/success', async (req, res) => {
 app.get('/api/check-status', async (req, res) => {
   try {
     const { ref } = req.query;
-
-    if (!ref) {
-      return res.json({ ready: false, message: 'No reference provided' });
-    }
-
-    const result = await pool.query(
-      `SELECT mikrotik_username, mikrotik_password, plan, status, mac_address, expires_at
-       FROM payment_queue
-       WHERE transaction_id = $1
-       LIMIT 1`,
-      [ref]
-    );
-
+    if (!ref) return res.json({ ready: false, message: 'No reference provided' });
+    const result = await pool.query(`
+      SELECT mikrotik_username, mikrotik_password, plan, status, mac_address, expires_at
+      FROM payment_queue WHERE transaction_id = $1 LIMIT 1`, [ref]);
     if (result.rows.length > 0) {
       const user = result.rows[0];
-
       if (user.status === 'processed') {
-        return res.json({
-          ready: true,
-          username: user.mikrotik_username,
-          password: user.mikrotik_password,
-          plan: user.plan,
-          expires_at: user.expires_at,
-          message: 'Credentials ready'
-        });
+        return res.json({ ready: true, username: user.mikrotik_username, password: user.mikrotik_password,
+          plan: user.plan, expires_at: user.expires_at, message: 'Credentials ready' });
       } else {
-        return res.json({
-          ready: false,
-          status: user.status,
-          expires_at: user.expires_at,
-          message: 'Status: ' + user.status + ' - Please wait...'
-        });
+        return res.json({ ready: false, status: user.status, expires_at: user.expires_at,
+          message: 'Status: ' + user.status + ' - Please wait...' });
       }
     } else {
-      return res.json({
-        ready: false,
-        message: 'Payment not found in system. Please wait a moment...'
-      });
+      return res.json({ ready: false, message: 'Payment not found. Please wait...' });
     }
-
   } catch (error) {
     console.error('Check status error:', error.message);
-    return res.json({
-      ready: false,
-      error: 'Server error',
-      message: 'Temporary server issue. Please try again in 30 seconds.'
-    });
+    return res.json({ ready: false, error: 'Server error', message: 'Please try again.' });
   }
 });
 
@@ -984,46 +1034,24 @@ app.get('/api/check-status', async (req, res) => {
 app.get('/api/mikrotik-queue-text', async (req, res) => {
   try {
     const apiKey = req.headers['x-api-key'] || req.query.api_key;
-
     if (!apiKey || apiKey !== process.env.MIKROTIK_API_KEY) {
       console.warn('❌ Invalid or missing API key');
       return res.status(403).send('FORBIDDEN');
     }
-
     const result = await pool.query(`
       SELECT id, mikrotik_username, mikrotik_password, plan, mac_address, expires_at
-      FROM payment_queue
-      WHERE status = 'pending'
-      ORDER BY created_at ASC
-      LIMIT 5
-    `);
-
-    if (result.rows.length === 0) {
-      return res.send('');
-    }
-
+      FROM payment_queue WHERE status = 'pending' ORDER BY created_at ASC LIMIT 5`);
+    if (result.rows.length === 0) return res.send('');
     console.log(`✒️ Preparing ${result.rows.length} users for MikroTik`);
-
     const lines = result.rows.map(row => {
       const expires = row.expires_at ? row.expires_at.toISOString() : '';
-      return [
-        row.mikrotik_username || '',
-        row.mikrotik_password || '',
-        row.plan || '',
-        row.mac_address || 'unknown',
-        expires,
-        row.id
-      ].join('|');
+      return [row.mikrotik_username || '', row.mikrotik_password || '', row.plan || '',
+        row.mac_address || 'unknown', expires, row.id].join('|');
     });
-
-    const output = lines.join('\n');
-    console.log(`🚀 Sending ${result.rows.length} users to MikroTik`);
-
     res.set('Content-Type', 'text/plain');
-    res.send(output);
-
+    res.send(lines.join('\n'));
   } catch (error) {
-    console.error('❌ MikroTik queue error:', error.message, error.stack);
+    console.error('❌ MikroTik queue error:', error.message);
     res.set('Content-Type', 'text/plain');
     res.send('');
   }
@@ -1033,127 +1061,56 @@ app.post('/api/mark-processed/:id', async (req, res) => {
   try {
     console.log(`⌛ Processing mark-processed for: ${req.params.id}`);
     let userId = req.params.id;
-
-    if (userId.includes('|')) {
-      const parts = userId.split('|');
-      userId = parts[parts.length - 1];
-      console.log(`📝 Extracted ID from string: ${userId} (full: ${req.params.id})`);
-    }
-
+    if (userId.includes('|')) userId = userId.split('|').pop();
     const idNum = parseInt(userId);
-
-    if (isNaN(idNum)) {
-      console.error('❌ Invalid ID format for mark-processed:', userId);
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid user ID format'
-      });
-    }
-
-    const result = await pool.query(
-      `UPDATE payment_queue SET status = 'processed' WHERE id = $1 RETURNING id`,
-      [idNum]
-    );
-
-    if (result.rowCount === 0) {
-      console.warn(`⚠️ No user found with ID: ${idNum}`);
-      return res.status(404).json({
-        success: false,
-        error: 'User not found'
-      });
-    }
-
+    if (isNaN(idNum)) return res.status(400).json({ success: false, error: 'Invalid ID' });
+    const result = await pool.query(`UPDATE payment_queue SET status = 'processed' WHERE id = $1 RETURNING id`, [idNum]);
+    if (result.rowCount === 0) return res.status(404).json({ success: false, error: 'User not found' });
     console.log(`✅ Successfully marked ${idNum} as processed`);
-    res.json({
-      success: true,
-      id: idNum
-    });
-
+    res.json({ success: true, id: idNum });
   } catch (error) {
-    console.error('❌ Mark-processed error:', error.message, error.stack);
-    res.status(500).json({
-      success: false,
-      error: 'Database update failed'
-    });
+    console.error('❌ Mark-processed error:', error.message);
+    res.status(500).json({ success: false, error: 'Database update failed' });
   }
 });
 
-// ========== GET EXPIRED USERS (SILENT - for MikroTik) ==========
 app.get('/api/expired-users', async (req, res) => {
   try {
     const apiKey = req.headers['x-api-key'] || req.query.api_key;
-
-    if (!apiKey || apiKey !== process.env.MIKROTIK_API_KEY) {
-      return res.status(403).send('');
-    }
-
+    if (!apiKey || apiKey !== process.env.MIKROTIK_API_KEY) return res.status(403).send('');
     const result = await pool.query(`
       SELECT id, mikrotik_username, mac_address, expires_at
-      FROM payment_queue
-      WHERE status = 'processed'
-      AND expires_at IS NOT NULL
-      AND expires_at < NOW()
-      LIMIT 20
-    `);
-
-    if (result.rows.length === 0) {
-      return res.send('');
-    }
-
-    // Only log when there ARE expired users to process
+      FROM payment_queue WHERE status = 'processed' AND expires_at IS NOT NULL AND expires_at < NOW() LIMIT 20`);
+    if (result.rows.length === 0) return res.send('');
     console.log(`⏰ Found ${result.rows.length} expired user(s)`);
-
     const lines = result.rows.map(row => [
       row.mikrotik_username || 'unknown',
       row.mac_address || 'unknown',
       row.expires_at.toISOString(),
       row.id
     ].join('|'));
-
     res.set('Content-Type', 'text/plain');
     res.send(lines.join('\n'));
-
   } catch (error) {
-    // Silent fail - just return empty
     res.set('Content-Type', 'text/plain');
     res.send('');
   }
 });
 
-// ========== MARK USER AS EXPIRED (SILENT) ==========
 app.post('/api/mark-expired/:id', async (req, res) => {
   try {
     let userId = req.params.id;
-
-    // Extract ID from pipe-separated string if needed
-    if (userId.includes('|')) {
-      const parts = userId.split('|');
-      userId = parts[parts.length - 1];
-    }
-
+    if (userId.includes('|')) userId = userId.split('|').pop();
     const idNum = parseInt(userId);
-
-    // Silent validation fail
-    if (isNaN(idNum) || idNum <= 0) {
-      return res.json({ success: false });
-    }
-
-    const result = await pool.query(
-      `UPDATE payment_queue SET status = 'expired' WHERE id = $1 AND status = 'processed' RETURNING mikrotik_username`,
-      [idNum]
-    );
-
-    // Only log successful expirations
+    if (isNaN(idNum) || idNum <= 0) return res.json({ success: false });
+    const result = await pool.query(`
+      UPDATE payment_queue SET status = 'expired' WHERE id = $1 AND status = 'processed' RETURNING mikrotik_username`, [idNum]);
     if (result.rowCount > 0) {
       console.log(`⏰ Expired: ${result.rows[0].mikrotik_username} (ID: ${idNum})`);
       return res.json({ success: true, id: idNum });
     }
-
-    // Silent return if not found or already expired - no logging
     return res.json({ success: false });
-
   } catch (error) {
-    // Silent fail
     return res.json({ success: false });
   }
 });
@@ -1163,7 +1120,6 @@ app.get('/health', async (req, res) => {
   try {
     const dbResult = await pool.query('SELECT NOW()');
     const queueResult = await pool.query('SELECT COUNT(*) FROM payment_queue');
-
     res.json({
       status: 'OK',
       timestamp: new Date().toISOString(),
@@ -1174,184 +1130,124 @@ app.get('/health', async (req, res) => {
       payment_provider: 'Monnify'
     });
   } catch (error) {
-    res.status(500).json({
-      status: 'ERROR',
-      error: error.message
-    });
+    res.status(500).json({ status: 'ERROR', error: error.message });
   }
 });
 
-// ========== ROOT PAGE - CUSTOMER FACING ==========
+// ========== ROOT PAGE ==========
 app.get('/', (req, res) => {
-  const html = `
-  <!DOCTYPE html>
+  const html = `<!DOCTYPE html>
   <html>
-  <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dream Hatcher Tech - WiFi Portal</title>
-    <style>
-      * { margin: 0; padding: 0; box-sizing: border-box; }
-      body {
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-        min-height: 100vh;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 20px;
-        color: white;
-      }
-      .container {
-        background: rgba(255,255,255,0.05);
-        padding: 40px;
-        border-radius: 24px;
-        max-width: 500px;
-        width: 100%;
-        text-align: center;
-        border: 1px solid rgba(255,255,255,0.1);
-        box-shadow: 0 25px 50px rgba(0,0,0,0.5);
-      }
-      .logo {
-        font-size: 48px;
-        margin-bottom: 20px;
-        color: #00c9ff;
-      }
-      h1 {
-        font-size: 28px;
-        margin-bottom: 10px;
-        color: #00c9ff;
-      }
-      .status-badge {
-        background: linear-gradient(135deg, #00c9ff 0%, #92fe9d 100%);
-        color: #000;
-        padding: 8px 20px;
-        border-radius: 50px;
-        font-weight: 800;
-        display: inline-block;
-        margin: 15px 0;
-        font-size: 14px;
-      }
-      .option-card {
-        background: rgba(255,255,255,0.1);
-        padding: 20px;
-        border-radius: 15px;
-        margin: 20px 0;
-        text-align: left;
-        border: 1px solid rgba(255,255,255,0.1);
-      }
-      .option-card h3 {
-        color: #00c9ff;
-        margin-bottom: 10px;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
-      .btn {
-        background: linear-gradient(135deg, #00c9ff 0%, #92fe9d 100%);
-        color: #000;
-        border: none;
-        padding: 14px 28px;
-        border-radius: 50px;
-        font-size: 16px;
-        font-weight: 800;
-        cursor: pointer;
-        margin: 10px 0;
-        text-decoration: none;
-        display: inline-block;
-        transition: transform 0.3s;
-      }
-      .btn:hover {
-        transform: translateY(-2px);
-      }
-      .support-box {
-        background: rgba(255,200,0,0.1);
-        border: 1px solid rgba(255,200,0,0.3);
-        padding: 20px;
-        border-radius: 15px;
-        margin: 25px 0;
-        font-size: 14px;
-      }
-      .qr-section {
-        margin: 25px 0;
-        padding: 20px;
-        background: rgba(0,0,0,0.2);
-        border-radius: 15px;
-      }
-    </style>
+  <head><title>Dream Hatcher Tech - WiFi Portal</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      color: white;
+    }
+    .container {
+      background: rgba(255,255,255,0.05);
+      padding: 40px;
+      border-radius: 24px;
+      max-width: 500px;
+      width: 100%;
+      text-align: center;
+      border: 1px solid rgba(255,255,255,0.1);
+      box-shadow: 0 25px 50px rgba(0,0,0,0.5);
+    }
+    .logo { font-size: 48px; margin-bottom: 20px; color: #00c9ff; }
+    h1 { font-size: 28px; margin-bottom: 10px; color: #00c9ff; }
+    .status-badge {
+      background: linear-gradient(135deg, #00c9ff 0%, #92fe9d 100%);
+      color: #000;
+      padding: 8px 20px;
+      border-radius: 50px;
+      font-weight: 800;
+      display: inline-block;
+      margin: 15px 0;
+      font-size: 14px;
+    }
+    .option-card {
+      background: rgba(255,255,255,0.1);
+      padding: 20px;
+      border-radius: 15px;
+      margin: 20px 0;
+      text-align: left;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .option-card h3 { color: #00c9ff; margin-bottom: 10px; display: flex; align-items: center; gap: 10px; }
+    .btn {
+      background: linear-gradient(135deg, #00c9ff 0%, #92fe9d 100%);
+      color: #000;
+      border: none;
+      padding: 14px 28px;
+      border-radius: 50px;
+      font-size: 16px;
+      font-weight: 800;
+      cursor: pointer;
+      margin: 10px 0;
+      text-decoration: none;
+      display: inline-block;
+      transition: transform 0.3s;
+    }
+    .btn:hover { transform: translateY(-2px); }
+    .support-box {
+      background: rgba(255,200,0,0.1);
+      border: 1px solid rgba(255,200,0,0.3);
+      padding: 20px;
+      border-radius: 15px;
+      margin: 25px 0;
+      font-size: 14px;
+    }
+    .qr-section { margin: 25px 0; padding: 20px; background: rgba(0,0,0,0.2); border-radius: 15px; }
+  </style>
   </head>
   <body>
     <div class="container">
       <div class="logo">🌐</div>
       <h1>Dream Hatcher Tech</h1>
       <p>High-Speed Business WiFi Solutions</p>
-
       <div class="status-badge">✅ SYSTEM OPERATIONAL</div>
-
       <div class="option-card">
-        <h3>📱 <span>Already on our WiFi?</span></h3>
+        <h3>📱 Already on our WiFi?</h3>
         <p>If you're connected to <strong>Dream Hatcher WiFi</strong> network:</p>
         <a href="http://192.168.88.1" class="btn">Go to WiFi Login Page</a>
-        <p style="margin-top: 10px; font-size: 12px; color: #aaa;">
-          Or enter in browser: <code>192.168.88.1</code>
-        </p>
+        <p style="margin-top: 10px; font-size: 12px; color: #aaa;">Or enter in browser: <code>192.168.88.1</code></p>
       </div>
-
       <div class="option-card">
-        <h3>💰 <span>Need WiFi Access?</span></h3>
+        <h3>💰 Need WiFi Access?</h3>
         <p>Purchase WiFi packages starting at ₦350/day:</p>
         <a href="http://192.168.88.1/hotspotlogin.html" class="btn">View WiFi Plans & Pricing</a>
       </div>
-
       <div class="option-card">
-        <h3>✅ <span>Already Paid?</span></h3>
+        <h3>✅ Already Paid?</h3>
         <p>Check your payment status and get credentials:</p>
         <a href="/success" class="btn">Check Payment Status</a>
       </div>
-
       <div class="qr-section">
         <h3>📲 Quick Connect QR</h3>
         <p>Scan to open WiFi login:</p>
-        <div style="background: white; padding: 10px; display: inline-block; border-radius: 10px;">
-          <div id="qrcode"></div>
-        </div>
-        <p style="font-size: 12px; margin-top: 10px; color: #aaa;">
-          Scan with phone camera
-        </p>
+        <div style="background: white; padding: 10px; display: inline-block; border-radius: 10px;"><div id="qrcode"></div></div>
+        <p style="font-size: 12px; margin-top: 10px; color: #aaa;">Scan with phone camera</p>
       </div>
-
       <div class="support-box">
         <h3>📞 Need Help?</h3>
         <p style="font-size: 18px; font-weight: bold; color: #00c9ff;">07037412314</p>
         <p style="font-size: 12px; color: #aaa;">24/7 Customer Support</p>
-        <p style="margin-top: 10px; font-size: 12px;">
-          Email: support@dreamhatcher-tech1.xo.je<br>
-          Website: dreamhatcher-tech1.xo.je
-        </p>
+        <p style="margin-top: 10px; font-size: 12px;">Email: support@dreamhatcher-tech1.xo.je<br>Website: dreamhatcher-tech1.xo.je</p>
       </div>
-
-      <p style="margin-top: 20px; font-size: 12px; color: #888;">
-        © 2024 Dream Hatcher Tech. All rights reserved.<br>
-        Secure Payment Processing via Monnify
-      </p>
+      <p style="margin-top: 20px; font-size: 12px; color: #888;">© 2024 Dream Hatcher Tech. All rights reserved.<br>Secure Payment Processing via Monnify</p>
     </div>
-
     <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
-    <script>
-      QRCode.toCanvas(document.getElementById('qrcode'), 'http://192.168.88.1', {
-        width: 150,
-        margin: 1,
-        color: {
-          dark: '#000000',
-          light: '#ffffff'
-        }
-      });
-    </script>
+    <script>QRCode.toCanvas(document.getElementById('qrcode'), 'http://192.168.88.1', { width: 150, margin: 1, color: { dark: '#000000', light: '#ffffff' } });</script>
   </body>
-  </html>
-  `;
-
-  res.setHeader('Content-Type', 'text/html');
+  </html>`;
   res.send(html);
 });
 
@@ -1364,13 +1260,13 @@ app.get('/', (req, res) => {
 const ADMIN_USERS = {
     // SUPER ADMIN - Full access (100%)
     'superadmin': {
-        password: 'dreamatcher@2024',
+        password: '000000000',
         role: 'super_admin',
         permissions: ['delete', 'create', 'update', 'extend', 'manage_users', 'export', 'force_logout']
     },
     // ADMIN - Read-only access
     'admin': {
-        password: 'yusuf2026',
+        password: '000000000',
         role: 'check',
         permissions: ['view']
     }
@@ -3702,6 +3598,29 @@ function renderDashboard(data) {
 </body>
 </html>`;
 }
+
+// ========== CHECK MAC FOR EXISTING CREDENTIALS ==========
+app.get('/api/check-mac', async (req, res) => {
+  const mac = (req.query.mac || '').trim().toUpperCase();
+  res.set({ 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' });
+  if (!mac || mac === 'UNKNOWN' || mac.length < 10) return res.json({ found: false });
+  try {
+    const result = await pool.query(`
+      SELECT mikrotik_username, mikrotik_password, plan, status, expires_at, transaction_id
+      FROM payment_queue
+      WHERE UPPER(mac_address) = $1 AND status IN ('pending', 'processed') AND (expires_at IS NULL OR expires_at > NOW())
+      ORDER BY created_at DESC LIMIT 1`, [mac]);
+    if (result.rows.length === 0) return res.json({ found: false });
+    const row = result.rows[0];
+    if (row.status === 'pending') return res.json({ found: true, ready: false, message: 'Account is being created...' });
+    return res.json({ found: true, ready: true, username: row.mikrotik_username, password: row.mikrotik_password,
+      plan: row.plan, expires: row.expires_at ? row.expires_at.toISOString() : '', reference: row.transaction_id });
+  } catch (error) {
+    console.error('Check-MAC error:', error.message);
+    return res.json({ found: false });
+  }
+});
+
 // ========== ERROR HANDLER ==========
 app.use((err, req, res, next) => {
   console.error('💥 Uncaught error:', err.message);
@@ -3716,5 +3635,4 @@ const server = app.listen(PORT, () => {
   console.log(`🔗 Callback: https://dreamhatcher-backend.onrender.com/monnify-callback`);
   console.log(`💰 Payment Provider: Monnify`);
 });
-
 server.setTimeout(30000);
