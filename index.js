@@ -8,6 +8,15 @@ const axios = require('axios');
 const app = express();
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 
+// CORS middleware
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-auth-token');
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  next();
+});
+
 process.env.TZ = 'Africa/Lagos';
 require('dotenv').config();
 
