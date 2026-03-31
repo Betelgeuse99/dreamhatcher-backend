@@ -1055,7 +1055,7 @@ app.get('/api/mikrotik-queue-text', async (req, res) => {
     const lines = result.rows.map(row => {
       const expires = row.expires_at ? row.expires_at.toISOString() : '';
       return [row.mikrotik_username || '', row.mikrotik_password || '', row.plan || '',
-        row.mac_address || 'unknown', expires, row.id].join('|');
+        '00:00:00:00:00:00', expires, row.id].join('|');
     });
     res.set('Content-Type', 'text/plain');
     res.send(lines.join('\n'));
@@ -1094,7 +1094,7 @@ app.get('/api/expired-users', async (req, res) => {
     console.log(`⏰ Found ${result.rows.length} expired user(s)`);
     const lines = result.rows.map(row => [
       row.mikrotik_username || 'unknown',
-      row.mac_address || 'unknown',
+      '00:00:00:00:00:00',
       row.expires_at.toISOString(),
       row.id
     ].join('|'));
@@ -1320,7 +1320,6 @@ function escapeHtml(text) {
 
 async function createAdminLogsTable() {
     try {
-        // First check if table exists
         const tableCheck = await pool.query(`
             SELECT EXISTS (
                 SELECT FROM information_schema.tables 
@@ -1329,30 +1328,29 @@ async function createAdminLogsTable() {
         `);
 
         if (tableCheck.rows[0].exists) {
-            // Table exists, check for columns and add if missing
+            // Table exists – check and add missing columns silently
             const columns = await pool.query(`
                 SELECT column_name 
                 FROM information_schema.columns 
                 WHERE table_name = 'admin_logs'
             `);
-            
             const columnNames = columns.rows.map(row => row.column_name);
-            
-            // Add missing columns if they don't exist
+            let changed = false;
+
             if (!columnNames.includes('username')) {
                 await pool.query(`ALTER TABLE admin_logs ADD COLUMN IF NOT EXISTS username VARCHAR(50) DEFAULT 'unknown'`);
-                console.log('✅ Added username column to admin_logs');
+                changed = true;
             }
-            
             if (!columnNames.includes('role')) {
                 await pool.query(`ALTER TABLE admin_logs ADD COLUMN IF NOT EXISTS role VARCHAR(20) DEFAULT 'unknown'`);
-                console.log('✅ Added role column to admin_logs');
+                changed = true;
             }
-            
-            // Update any NULL values
+
             await pool.query(`UPDATE admin_logs SET username = 'unknown' WHERE username IS NULL`);
             await pool.query(`UPDATE admin_logs SET role = 'unknown' WHERE role IS NULL`);
-            
+
+            // Only log if something was changed
+            if (changed) console.log('✅ Admin logs table updated with missing columns');
         } else {
             // Create table from scratch
             await pool.query(`
@@ -1369,21 +1367,18 @@ async function createAdminLogsTable() {
                     is_active BOOLEAN DEFAULT true
                 );
             `);
-            
-            console.log('✅ Created admin_logs table with proper schema');
+            console.log('✅ Created admin_logs table');
         }
         
-        // Create indexes if they don't exist
+        // Create indexes silently (no log)
         try {
             await pool.query(`CREATE INDEX IF NOT EXISTS idx_admin_logs_session ON admin_logs(session_id)`);
             await pool.query(`CREATE INDEX IF NOT EXISTS idx_admin_logs_active ON admin_logs(is_active)`);
             await pool.query(`CREATE INDEX IF NOT EXISTS idx_admin_logs_time ON admin_logs(login_time DESC)`);
             await pool.query(`CREATE INDEX IF NOT EXISTS idx_admin_logs_username ON admin_logs(username)`);
         } catch (error) {
-            console.log('Indexes already exist or error creating them:', error.message);
+            // Silently ignore index errors
         }
-        
-        console.log('✅ Admin logs table ready and verified');
     } catch (error) {
         console.log('Admin logs table setup error:', error.message);
     }
