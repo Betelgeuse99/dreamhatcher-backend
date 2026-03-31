@@ -1260,13 +1260,13 @@ app.get('/', (req, res) => {
 const ADMIN_USERS = {
     // SUPER ADMIN - Full access (100%)
     'superadmin': {
-        password: '000000000',
+        password: 'dreamatcher@2024',
         role: 'super_admin',
         permissions: ['delete', 'create', 'update', 'extend', 'manage_users', 'export', 'force_logout']
     },
     // ADMIN - Read-only access
     'admin': {
-        password: '000000000',
+        password: 'yusuf200',
         role: 'check',
         permissions: ['view']
     }
