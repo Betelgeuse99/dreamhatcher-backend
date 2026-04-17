@@ -2429,7 +2429,7 @@ function renderDashboard(data) {
     // Build user table rows WITH CORRECT COLUMN ORDER: Created, Expires, MAC
     let userRows = '';
     if (users.length === 0) {
-        userRows = '<tr><td colspan="8" style="text-align:center;padding:48px;color:var(--text-muted);">No users found</td></tr>';
+        userRows = '<tr><td colspan="9" style="text-align:center;padding:48px;color:var(--text-muted);">No users found</td></tr>';
     } else {
         users.forEach(user => {
             const created = new Date(user.created_at);
@@ -2480,6 +2480,8 @@ function renderDashboard(data) {
                             '<span style="color:var(--text-muted);">N/A</span>'
                         }
                     </td>
+                    <td>
+                        ${user.mac_address ? `<span class="mac">${escapeHtml(user.mac_address)}</span>` : '<span style="color:var(--text-muted);">N/A</span>'}</td>
                     <td>
                         <div class="row-actions">
                             ${showExtend ? `
