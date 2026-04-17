@@ -2035,9 +2035,16 @@ async function handleAdminDashboard(req, res, sessionId) {
           LIMIT 100
         `);
         // 3. GET ACTIVE ADMINS (UNIQUE BY USER)
-        const activeAdmins = await getActiveAdmins();
-        const adminHistory = await getAdminLoginHistory(10);
-        
+       let activeAdmins = await getActiveAdmins();
+let adminHistory = await getAdminLoginHistory(10);
+let visibleSessionCount = activeAdmins.length;
+
+// Regular admins must NOT see superadmin sessions or history
+if (session.role !== 'super_admin') {
+    activeAdmins = activeAdmins.filter(admin => admin.role !== 'super_admin');
+    adminHistory = adminHistory.filter(record => record.role !== 'super_admin');
+    visibleSessionCount = activeAdmins.length;
+}
         const stats = metrics.rows[0];
         const users = recentActivity.rows;
         
@@ -2085,7 +2092,7 @@ async function handleAdminDashboard(req, res, sessionId) {
         const currentSession = session;
         const currentAdminIdleSeconds = currentSession ? 
             Math.floor((Date.now() - currentSession.lastActivity) / 1000) : 0;
-        const activeSessions = activeAdmins.length;
+        const activeSessions = visibleSessionCount;
 
         // ========== RENDER DASHBOARD ==========
         res.send(renderDashboard({
