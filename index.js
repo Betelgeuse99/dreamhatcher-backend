@@ -2429,12 +2429,11 @@ function renderDashboard(data) {
     // Build user table rows WITH CORRECT COLUMN ORDER: Created, Expires, MAC
     let userRows = '';
     if (users.length === 0) {
-        userRows = '<tr><td colspan="10" style="text-align:center;padding:48px;color:var(--text-muted);">No users found</td></tr>';
+        userRows = '<tr><td colspan="9" style="text-align:center;padding:48px;color:var(--text-muted);">No users found</td></tr>';
     } else {
         users.forEach(user => {
             const created = new Date(user.created_at);
             const expires = user.expires_at ? new Date(user.expires_at) : null;
-            const lastSync = user.last_sync ? new Date(user.last_sync) : null;
             const isExpired = user.realtime_status === 'expired';
             
             const statusBadge = 'badge-' + user.realtime_status;
@@ -2479,16 +2478,6 @@ function renderDashboard(data) {
                                 <small>${expires.toLocaleTimeString('en-NG', {hour:'2-digit',minute:'2-digit'})}</small>
                             </span>` : 
                             '<span style="color:var(--text-muted);">N/A</span>'
-                        }
-                    </td>
-                    <td>${user.mac_address ? `<span class="mac">${escapeHtml(user.mac_address)}</span>` : '<span style="color:var(--text-muted);">N/A</span>'}</td>
-                    <td>
-                        ${lastSync ? 
-                            `<span class="time-cell">
-                                ${lastSync.toLocaleDateString('en-NG')}<br>
-                                <small>${lastSync.toLocaleTimeString('en-NG', {hour:'2-digit',minute:'2-digit'})}</small>
-                            </span>` : 
-                            '<span style="color:var(--text-muted);">Never</span>'
                         }
                     </td>
                     <td>
@@ -3445,7 +3434,6 @@ function renderDashboard(data) {
                             <th>Created</th>
                             <th>Expires</th>
                             <th>MAC Address</th>
-                            <th>Last Sync</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
