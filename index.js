@@ -2304,7 +2304,9 @@ function getLoginForm(sessionExpired) {
 <body>
     <div class="login-container">
         <div class="login-card">
-            <div class="logo">DH</div>
+           <div class="logo">
+    <img src="https://i.imgur.com/f0xX5TT.png" style="width: 48px; height: 48px; border-radius: 12px;">
+</div>
             <h1>Dream Hatcher Admin</h1>
             <p>Secure Admin Portal with Role-Based Access</p>
             
