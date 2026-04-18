@@ -3437,7 +3437,7 @@ function renderDashboard(data) {
         <!-- Metrics Grid -->
         <div class="metrics">
             <!-- Lifetime Revenue -->
-            <div class="metric" id="lifetimeRevenueCard" style="cursor: pointer;">
+           <div class="metric" id="lifetimeRevenueCard" style="cursor: pointer;" onclick="showRevenueModal()">
                 <div class="metric-header">
                     <div class="metric-icon">
                         <i class="fa-solid fa-vault"></i>
@@ -3722,8 +3722,7 @@ function renderDashboard(data) {
         }, 60000);
 
         // Attach click handler to Lifetime Revenue card
-        document.getElementById('lifetimeRevenueCard')?.addEventListener('click', showRevenueModal);
-
+       
         // Initialize
         updateSessionTimer();
         
