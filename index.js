@@ -402,7 +402,7 @@ app.get('/monnify-callback', (req, res) => {
   <html>
   <head>
     <meta charset="UTF-8">
-    <link rel="icon" type="image/png" href="https://i.imgur.com/f0xX5TT.png">
+   <link rel="icon" type="image/png" href="https://i.imgpeek.com/eSikilY_SDfQ">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Creating Your Account...</title>
     <style>
@@ -2307,8 +2307,8 @@ function getLoginForm(sessionExpired) {
           <div class="logo">
     <img src="https://i.imgur.com/f0xX5TT.png" style="width: 80px; height: 80px; border-radius: 16px;">
 </div>
-            <h1>Dream Hatcher Admin</h1>
-            <p>Secure Admin Portal with Role-Based Access</p>
+            <h1>Dream Hatcher Tech</h1>
+            <p>Secure Admin Portal</p>
             
             <div class="alert">
                 Session expired. Please login again.
@@ -2569,7 +2569,7 @@ function renderDashboard(data) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dream Hatcher Admin Dashboard v4.1</title>
+    <title>Dream Hatcher Tech Dashboard v4.1</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
@@ -3280,7 +3280,7 @@ function renderDashboard(data) {
     <img src="https://i.imgur.com/f0xX5TT.png" style="width: 48px; height: 48px; border-radius: 12px;">
 </div>
             <div class="brand-info">
-                <div class="brand-name">Dream Hatcher Admin</div>
+                <div class="brand-name">Dream Hatcher Tech</div>
                 <div class="brand-user">
                     <span>${session.username}</span>
                     <span class="user-role">${session.role.replace('_', ' ')}</span>
@@ -3453,7 +3453,7 @@ function renderDashboard(data) {
 
         <!-- Footer -->
         <div class="page-footer">
-            <p>Dream Hatcher Admin Dashboard v4.1 — Professional WiFi Management System</p>
+            <p>Dream Hatcher Tech Dashboard v4.1 — Professional WiFi Management System</p>
             <div class="footer-stats">
                 <span><i class="fa-solid fa-database"></i> ${stats.total_users} Total Users</span>
                 <span><i class="fa-solid fa-money-bill-wave"></i> ${naira(stats.total_revenue_lifetime)} Lifetime Revenue</span>
