@@ -2495,7 +2495,6 @@ function renderDashboard(data) {
                              user.realtime_status === 'suspended' ? 'fa-pause-circle' : 'fa-question-circle';
             const statusLabel = user.realtime_status.charAt(0).toUpperCase() + user.realtime_status.slice(1);
             
-            // Check permissions for action buttons
             const showDelete = hasPermission(session, 'delete');
             const showExtend = hasPermission(session, 'extend');
             const showReset = hasPermission(session, 'update');
@@ -2513,17 +2512,17 @@ function renderDashboard(data) {
                             <i class="fa-solid ${user.plan === '24hr' ? 'fa-bolt' : user.plan === '3d' ? 'fa-clock' : user.plan === '5d' ? 'fa-calendar' : user.plan === '7d' ? 'fa-rocket' : user.plan === '14d' ? 'fa-star' : 'fa-crown'}"></i> 
                             ${planLabel(user.plan)}
                         </span>
-                    </td>
+                     </td>
                     <td>
                         <span class="badge ${statusBadge}">
                             <i class="fa-solid ${statusIcon}"></i> ${statusLabel}
                         </span>
-                    </td>
+                     </td>
                     <td class="time-cell">
                         ${created.toLocaleDateString('en-NG')}<br>
                         <small>${created.toLocaleTimeString('en-NG', {hour:'2-digit',minute:'2-digit'})}</small>
                     </td>
-                    <td>
+                    <td class="time-cell">
                         ${expires ? 
                             `<span class="time-cell ${isExpired ? 'expires-gone' : 'expires-ok'}">
                                 ${expires.toLocaleDateString('en-NG')}<br>
@@ -2535,36 +2534,18 @@ function renderDashboard(data) {
                     <td>
                         ${user.mac_address ? `<span class="mac">${escapeHtml(user.mac_address)}</span>` : '<span style="color:var(--text-muted);">N/A</span>'}
                     </td>
-                    <td>
-                        <div class="row-actions">
-                            ${showExtend ? `
-                                <button class="act-btn a-extend" title="Extend Plan" onclick="openExtend(${user.id}, '${escapeHtml(user.mikrotik_username || '')}')">
-                                    <i class="fa-solid fa-clock-rotate-left"></i>
-                                </button>
-                            ` : ''}
-                            ${showToggle ? `
-                                <a href="/admin?sessionId=${sessionId}&action=toggle_status&userId=${user.id}" class="act-btn a-reset" title="Toggle Status">
-                                    <i class="fa-solid fa-power-off"></i>
-                                </a>
-                            ` : ''}
-                            ${showReset ? `
-                                <a href="/admin?sessionId=${sessionId}&action=reset&userId=${user.id}" class="act-btn a-reset" onclick="return confirm('Reset user to pending?')" title="Reset to Pending">
-                                    <i class="fa-solid fa-arrow-rotate-left"></i>
-                                </a>
-                            ` : ''}
-                            ${showDelete ? `
-                                <a href="/admin?sessionId=${sessionId}&action=delete&userId=${user.id}" class="act-btn a-delete" onclick="return confirm('Permanently delete this user?')" title="Delete User">
-                                    <i class="fa-solid fa-trash-can"></i>
-                                </a>
-                            ` : ''}
-                        </div>
+                    <td class="row-actions">
+                        ${showExtend ? `<button class="act-btn a-extend" title="Extend Plan" onclick="openExtend(${user.id}, '${escapeHtml(user.mikrotik_username || '')}')"><i class="fa-solid fa-clock-rotate-left"></i></button>` : ''}
+                        ${showToggle ? `<a href="/admin?sessionId=${sessionId}&action=toggle_status&userId=${user.id}" class="act-btn a-reset" title="Toggle Status"><i class="fa-solid fa-power-off"></i></a>` : ''}
+                        ${showReset ? `<a href="/admin?sessionId=${sessionId}&action=reset&userId=${user.id}" class="act-btn a-reset" onclick="return confirm('Reset user to pending?')" title="Reset to Pending"><i class="fa-solid fa-arrow-rotate-left"></i></a>` : ''}
+                        ${showDelete ? `<a href="/admin?sessionId=${sessionId}&action=delete&userId=${user.id}" class="act-btn a-delete" onclick="return confirm('Permanently delete this user?')" title="Delete User"><i class="fa-solid fa-trash-can"></i></a>` : ''}
                     </td>
                 </tr>
             `;
         });
     }
     
-    // Build admin sessions rows (unique per user)
+    // Build admin sessions rows
     let adminSessionsRows = '';
     activeAdmins.forEach(admin => {
         const loginTime = new Date(admin.login_time);
@@ -2580,24 +2561,16 @@ function renderDashboard(data) {
                         ${admin.username}
                         ${isCurrentUser ? '<span style="color: var(--success); font-size: 11px; margin-left: 5px;">(You)</span>' : ''}
                     </div>
-                    <div style="font-size: 11px; color: var(--text-muted);">
-                        ${admin.role.replace('_', ' ').toUpperCase()}
-                    </div>
+                    <div style="font-size: 11px; color: var(--text-muted);">${admin.role.replace('_', ' ').toUpperCase()}</div>
                 </td>
-                <td style="padding: 12px; font-size: 13px; font-family: monospace;">
-                    ${admin.admin_ip}
-                </td>
+                <td style="padding: 12px; font-size: 13px; font-family: monospace;">${admin.admin_ip}</td>
                 <td style="padding: 12px; font-size: 13px;">
                     ${loginTime.toLocaleTimeString('en-NG', {hour:'2-digit', minute:'2-digit'})}<br>
-                    <small style="color: var(--text-muted);">
-                        ${loginTime.toLocaleDateString('en-NG', {day:'numeric', month:'short'})}
-                    </small>
+                    <small style="color: var(--text-muted);">${loginTime.toLocaleDateString('en-NG', {day:'numeric', month:'short'})}</small>
                 </td>
                 <td style="padding: 12px; font-size: 13px;">
                     ${lastActivity.toLocaleTimeString('en-NG', {hour:'2-digit', minute:'2-digit'})}<br>
-                    <small style="color: var(--text-muted);">
-                        ${idleMinutes}m ago
-                    </small>
+                    <small style="color: var(--text-muted);">${idleMinutes}m ago</small>
                 </td>
                 <td style="padding: 12px;">
                     <span class="${admin.idle_seconds > 300 ? 'badge-expired' : 'badge-active'}" style="font-size: 12px; padding: 4px 10px;">
@@ -2607,6 +2580,9 @@ function renderDashboard(data) {
             </tr>
         `;
     });
+    
+    // Prepare the daily revenue data as JSON for JavaScript
+    const dailyRevenueJson = JSON.stringify(dailyRevenue);
     
     return `<!DOCTYPE html>
 <html lang="en">
@@ -2648,9 +2624,7 @@ function renderDashboard(data) {
             --shadow: 0 4px 6px rgba(0,0,0,0.3);
             --shadow-lg: 0 10px 25px rgba(0,0,0,0.5);
         }
-
         * { margin: 0; padding: 0; box-sizing: border-box; }
-
         body {
             font-family: 'Inter', system-ui, -apple-system, sans-serif;
             background: var(--bg-primary);
@@ -2658,8 +2632,6 @@ function renderDashboard(data) {
             line-height: 1.6;
             -webkit-font-smoothing: antialiased;
         }
-
-        /* =================== TOPBAR =================== */
         .topbar {
             position: sticky;
             top: 0;
@@ -2673,13 +2645,7 @@ function renderDashboard(data) {
             align-items: center;
             justify-content: space-between;
         }
-
-        .brand {
-            display: flex;
-            align-items: center;
-            gap: 14px;
-        }
-
+        .brand { display: flex; align-items: center; gap: 14px; }
         .brand-mark {
             width: 40px;
             height: 40px;
@@ -2692,26 +2658,9 @@ function renderDashboard(data) {
             font-size: 18px;
             box-shadow: var(--shadow);
         }
-
-        .brand-info {
-            display: flex;
-            flex-direction: column;
-        }
-
-        .brand-name {
-            font-size: 17px;
-            font-weight: 700;
-            color: var(--text-primary);
-        }
-
-        .brand-user {
-            font-size: 13px;
-            color: var(--text-secondary);
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
+        .brand-info { display: flex; flex-direction: column; }
+        .brand-name { font-size: 17px; font-weight: 700; color: var(--text-primary); }
+        .brand-user { font-size: 13px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; }
         .user-role {
             background: ${session.role === 'super_admin' ? 'var(--purple-bg)' : 'var(--success-bg)'};
             color: ${session.role === 'super_admin' ? 'var(--purple)' : 'var(--success)'};
@@ -2721,13 +2670,7 @@ function renderDashboard(data) {
             font-weight: 600;
             text-transform: uppercase;
         }
-
-        .nav-actions {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
+        .nav-actions { display: flex; align-items: center; gap: 12px; }
         .chip {
             display: inline-flex;
             align-items: center;
@@ -2740,7 +2683,6 @@ function renderDashboard(data) {
             color: var(--success);
             border: 1px solid rgba(16, 185, 129, 0.3);
         }
-
         .btn {
             display: inline-flex;
             align-items: center;
@@ -2757,64 +2699,15 @@ function renderDashboard(data) {
             transition: all 0.2s;
             white-space: nowrap;
         }
-
-        .btn:hover {
-            background: var(--bg-hover);
-            border-color: var(--border-light);
-            transform: translateY(-1px);
-            box-shadow: var(--shadow);
-        }
-
-        .btn-accent {
-            background: linear-gradient(135deg, var(--accent), var(--accent-dark));
-            border: none;
-            color: white;
-        }
-
-        .btn-accent:hover {
-            background: linear-gradient(135deg, var(--accent-dark), #1d4ed8);
-            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
-        }
-
-        .btn-danger {
-            color: var(--danger);
-            border-color: rgba(239, 68, 68, 0.3);
-            background: var(--danger-bg);
-        }
-
-        .btn-danger:hover {
-            background: rgba(239, 68, 68, 0.3);
-        }
-
-        /* =================== MAIN CONTENT =================== */
-        .page {
-            padding: 32px;
-            max-width: 1600px;
-            margin: 0 auto;
-        }
-
-        .page-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-end;
-            margin-bottom: 32px;
-            flex-wrap: wrap;
-            gap: 16px;
-        }
-
-        .page-title {
-            font-size: 32px;
-            font-weight: 800;
-            color: var(--text-primary);
-            margin-bottom: 8px;
-        }
-
-        .page-subtitle {
-            color: var(--text-secondary);
-            font-size: 16px;
-        }
-
-        /* =================== TOAST =================== */
+        .btn:hover { background: var(--bg-hover); border-color: var(--border-light); transform: translateY(-1px); box-shadow: var(--shadow); }
+        .btn-accent { background: linear-gradient(135deg, var(--accent), var(--accent-dark)); border: none; color: white; }
+        .btn-accent:hover { background: linear-gradient(135deg, var(--accent-dark), #1d4ed8); box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4); }
+        .btn-danger { color: var(--danger); border-color: rgba(239, 68, 68, 0.3); background: var(--danger-bg); }
+        .btn-danger:hover { background: rgba(239, 68, 68, 0.3); }
+        .page { padding: 32px; max-width: 1600px; margin: 0 auto; }
+        .page-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 32px; flex-wrap: wrap; gap: 16px; }
+        .page-title { font-size: 32px; font-weight: 800; color: var(--text-primary); margin-bottom: 8px; }
+        .page-subtitle { color: var(--text-secondary); font-size: 16px; }
         .toast {
             padding: 16px 20px;
             border-radius: var(--radius-sm);
@@ -2830,20 +2723,16 @@ function renderDashboard(data) {
             border: 1px solid var(--border);
             box-shadow: var(--shadow);
         }
-
         .toast-success { border-left-color: var(--success); color: var(--success); }
         .toast-warning { border-left-color: var(--warning); color: var(--warning); }
         .toast-error { border-left-color: var(--danger); color: var(--danger); }
         .toast-info { border-left-color: var(--accent); color: var(--accent); }
-
-        /* =================== METRICS GRID =================== */
         .metrics {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
             gap: 20px;
             margin-bottom: 32px;
         }
-
         .metric {
             background: var(--bg-card);
             border: 1px solid var(--border);
@@ -2852,20 +2741,8 @@ function renderDashboard(data) {
             transition: all 0.3s;
             box-shadow: var(--shadow);
         }
-
-        .metric:hover {
-            transform: translateY(-4px);
-            box-shadow: var(--shadow-lg);
-            border-color: var(--accent);
-        }
-
-        .metric-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-        }
-
+        .metric:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); border-color: var(--accent); }
+        .metric-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
         .metric-icon {
             width: 48px;
             height: 48px;
@@ -2876,42 +2753,11 @@ function renderDashboard(data) {
             background: var(--bg-secondary);
             color: var(--accent);
         }
-
-        .metric-tag {
-            font-size: 12px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            padding: 4px 12px;
-            border-radius: 20px;
-        }
-
-        .metric-value {
-            font-size: 32px;
-            font-weight: 800;
-            margin-bottom: 8px;
-            color: var(--text-primary);
-        }
-
+        .metric-tag { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 12px; border-radius: 20px; }
+        .metric-value { font-size: 32px; font-weight: 800; margin-bottom: 8px; color: var(--text-primary); }
         .metric-value.currency { color: var(--success); }
-
-        .metric-label {
-            font-size: 14px;
-            color: var(--text-secondary);
-            margin-bottom: 16px;
-        }
-
-        .metric-footer {
-            padding-top: 16px;
-            border-top: 1px solid var(--border);
-            font-size: 13px;
-            color: var(--text-muted);
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        /* =================== CARDS =================== */
+        .metric-label { font-size: 14px; color: var(--text-secondary); margin-bottom: 16px; }
+        .metric-footer { padding-top: 16px; border-top: 1px solid var(--border); font-size: 13px; color: var(--text-muted); display: flex; align-items: center; gap: 8px; }
         .card {
             background: var(--bg-card);
             border: 1px solid var(--border);
@@ -2920,7 +2766,6 @@ function renderDashboard(data) {
             overflow: hidden;
             box-shadow: var(--shadow);
         }
-
         .card-header {
             padding: 24px;
             border-bottom: 1px solid var(--border);
@@ -2931,68 +2776,16 @@ function renderDashboard(data) {
             gap: 16px;
             background: var(--bg-secondary);
         }
-
-        .card-title {
-            font-size: 18px;
-            font-weight: 700;
-            color: var(--text-primary);
-        }
-
-        .card-subtitle {
-            font-size: 14px;
-            color: var(--text-secondary);
-            margin-top: 4px;
-        }
-
-        .card-tools {
-            display: flex;
-            gap: 12px;
-            flex-wrap: wrap;
-        }
-
-        .card-body { padding: 24px; }
-
-        /* =================== TABLE =================== */
-        .tbl-wrap {
-            overflow-x: auto;
-            border-radius: var(--radius-sm);
-            border: 1px solid var(--border);
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            min-width: 1000px;
-        }
-
-        thead {
-            background: var(--bg-secondary);
-            border-bottom: 2px solid var(--border);
-        }
-
-        th {
-            padding: 16px;
-            text-align: left;
-            font-size: 12px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: var(--text-secondary);
-            white-space: nowrap;
-        }
-
-        td {
-            padding: 16px;
-            border-bottom: 1px solid var(--border);
-            font-size: 14px;
-            vertical-align: middle;
-        }
-
+        .card-title { font-size: 18px; font-weight: 700; color: var(--text-primary); }
+        .card-subtitle { font-size: 14px; color: var(--text-secondary); margin-top: 4px; }
+        .card-tools { display: flex; gap: 12px; flex-wrap: wrap; }
+        .tbl-wrap { overflow-x: auto; border-radius: var(--radius-sm); border: 1px solid var(--border); }
+        table { width: 100%; border-collapse: collapse; min-width: 1000px; }
+        thead { background: var(--bg-secondary); border-bottom: 2px solid var(--border); }
+        th { padding: 16px; text-align: left; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary); white-space: nowrap; }
+        td { padding: 16px; border-bottom: 1px solid var(--border); font-size: 14px; vertical-align: middle; }
         tbody tr { transition: background 0.2s; }
         tbody tr:hover { background: var(--bg-hover); }
-        tbody tr:last-child td { border-bottom: none; }
-
-        /* =================== BADGES & TAGS =================== */
         .badge {
             display: inline-flex;
             align-items: center;
@@ -3003,12 +2796,10 @@ function renderDashboard(data) {
             font-weight: 600;
             white-space: nowrap;
         }
-
         .badge-active { background: var(--success-bg); color: var(--success); }
         .badge-expired { background: var(--danger-bg); color: var(--danger); }
         .badge-pending { background: var(--warning-bg); color: var(--warning); }
         .badge-suspended { background: #475569; color: var(--text-secondary); }
-
         .plan-tag {
             display: inline-flex;
             align-items: center;
@@ -3018,20 +2809,13 @@ function renderDashboard(data) {
             font-size: 13px;
             font-weight: 600;
         }
-
         .plan-daily { background: rgba(59, 130, 246, 0.2); color: var(--accent); }
         .plan-3day { background: rgba(6, 182, 212, 0.2); color: #06b6d4; }
         .plan-5day { background: rgba(139, 92, 246, 0.2); color: var(--purple); }
         .plan-weekly { background: rgba(139, 92, 246, 0.2); color: var(--purple); }
         .plan-2week { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
         .plan-monthly { background: rgba(236, 72, 153, 0.2); color: var(--pink); }
-
-        /* =================== ACTIONS =================== */
-        .row-actions {
-            display: flex;
-            gap: 8px;
-        }
-
+        .row-actions { display: flex; gap: 8px; }
         .act-btn {
             width: 36px;
             height: 36px;
@@ -3046,31 +2830,12 @@ function renderDashboard(data) {
             transition: all 0.2s;
             text-decoration: none;
         }
-
-        .act-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow);
-        }
-
+        .act-btn:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
         .act-btn.a-extend:hover { color: var(--success); border-color: var(--success); }
         .act-btn.a-reset:hover { color: var(--warning); border-color: var(--warning); }
         .act-btn.a-delete:hover { color: var(--danger); border-color: var(--danger); }
-
-        /* =================== SEARCH & FILTERS =================== */
-        .search-wrap {
-            position: relative;
-            min-width: 240px;
-        }
-
-        .search-wrap i {
-            position: absolute;
-            left: 14px;
-            top: 50%;
-            transform: translateY(-50%);
-            color: var(--text-muted);
-            font-size: 14px;
-        }
-
+        .search-wrap { position: relative; min-width: 240px; }
+        .search-wrap i { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 14px; }
         .search-input {
             width: 100%;
             padding: 11px 16px 11px 40px;
@@ -3081,19 +2846,8 @@ function renderDashboard(data) {
             font-size: 14px;
             transition: all 0.2s;
         }
-
-        .search-input:focus {
-            outline: none;
-            border-color: var(--accent);
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
-        }
-
-        .filter-tabs {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-        }
-
+        .search-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2); }
+        .filter-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
         .filter-tab {
             padding: 8px 16px;
             border-radius: 20px;
@@ -3105,11 +2859,8 @@ function renderDashboard(data) {
             cursor: pointer;
             transition: all 0.2s;
         }
-
         .filter-tab:hover { background: var(--bg-hover); }
         .filter-tab.active { background: var(--accent); border-color: var(--accent); color: white; }
-
-        /* =================== MODALS =================== */
         .modal-overlay {
             display: none;
             position: fixed;
@@ -3121,22 +2872,19 @@ function renderDashboard(data) {
             justify-content: center;
             padding: 20px;
         }
-
         .modal-overlay.open { display: flex; animation: fadeIn 0.3s; }
-
         .modal-box {
             background: var(--bg-card);
             border: 1px solid var(--border);
             border-radius: var(--radius);
             width: 100%;
-            max-width: 500px;
+            max-width: 800px;
+            display: flex;
+            flex-direction: column;
+            max-height: 85vh;
             box-shadow: var(--shadow-lg);
             animation: modalSlide 0.3s ease-out;
         }
-
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-        @keyframes modalSlide { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
-
         .modal-header {
             padding: 20px 24px;
             border-bottom: 1px solid var(--border);
@@ -3144,9 +2892,7 @@ function renderDashboard(data) {
             justify-content: space-between;
             align-items: center;
         }
-
         .modal-title { font-size: 18px; font-weight: 700; }
-
         .modal-close {
             width: 36px;
             height: 36px;
@@ -3160,10 +2906,8 @@ function renderDashboard(data) {
             font-size: 20px;
             transition: all 0.2s;
         }
-
         .modal-close:hover { background: var(--bg-hover); color: var(--text-primary); }
-
-        .modal-body { padding: 24px; }
+        .modal-body { flex: 1; overflow-y: auto; padding: 24px; }
         .modal-footer {
             padding: 20px 24px;
             border-top: 1px solid var(--border);
@@ -3171,8 +2915,6 @@ function renderDashboard(data) {
             gap: 12px;
             justify-content: flex-end;
         }
-
-        /* =================== FOOTER =================== */
         .page-footer {
             text-align: center;
             padding: 32px;
@@ -3184,35 +2926,19 @@ function renderDashboard(data) {
             border-radius: var(--radius);
             box-shadow: var(--shadow);
         }
-
-        .footer-stats {
-            display: flex;
-            justify-content: center;
-            gap: 32px;
-            margin-top: 16px;
-            flex-wrap: wrap;
-            font-size: 13px;
-        }
-
-        /* =================== RESPONSIVE =================== */
-        @media (max-width: 1200px) {
-            .plan-grid { grid-template-columns: 1fr; }
-        }
-
+        .footer-stats { display: flex; justify-content: center; gap: 32px; margin-top: 16px; flex-wrap: wrap; font-size: 13px; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes modalSlide { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
         @media (max-width: 768px) {
             .topbar { height: 60px; padding: 0 20px; }
             .page { padding: 20px; }
             .metrics { grid-template-columns: 1fr; }
             .card-header { padding: 16px; }
-            .card-body { padding: 16px; }
             .card-tools { width: 100%; }
             .search-wrap { min-width: 100%; }
         }
-
-        @media (max-width: 480px) {
-            .filter-tabs { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 8px; }
-            .footer-stats { gap: 16px; }
-            .row-actions { flex-wrap: wrap; }
+        .progress-bar {
+            transition: width 0.4s ease-out;
         }
     </style>
 </head>
@@ -3224,53 +2950,43 @@ function renderDashboard(data) {
 
     <!-- Extend Modal -->
     <div class="modal-overlay" id="extendModal">
-        <div class="modal-box">
+        <div class="modal-box" style="max-width: 500px;">
             <div class="modal-header">
                 <h3 class="modal-title">Extend User Plan</h3>
                 <button class="modal-close" onclick="closeExtend()">&times;</button>
             </div>
             <div class="modal-body">
-                <p style="color: var(--text-secondary); margin-bottom: 20px;">
-                    Extending plan for: <strong id="extendUser" style="color: var(--text-primary);"></strong>
-                </p>
+                <p style="color: var(--text-secondary); margin-bottom: 20px;">Extending plan for: <strong id="extendUser" style="color: var(--text-primary);"></strong></p>
                 <div class="plan-options">
-                    <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer; transition:all 0.2s;" onclick="selectPlan(this)">
-                        <input type="radio" name="extPlan" value="24hr" checked style="margin-right:12px;">
-                        <span style="font-weight:600; color:var(--accent);">Daily Plan</span>
+                    <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer;" onclick="selectPlan(this)">
+                        <input type="radio" name="extPlan" value="24hr" checked style="margin-right:12px;"> <span style="font-weight:600; color:var(--accent);">Daily Plan</span>
                         <div style="margin-left:28px; font-size:14px; color:var(--text-secondary);">24 hours • ₦350</div>
                     </label>
-                    <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer; transition:all 0.2s;" onclick="selectPlan(this)">
-                        <input type="radio" name="extPlan" value="3d" style="margin-right:12px;">
-                        <span style="font-weight:600; color:#06b6d4;">3-Day Plan</span>
+                    <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer;" onclick="selectPlan(this)">
+                        <input type="radio" name="extPlan" value="3d" style="margin-right:12px;"> <span style="font-weight:600; color:#06b6d4;">3-Day Plan</span>
                         <div style="margin-left:28px; font-size:14px; color:var(--text-secondary);">3 days • ₦1,050</div>
                     </label>
-                    <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer; transition:all 0.2s;" onclick="selectPlan(this)">
-                        <input type="radio" name="extPlan" value="5d" style="margin-right:12px;">
-                        <span style="font-weight:600; color:var(--purple);">5-Day Plan</span>
+                    <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer;" onclick="selectPlan(this)">
+                        <input type="radio" name="extPlan" value="5d" style="margin-right:12px;"> <span style="font-weight:600; color:var(--purple);">5-Day Plan</span>
                         <div style="margin-left:28px; font-size:14px; color:var(--text-secondary);">5 days • ₦1,750</div>
                     </label>
-                    <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer; transition:all 0.2s;" onclick="selectPlan(this)">
-                        <input type="radio" name="extPlan" value="7d" style="margin-right:12px;">
-                        <span style="font-weight:600; color:var(--purple);">Weekly Plan</span>
+                    <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer;" onclick="selectPlan(this)">
+                        <input type="radio" name="extPlan" value="7d" style="margin-right:12px;"> <span style="font-weight:600; color:var(--purple);">Weekly Plan</span>
                         <div style="margin-left:28px; font-size:14px; color:var(--text-secondary);">7 days • ₦2,400</div>
                     </label>
-                    <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer; transition:all 0.2s;" onclick="selectPlan(this)">
-                        <input type="radio" name="extPlan" value="14d" style="margin-right:12px;">
-                        <span style="font-weight:600; color:#f59e0b;">2-Week Plan</span>
+                    <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer;" onclick="selectPlan(this)">
+                        <input type="radio" name="extPlan" value="14d" style="margin-right:12px;"> <span style="font-weight:600; color:#f59e0b;">2-Week Plan</span>
                         <div style="margin-left:28px; font-size:14px; color:var(--text-secondary);">14 days • ₦4,100</div>
                     </label>
-                    <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer; transition:all 0.2s;" onclick="selectPlan(this)">
-                        <input type="radio" name="extPlan" value="30d" style="margin-right:12px;">
-                        <span style="font-weight:600; color:var(--pink);">Monthly Plan</span>
+                    <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer;" onclick="selectPlan(this)">
+                        <input type="radio" name="extPlan" value="30d" style="margin-right:12px;"> <span style="font-weight:600; color:var(--pink);">Monthly Plan</span>
                         <div style="margin-left:28px; font-size:14px; color:var(--text-secondary);">30 days • ₦7,500</div>
                     </label>
                 </div>
             </div>
             <div class="modal-footer">
                 <button class="btn" onclick="closeExtend()">Cancel</button>
-                <button class="btn btn-accent" id="extendConfirmBtn">
-                    <i class="fa-solid fa-check"></i> Confirm Extension
-                </button>
+                <button class="btn btn-accent" id="extendConfirmBtn"><i class="fa-solid fa-check"></i> Confirm Extension</button>
             </div>
         </div>
     </div>
@@ -3286,84 +3002,51 @@ function renderDashboard(data) {
                 <div style="max-height: 400px; overflow-y: auto;">
                     <table style="width: 100%;">
                         <thead>
-                            <tr>
-                                <th style="padding: 12px;">Username</th>
-                                <th style="padding: 12px;">IP Address</th>
-                                <th style="padding: 12px;">Login Time</th>
-                                <th style="padding: 12px;">Last Activity</th>
-                                <th style="padding: 12px;">Idle Time</th>
-                            </tr>
+                            <tr><th style="padding: 12px;">Username</th><th style="padding: 12px;">IP Address</th><th style="padding: 12px;">Login Time</th><th style="padding: 12px;">Last Activity</th><th style="padding: 12px;">Idle Time</th></tr>
                         </thead>
-                        <tbody id="adminSessionsBody">
-                            ${activeAdmins.length > 0 ? adminSessionsRows : `
-                                <tr>
-                                    <td colspan="5" style="text-align: center; padding: 40px; color: var(--text-muted);">
-                                        <i class="fa-solid fa-user-slash" style="font-size: 24px; display: block; margin-bottom: 10px;"></i>
-                                        No active admin sessions
-                                    </td>
-                                </tr>
-                            `}
+                        <tbody>
+                            ${activeAdmins.length > 0 ? adminSessionsRows : '<tr><td colspan="5" style="text-align: center; padding: 40px; color: var(--text-muted);"><i class="fa-solid fa-user-slash" style="font-size: 24px; display: block; margin-bottom: 10px;"></i>No active admin sessions</td></tr>'}
                         </tbody>
                     </table>
                 </div>
             </div>
             <div class="modal-footer">
                 <button class="btn" onclick="closeModal('adminSessionsModal')">Close</button>
-                ${activeSessions > 1 && hasPermission(session, 'force_logout') ? `
-                    <button class="btn btn-danger" onclick="forceLogoutAll()">
-                        <i class="fa-solid fa-power-off"></i> Force Logout All Others
-                    </button>
-                ` : ''}
+                ${activeSessions > 1 && hasPermission(session, 'force_logout') ? `<button class="btn btn-danger" onclick="forceLogoutAll()"><i class="fa-solid fa-power-off"></i> Force Logout All Others</button>` : ''}
             </div>
         </div>
     </div>
 
-   <!-- Revenue Analytics Modal -->
-<div class="modal-overlay" id="revenueModal">
-    <div class="modal-box" style="max-width: 800px; display: flex; flex-direction: column; max-height: 85vh;">
-        <div class="modal-header">
-            <h3 class="modal-title"><i class="fa-solid fa-chart-line"></i> Revenue Analytics</h3>
-            <button class="modal-close" onclick="closeRevenueModal()">&times;</button>
-        </div>
-        <div class="modal-body" style="flex: 1; overflow-y: auto; padding: 24px;">
-            <!-- Monthly Table with horizontal scroll -->
-            <h4 style="margin-bottom: 16px; color: var(--text-primary);">
-                <i class="fa-solid fa-calendar-alt"></i> Last 12 Months
-            </h4>
-            <div style="overflow-x: auto; margin-bottom: 32px;">
-                <table style="width: 100%; border-collapse: collapse; min-width: 300px;">
-                    <thead>
-                        <tr><th style="text-align:left; padding: 12px;">Month</th><th style="text-align:right; padding: 12px;">Revenue</th></tr>
-                    </thead>
-                    <tbody>
-                        ${monthlyRevenue.map(m => `
-                            <tr>
-                                <td style="padding: 10px; border-bottom: 1px solid var(--border);">${m.month_label}</td>
-                                <td style="padding: 10px; text-align: right; border-bottom: 1px solid var(--border); font-weight: 600;">${naira(m.revenue)}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
+    <!-- Revenue Analytics Modal -->
+    <div class="modal-overlay" id="revenueModal">
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3 class="modal-title"><i class="fa-solid fa-chart-line"></i> Revenue Analytics</h3>
+                <button class="modal-close" onclick="closeRevenueModal()">&times;</button>
             </div>
-
-            <!-- Daily Progress for Current Month -->
-            <h4 style="margin-bottom: 16px; color: var(--text-primary);">
-                <i class="fa-solid fa-chart-simple"></i> Daily Progress – ${currentMonthName}
-            </h4>
-            <div style="background: var(--bg-secondary); border-radius: var(--radius-sm); padding: 20px;">
-                <div id="dailyProgressContainer" style="display: flex; flex-direction: column; gap: 16px;">
-                    ${dailyRevenue.length === 0 ? '<p style="color: var(--text-muted);">No revenue recorded yet this month.</p>' : ''}
+            <div class="modal-body">
+                <h4 style="margin-bottom: 16px; color: var(--text-primary);"><i class="fa-solid fa-calendar-alt"></i> Last 12 Months</h4>
+                <div style="overflow-x: auto; margin-bottom: 32px;">
+                    <table style="width: 100%; border-collapse: collapse; min-width: 300px;">
+                        <thead><tr><th style="text-align:left; padding: 12px;">Month</th><th style="text-align:right; padding: 12px;">Revenue</th></tr></thead>
+                        <tbody>
+                            ${monthlyRevenue.map(m => `<tr><td style="padding: 10px; border-bottom: 1px solid var(--border);">${m.month_label}</td><td style="padding: 10px; text-align: right; border-bottom: 1px solid var(--border); font-weight: 600;">${naira(m.revenue)}</td></tr>`).join('')}
+                        </tbody>
+                    </table>
                 </div>
-                <div style="margin-top: 20px; font-size: 13px; color: var(--text-secondary); text-align: center;">
-                    <i class="fa-solid fa-info-circle"></i> Hover over a bar to see exact amount
+                <h4 style="margin-bottom: 16px; color: var(--text-primary);"><i class="fa-solid fa-chart-simple"></i> Daily Progress – ${currentMonthName}</h4>
+                <div style="background: var(--bg-secondary); border-radius: var(--radius-sm); padding: 20px;">
+                    <div id="dailyProgressContainer" style="display: flex; flex-direction: column; gap: 16px;"></div>
+                    <div style="margin-top: 20px; font-size: 13px; color: var(--text-secondary); text-align: center;">
+                        <i class="fa-solid fa-info-circle"></i> Hover over a bar to see exact amount
+                    </div>
                 </div>
             </div>
-        </div>
-        <div class="modal-footer">
-            <button class="btn" onclick="closeRevenueModal()">Close</button>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeRevenueModal()">Close</button>
+            </div>
         </div>
     </div>
-</div>
 
     <!-- Topbar -->
     <nav class="topbar">
@@ -3380,139 +3063,55 @@ function renderDashboard(data) {
             </div>
         </div>
         <div class="nav-actions">
-            <div class="chip">
-                <i class="fa-solid fa-circle" style="font-size: 8px; color: var(--success);"></i>
-                System Online
-            </div>
-            ${hasPermission(session, 'export') ? `
-                <a href="/admin?sessionId=${sessionId}&exportData=csv" class="btn">
-                    <i class="fa-solid fa-download"></i> Export CSV
-                </a>
-            ` : ''}
-            ${hasPermission(session, 'delete') ? `
-                <a href="/admin?sessionId=${sessionId}&action=cleanup" class="btn btn-danger" onclick="return confirm('Cleanup expired/pending users?')">
-                    <i class="fa-solid fa-broom"></i> Cleanup
-                </a>
-            ` : ''}
-            ${hasPermission(session, 'update') ? `
-                <a href="/admin?sessionId=${sessionId}&action=sync_expired" class="btn" title="Sync expired users with MikroTik">
-                    <i class="fa-solid fa-rotate"></i> Sync Expired
-                </a>
-            ` : ''}
-            <button class="btn" onclick="location.reload()">
-                <i class="fa-solid fa-rotate"></i> Refresh
-            </button>
-            <button class="btn btn-danger" onclick="logout()">
-                <i class="fa-solid fa-right-from-bracket"></i> Logout
-            </button>
+            <div class="chip"><i class="fa-solid fa-circle" style="font-size: 8px; color: var(--success);"></i> System Online</div>
+            ${hasPermission(session, 'export') ? `<a href="/admin?sessionId=${sessionId}&exportData=csv" class="btn"><i class="fa-solid fa-download"></i> Export CSV</a>` : ''}
+            ${hasPermission(session, 'delete') ? `<a href="/admin?sessionId=${sessionId}&action=cleanup" class="btn btn-danger" onclick="return confirm('Cleanup expired/pending users?')"><i class="fa-solid fa-broom"></i> Cleanup</a>` : ''}
+            ${hasPermission(session, 'update') ? `<a href="/admin?sessionId=${sessionId}&action=sync_expired" class="btn"><i class="fa-solid fa-rotate"></i> Sync Expired</a>` : ''}
+            <button class="btn" onclick="location.reload()"><i class="fa-solid fa-rotate"></i> Refresh</button>
+            <button class="btn btn-danger" onclick="logout()"><i class="fa-solid fa-right-from-bracket"></i> Logout</button>
         </div>
     </nav>
 
-    <!-- Main Content -->
     <main class="page">
         <div class="page-header">
-            <div>
-                <h1 class="page-title">Dashboard Overview</h1>
-                <p class="page-subtitle">Real-time business insights & user management</p>
-            </div>
-            <div style="font-size: 14px; color: var(--text-secondary);">
-                <i class="fa-solid fa-clock"></i> Last refreshed: ${new Date().toLocaleString('en-NG')}
-            </div>
+            <div><h1 class="page-title">Dashboard Overview</h1><p class="page-subtitle">Real-time business insights & user management</p></div>
+            <div style="font-size: 14px; color: var(--text-secondary);"><i class="fa-solid fa-clock"></i> Last refreshed: ${new Date().toLocaleString('en-NG')}</div>
         </div>
 
-        ${actionMessage ? `
-            <div class="toast toast-${messageType}">
-                <i class="fa-solid fa-${messageType === 'success' ? 'check-circle' : messageType === 'warning' ? 'triangle-exclamation' : messageType === 'error' ? 'circle-xmark' : 'circle-info'}"></i>
-                ${actionMessage}
-            </div>
-        ` : ''}
+        ${actionMessage ? `<div class="toast toast-${messageType}"><i class="fa-solid fa-${messageType === 'success' ? 'check-circle' : messageType === 'warning' ? 'triangle-exclamation' : messageType === 'error' ? 'circle-xmark' : 'circle-info'}"></i> ${actionMessage}</div>` : ''}
 
-        <!-- Metrics Grid -->
         <div class="metrics">
-            <!-- Lifetime Revenue -->
             <div class="metric" id="lifetimeRevenueCard" style="cursor: pointer;" onclick="showRevenueModal()">
-                <div class="metric-header">
-                    <div class="metric-icon">
-                        <i class="fa-solid fa-vault"></i>
-                    </div>
-                    <span class="metric-tag" style="background:var(--success-bg); color:var(--success);">ALL-TIME</span>
-                </div>
+                <div class="metric-header"><div class="metric-icon"><i class="fa-solid fa-vault"></i></div><span class="metric-tag" style="background:var(--success-bg); color:var(--success);">ALL-TIME</span></div>
                 <div class="metric-value currency">${naira(stats.total_revenue_lifetime)}</div>
                 <div class="metric-label">Lifetime Revenue</div>
-                <div class="metric-footer">
-                    <i class="fa-solid fa-info-circle"></i> All payments received
-                </div>
+                <div class="metric-footer"><i class="fa-solid fa-info-circle"></i> All payments received</div>
             </div>
-            
-            <!-- Today's Revenue -->
             <div class="metric">
-                <div class="metric-header">
-                    <div class="metric-icon" style="background:rgba(59, 130, 246, 0.2); color:var(--accent);">
-                        <i class="fa-solid fa-calendar-day"></i>
-                    </div>
-                    <span class="metric-tag" style="background:rgba(59, 130, 246, 0.2); color:var(--accent);">TODAY</span>
-                </div>
+                <div class="metric-header"><div class="metric-icon" style="background:rgba(59, 130, 246, 0.2); color:var(--accent);"><i class="fa-solid fa-calendar-day"></i></div><span class="metric-tag" style="background:rgba(59, 130, 246, 0.2); color:var(--accent);">TODAY</span></div>
                 <div class="metric-value currency" style="color:var(--accent);">${naira(stats.revenue_today)}</div>
                 <div class="metric-label">Today's Revenue</div>
-                <div class="metric-footer">
-                    <i class="fa-solid fa-user-plus"></i> ${stats.signups_today} signups today
-                </div>
+                <div class="metric-footer"><i class="fa-solid fa-user-plus"></i> ${stats.signups_today} signups today</div>
             </div>
-            
-            <!-- Active Users -->
             <div class="metric">
-                <div class="metric-header">
-                    <div class="metric-icon" style="background:var(--success-bg); color:var(--success);">
-                        <i class="fa-solid fa-users"></i>
-                    </div>
-                    <span class="metric-tag" style="background:var(--success-bg); color:var(--success);">ACTIVE</span>
-                </div>
+                <div class="metric-header"><div class="metric-icon" style="background:var(--success-bg); color:var(--success);"><i class="fa-solid fa-users"></i></div><span class="metric-tag" style="background:var(--success-bg); color:var(--success);">ACTIVE</span></div>
                 <div class="metric-value" style="color:var(--success);">${activeCount}</div>
                 <div class="metric-label">Currently Active Users</div>
-                <div class="metric-footer">
-                    <span style="color:var(--danger);"><i class="fa-solid fa-xmark"></i> ${expiredCount} expired</span>
-                    <span style="color:var(--warning);"><i class="fa-solid fa-clock"></i> ${pendingCount} pending</span>
-                </div>
+                <div class="metric-footer"><span style="color:var(--danger);"><i class="fa-solid fa-xmark"></i> ${expiredCount} expired</span> <span style="color:var(--warning);"><i class="fa-solid fa-clock"></i> ${pendingCount} pending</span></div>
             </div>
-            
-            <!-- Admin Sessions -->
             <div class="metric" onclick="showAdminSessions()" style="cursor:pointer;">
-                <div class="metric-header">
-                    <div class="metric-icon" style="background:var(--purple-bg); color:var(--purple);">
-                        <i class="fa-solid fa-user-shield"></i>
-                    </div>
-                    <span class="metric-tag" style="background:var(--purple-bg); color:var(--purple);">SESSIONS</span>
-                </div>
+                <div class="metric-header"><div class="metric-icon" style="background:var(--purple-bg); color:var(--purple);"><i class="fa-solid fa-user-shield"></i></div><span class="metric-tag" style="background:var(--purple-bg); color:var(--purple);">SESSIONS</span></div>
                 <div class="metric-value" style="color:var(--purple);">${activeSessions}</div>
                 <div class="metric-label">Active Admin Sessions</div>
-                <div class="metric-footer">
-                    <i class="fa-solid fa-user"></i> ${session.username}
-                    <i class="fa-solid fa-clock" style="margin-left:12px;"></i> ${Math.floor(currentAdminIdleSeconds / 60)}m idle
-                </div>
+                <div class="metric-footer"><i class="fa-solid fa-user"></i> ${session.username} <i class="fa-solid fa-clock" style="margin-left:12px;"></i> ${Math.floor(currentAdminIdleSeconds / 60)}m idle</div>
             </div>
         </div>
 
-        <!-- User Management -->
         <div class="card">
             <div class="card-header">
-                <div>
-                    <div class="card-title">
-                        <i class="fa-solid fa-users-gear" style="color:var(--accent); margin-right:10px;"></i>
-                        User Management
-                    </div>
-                    <div class="card-subtitle">
-                        ${users.length} users • 
-                        <span style="color:var(--success);">${activeCount} active</span> • 
-                        <span style="color:var(--danger);">${expiredCount} expired</span> • 
-                        <span style="color:var(--warning);">${pendingCount} pending</span>
-                        ${suspendedCount > 0 ? `• <span style="color:var(--text-secondary);">${suspendedCount} suspended</span>` : ''}
-                    </div>
-                </div>
+                <div><div class="card-title"><i class="fa-solid fa-users-gear" style="color:var(--accent); margin-right:10px;"></i> User Management</div><div class="card-subtitle">${users.length} users • <span style="color:var(--success);">${activeCount} active</span> • <span style="color:var(--danger);">${expiredCount} expired</span> • <span style="color:var(--warning);">${pendingCount} pending</span>${suspendedCount > 0 ? ` • <span style="color:var(--text-secondary);">${suspendedCount} suspended</span>` : ''}</div></div>
                 <div class="card-tools">
-                    <div class="search-wrap">
-                        <i class="fa-solid fa-magnifying-glass"></i>
-                        <input class="search-input" type="text" id="searchInput" placeholder="Search users, MAC, email..." oninput="filterTable()">
-                    </div>
+                    <div class="search-wrap"><i class="fa-solid fa-magnifying-glass"></i><input class="search-input" type="text" id="searchInput" placeholder="Search users, MAC, email..." oninput="filterTable()"></div>
                     <div class="filter-tabs">
                         <button class="filter-tab active" data-filter="all" onclick="setFilter('all')">All</button>
                         <button class="filter-tab" data-filter="active" onclick="setFilter('active')">Active</button>
@@ -3524,26 +3123,12 @@ function renderDashboard(data) {
             </div>
             <div class="tbl-wrap">
                 <table>
-                    <thead>
-                        <tr>
-                            <th>Username</th>
-                            <th>Password</th>
-                            <th>Plan</th>
-                            <th>Status</th>
-                            <th>Created</th>
-                            <th>Expires</th>
-                            <th>MAC Address</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="usersTbody">
-                        ${userRows}
-                    </tbody>
+                    <thead><tr><th>Username</th><th>Password</th><th>Plan</th><th>Status</th><th>Created</th><th>Expires</th><th>MAC Address</th><th>Actions</th></tr></thead>
+                    <tbody id="usersTbody">${userRows}</tbody>
                 </table>
             </div>
         </div>
 
-        <!-- Footer -->
         <div class="page-footer">
             <p>Dream Hatcher Tech Dashboard v4.1 — Professional WiFi Management System</p>
             <div class="footer-stats">
@@ -3556,12 +3141,10 @@ function renderDashboard(data) {
     </main>
 
     <script>
-        // Session Management
         let sessionEndTime = ${sessionEnd};
         let extendTargetId = null;
         let currentFilter = 'all';
 
-        // Helper: format currency in browser
         function formatNaira(amount) {
             const num = Number(amount) || 0;
             return '₦' + num.toLocaleString('en-NG');
@@ -3570,29 +3153,13 @@ function renderDashboard(data) {
         function updateSessionTimer() {
             const now = Date.now();
             const timeLeft = Math.max(0, sessionEndTime - now);
-            
-            if (timeLeft <= 0) {
-                logout();
-                return;
-            }
-            
+            if (timeLeft <= 0) { logout(); return; }
             setTimeout(updateSessionTimer, 1000);
         }
+        function resetSessionTimer() { sessionEndTime = Date.now() + (5 * 60 * 1000); }
+        function logout() { window.location.href = "/admin"; }
+        ['mousemove','keydown','click','scroll','touchstart'].forEach(e => document.addEventListener(e, resetSessionTimer, { passive: true }));
 
-        function resetSessionTimer() {
-            sessionEndTime = Date.now() + (5 * 60 * 1000);
-        }
-
-        function logout() {
-            window.location.href = "/admin";
-        }
-
-        // Activity detection
-        ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'].forEach(event => {
-            document.addEventListener(event, resetSessionTimer, { passive: true });
-        });
-
-        // Copy password
         function copyPw(text) {
             navigator.clipboard.writeText(text).then(() => {
                 const toast = document.getElementById('copyToast');
@@ -3605,28 +3172,18 @@ function renderDashboard(data) {
             });
         }
 
-        // Extend modal
         function openExtend(userId, username) {
             extendTargetId = userId;
             document.getElementById('extendUser').textContent = username;
             document.getElementById('extendModal').classList.add('open');
         }
-
-        function closeExtend() {
-            document.getElementById('extendModal').classList.remove('open');
-            extendTargetId = null;
-        }
-
+        function closeExtend() { document.getElementById('extendModal').classList.remove('open'); extendTargetId = null; }
         function selectPlan(element) {
-            document.querySelectorAll('.plan-option').forEach(opt => {
-                opt.style.borderColor = 'var(--border)';
-                opt.style.background = 'var(--bg-secondary)';
-            });
+            document.querySelectorAll('.plan-option').forEach(opt => { opt.style.borderColor = 'var(--border)'; opt.style.background = 'var(--bg-secondary)'; });
             element.style.borderColor = 'var(--accent)';
             element.style.background = 'rgba(59, 130, 246, 0.1)';
             element.querySelector('input').checked = true;
         }
-
         document.getElementById('extendConfirmBtn').addEventListener('click', function() {
             if (!extendTargetId) return;
             const sel = document.querySelector('input[name="extPlan"]:checked');
@@ -3634,55 +3191,43 @@ function renderDashboard(data) {
             window.location.href = '/admin?sessionId=${sessionId}&action=extend&userId=' + extendTargetId + '&newPlan=' + sel.value;
         });
 
-        // Admin sessions modal
-        function showAdminSessions() {
-            document.getElementById('adminSessionsModal').classList.add('open');
-        }
+        function showAdminSessions() { document.getElementById('adminSessionsModal').classList.add('open'); }
+        function closeModal(modalId) { document.getElementById(modalId).classList.remove('open'); }
 
-        function closeModal(modalId) {
-            document.getElementById(modalId).classList.remove('open');
+        function showRevenueModal() {
+            const container = document.getElementById('dailyProgressContainer');
+            if (container && container.innerHTML === '') {
+                const dailyData = ${dailyRevenueJson};
+                if (dailyData.length === 0) {
+                    container.innerHTML = '<p style="color: var(--text-muted);">No revenue recorded yet this month.</p>';
+                } else {
+                    const maxRevenue = Math.max(...dailyData.map(d => Number(d.daily_total)), 1);
+                    let barsHtml = '';
+                    for (let i = 0; i < dailyData.length; i++) {
+                        const day = dailyData[i];
+                        const percent = (day.daily_total / maxRevenue) * 100;
+                        const amountFormatted = formatNaira(day.daily_total);
+                        barsHtml += '<div style="display: flex; align-items: center; gap: 16px;">' +
+                            '<div style="width: 60px; font-weight: 600; color: var(--text-secondary);">Day ' + day.day + '</div>' +
+                            '<div style="flex: 1; background: var(--bg-primary); border-radius: 20px; height: 36px; overflow: hidden; position: relative;">' +
+                                '<div class="progress-bar" style="width: 0%; background: linear-gradient(90deg, var(--accent), var(--purple)); height: 100%; display: flex; align-items: center; justify-content: flex-end; padding-right: 12px; color: white; font-size: 13px; font-weight: bold; border-radius: 20px;" data-amount="' + amountFormatted + '">' + amountFormatted + '</div>' +
+                            '</div>' +
+                        '</div>';
+                    }
+                    container.innerHTML = barsHtml;
+                    setTimeout(() => {
+                        const bars = document.querySelectorAll('#dailyProgressContainer .progress-bar');
+                        for (let i = 0; i < bars.length; i++) {
+                            const targetWidth = (dailyData[i].daily_total / maxRevenue) * 100;
+                            bars[i].style.width = targetWidth + '%';
+                        }
+                    }, 50);
+                }
+            }
+            document.getElementById('revenueModal').classList.add('open');
         }
+        function closeRevenueModal() { document.getElementById('revenueModal').classList.remove('open'); }
 
-        // Revenue modal functions
-function showRevenueModal() {
-    const container = document.getElementById('dailyProgressContainer');
-    if (container && container.innerHTML.trim() === '') {
-        const dailyData = ${JSON.stringify(dailyRevenue)};
-        if (dailyData.length === 0) {
-            container.innerHTML = '<p style="color: var(--text-muted);">No revenue recorded yet this month.</p>';
-        } else {
-            const maxRevenue = Math.max(...dailyData.map(d => Number(d.daily_total)), 1);
-            container.innerHTML = dailyData.map(day => {
-                const percent = (day.daily_total / maxRevenue) * 100;
-                const amountFormatted = formatNaira(day.daily_total);
-                return `
-                    <div style="display: flex; align-items: center; gap: 16px;">
-                        <div style="width: 60px; font-weight: 600; color: var(--text-secondary);">Day ${day.day}</div>
-                        <div style="flex: 1; background: var(--bg-primary); border-radius: 20px; height: 36px; overflow: hidden; position: relative;">
-                            <div class="progress-bar" style="width: 0%; background: linear-gradient(90deg, var(--accent), var(--purple)); height: 100%; display: flex; align-items: center; justify-content: flex-end; padding-right: 12px; color: white; font-size: 13px; font-weight: bold; border-radius: 20px; transition: width 0.4s ease-out;" data-amount="${amountFormatted}">
-                                ${amountFormatted}
-                            </div>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-            // Animate progress bars after they are added
-            setTimeout(() => {
-                document.querySelectorAll('#dailyProgressContainer .progress-bar').forEach((bar, idx) => {
-                    const targetWidth = dailyData[idx].daily_total / maxRevenue * 100;
-                    bar.style.width = targetWidth + '%';
-                });
-            }, 50);
-        }
-    }
-    document.getElementById('revenueModal').classList.add('open');
-}
-
-        function closeRevenueModal() {
-            document.getElementById('revenueModal').classList.remove('open');
-        }
-
-        // Close modals on outside click
         document.querySelectorAll('.modal-overlay').forEach(modal => {
             modal.addEventListener('click', function(e) {
                 if (e.target === this) {
@@ -3693,51 +3238,31 @@ function showRevenueModal() {
             });
         });
 
-        // Force logout all other sessions
         function forceLogoutAll() {
             if (confirm('Force logout all other admin sessions? Only you will remain logged in.')) {
                 window.location.href = '/admin?sessionId=${sessionId}&forceLogout=all';
             }
         }
 
-        // Table filtering
         function setFilter(filter) {
             currentFilter = filter;
-            document.querySelectorAll('.filter-tab').forEach(tab => {
-                tab.classList.toggle('active', tab.dataset.filter === filter);
-            });
+            document.querySelectorAll('.filter-tab').forEach(tab => tab.classList.toggle('active', tab.dataset.filter === filter));
             filterTable();
         }
-
         function filterTable() {
             const search = document.getElementById('searchInput').value.toLowerCase();
             const rows = document.querySelectorAll('#usersTbody tr');
-            
             rows.forEach(row => {
-                if (!row.dataset.search) {
-                    row.style.display = 'none';
-                    return;
-                }
-                
+                if (!row.dataset.search) { row.style.display = 'none'; return; }
                 const matchSearch = search === '' || row.dataset.search.toLowerCase().includes(search);
                 const matchFilter = currentFilter === 'all' || row.dataset.status === currentFilter;
-                
                 row.style.display = (matchSearch && matchFilter) ? '' : 'none';
             });
         }
 
-        // Auto-refresh every 60 seconds
-        setInterval(() => {
-            window.location.reload();
-        }, 60000);
-
-        // Initialize
+        setInterval(() => { window.location.reload(); }, 60000);
         updateSessionTimer();
-        
-        // Highlight search on focus
-        document.getElementById('searchInput')?.addEventListener('focus', function() {
-            this.select();
-        });
+        document.getElementById('searchInput')?.addEventListener('focus', function() { this.select(); });
     </script>
 </body>
 </html>`;
