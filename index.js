@@ -402,6 +402,7 @@ app.get('/monnify-callback', (req, res) => {
   <html>
   <head>
     <meta charset="UTF-8">
+    <link rel="icon" type="image/png" href="https://i.imgur.com/f0xX5TT.png">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Creating Your Account...</title>
     <style>
@@ -3273,7 +3274,9 @@ function renderDashboard(data) {
     <!-- Topbar -->
     <nav class="topbar">
         <div class="brand">
-            <div class="brand-mark">DH</div>
+            <div class="brand-mark">
+    <img src="https://i.imgur.com/f0xX5TT.png" style="width: 40px; height: 40px; border-radius: 8px;">
+</div>
             <div class="brand-info">
                 <div class="brand-name">Dream Hatcher Admin</div>
                 <div class="brand-user">
