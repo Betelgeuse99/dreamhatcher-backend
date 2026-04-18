@@ -2452,7 +2452,6 @@ function getErrorPage(error) {
 </html>`;
 }
 
-// ========== DASHBOARD RENDERER ==========
 function renderDashboard(data) {
     const { 
         session,
@@ -2608,12 +2607,6 @@ function renderDashboard(data) {
             </tr>
         `;
     });
-    
-    // Plan distribution percentages
-    const totalUsers = Number(stats.total_users) || 1;
-    const dailyPct = ((planData.daily.count / totalUsers) * 100).toFixed(1);
-    const weeklyPct = ((planData.weekly.count / totalUsers) * 100).toFixed(1);
-    const monthlyPct = ((planData.monthly.count / totalUsers) * 100).toFixed(1);
     
     return `<!DOCTYPE html>
 <html lang="en">
@@ -3437,7 +3430,7 @@ function renderDashboard(data) {
         <!-- Metrics Grid -->
         <div class="metrics">
             <!-- Lifetime Revenue -->
-           <div class="metric" id="lifetimeRevenueCard" style="cursor: pointer;" onclick="showRevenueModal()">
+            <div class="metric" id="lifetimeRevenueCard" style="cursor: pointer;" onclick="showRevenueModal()">
                 <div class="metric-header">
                     <div class="metric-icon">
                         <i class="fa-solid fa-vault"></i>
@@ -3568,6 +3561,12 @@ function renderDashboard(data) {
         let extendTargetId = null;
         let currentFilter = 'all';
 
+        // Helper: format currency in browser
+        function formatNaira(amount) {
+            const num = Number(amount) || 0;
+            return '₦' + num.toLocaleString('en-NG');
+        }
+
         function updateSessionTimer() {
             const now = Date.now();
             const timeLeft = Math.max(0, sessionEndTime - now);
@@ -3658,7 +3657,7 @@ function renderDashboard(data) {
                             <div style="width: 60px; font-weight: 600;">Day \${day.day}</div>
                             <div style="flex: 1; background: var(--bg-primary); border-radius: 20px; height: 30px; overflow: hidden;">
                                 <div style="width: \${percent}%; background: linear-gradient(90deg, var(--accent), var(--purple)); height: 100%; display: flex; align-items: center; justify-content: flex-end; padding-right: 10px; color: white; font-size: 12px; font-weight: bold;">
-                                    \${naira(day.daily_total)}
+                                    \${formatNaira(day.daily_total)}
                                 </div>
                             </div>
                         </div>
@@ -3721,8 +3720,6 @@ function renderDashboard(data) {
             window.location.reload();
         }, 60000);
 
-        // Attach click handler to Lifetime Revenue card
-       
         // Initialize
         updateSessionTimer();
         
