@@ -1532,11 +1532,8 @@ async function checkExpiredUsers() {
         `, [now]);
         
         if (result.rows.length > 0) {
-            // Removed log: ⏰ Auto-expiring X user(s) via scheduled check
-            
             // Mark them as expired
             for (const user of result.rows) {
-                // Removed log: ⏰ Auto-expired: user_... (ID: ...)
                 await pool.query(
                     `UPDATE payment_queue SET status = 'expired' WHERE id = $1`,
                     [user.id]
@@ -1572,8 +1569,6 @@ async function syncExpiredWithMikroTik() {
         `);
         
         if (result.rows.length > 0) {
-            // Removed log: 🔄 Syncing X expired users with MikroTik
-            
             // Update last_sync timestamp
             for (const user of result.rows) {
                 await pool.query(
@@ -2034,17 +2029,70 @@ async function handleAdminDashboard(req, res, sessionId) {
           ORDER BY created_at DESC
           LIMIT 100
         `);
-        // 3. GET ACTIVE ADMINS (UNIQUE BY USER)
-       let activeAdmins = await getActiveAdmins();
-let adminHistory = await getAdminLoginHistory(10);
-let visibleSessionCount = activeAdmins.length;
 
-// Regular admins must NOT see superadmin sessions or history
-if (session.role !== 'super_admin') {
-    activeAdmins = activeAdmins.filter(admin => admin.role !== 'super_admin');
-    adminHistory = adminHistory.filter(record => record.role !== 'super_admin');
-    visibleSessionCount = activeAdmins.length;
-}
+        // 3. MONTHLY & DAILY REVENUE FOR MODAL (last 12 months & current month daily)
+        const monthlyRevenue = await pool.query(`
+            WITH months AS (
+                SELECT 
+                    DATE_TRUNC('month', created_at) as month_start,
+                    SUM(
+                        CASE plan
+                            WHEN '24hr' THEN 350
+                            WHEN '3d'  THEN 1050
+                            WHEN '5d'  THEN 1750
+                            WHEN '7d'  THEN 2400
+                            WHEN '14d' THEN 4100
+                            WHEN '30d' THEN 7500
+                            ELSE 0
+                        END
+                    ) as total
+                FROM payment_queue
+                WHERE created_at >= NOW() - INTERVAL '12 months'
+                GROUP BY DATE_TRUNC('month', created_at)
+                ORDER BY month_start ASC
+            )
+            SELECT 
+                to_char(month_start, 'Mon YYYY') as month_label,
+                month_start,
+                COALESCE(total, 0) as revenue
+            FROM months
+            LIMIT 12
+        `);
+
+        const dailyRevenue = await pool.query(`
+            SELECT 
+                EXTRACT(DAY FROM created_at) as day,
+                SUM(
+                    CASE plan
+                        WHEN '24hr' THEN 350
+                        WHEN '3d'  THEN 1050
+                        WHEN '5d'  THEN 1750
+                        WHEN '7d'  THEN 2400
+                        WHEN '14d' THEN 4100
+                        WHEN '30d' THEN 7500
+                        ELSE 0
+                    END
+                ) as daily_total
+            FROM payment_queue
+            WHERE created_at >= DATE_TRUNC('month', CURRENT_DATE)
+              AND created_at < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month'
+            GROUP BY EXTRACT(DAY FROM created_at)
+            ORDER BY day ASC
+        `);
+        const currentMonthName = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
+
+        // 4. GET ACTIVE ADMINS (UNIQUE BY USER) WITH ROLE FILTERING
+        let activeAdmins = await getActiveAdmins();
+        let adminHistory = await getAdminLoginHistory(10);
+        let visibleSessionCount = activeAdmins.length;
+
+        // Regular admins must NOT see superadmin sessions or history
+        if (session.role !== 'super_admin') {
+            activeAdmins = activeAdmins.filter(admin => admin.role !== 'super_admin');
+            adminHistory = adminHistory.filter(record => record.role !== 'super_admin');
+            visibleSessionCount = activeAdmins.length;
+        }
+
         const stats = metrics.rows[0];
         const users = recentActivity.rows;
         
@@ -2111,7 +2159,10 @@ if (session.role !== 'super_admin') {
             currentAdminIdleSeconds: currentAdminIdleSeconds,
             currentAdminIP: currentSession ? currentSession.ip : 'Unknown',
             actionMessage: actionMessage,
-            messageType: messageType
+            messageType: messageType,
+            monthlyRevenue: monthlyRevenue.rows,
+            dailyRevenue: dailyRevenue.rows,
+            currentMonthName: currentMonthName
         }));
 
     } catch (error) {
@@ -2174,17 +2225,14 @@ function getLoginForm(sessionExpired) {
         }
         
         .logo {
-            width: 64px;
-            height: 64px;
-            background: ltransparent;
+            width: auto;
+            height: auto;
+            background: transparent;
             border-radius: 12px;
             display: flex;
             align-items: center;
             justify-content: center;
             margin: 0 auto 24px;
-            color: white;
-            font-size: 28px;
-            font-weight: bold;
         }
         
         h1 {
@@ -2303,9 +2351,9 @@ function getLoginForm(sessionExpired) {
 <body>
     <div class="login-container">
         <div class="login-card">
-          <div class="logo">
-    <img src="https://i.imgur.com/f0xX5TT.png" style="width: 80px; height: 80px; border-radius: 16px;">
-</div>
+            <div class="logo">
+                <img src="https://i.imgur.com/f0xX5TT.png" style="width: 80px; height: 80px; border-radius: 16px;">
+            </div>
             <h1>Dream Hatcher Tech</h1>
             <p>Secure Admin Portal</p>
             
@@ -2422,7 +2470,10 @@ function renderDashboard(data) {
         currentAdminIdleSeconds,
         currentAdminIP,
         actionMessage, 
-        messageType 
+        messageType,
+        monthlyRevenue,
+        dailyRevenue,
+        currentMonthName
     } = data;
     
     const now = new Date();
@@ -2483,7 +2534,8 @@ function renderDashboard(data) {
                         }
                     </td>
                     <td>
-                        ${user.mac_address ? `<span class="mac">${escapeHtml(user.mac_address)}</span>` : '<span style="color:var(--text-muted);">N/A</span>'}</td>
+                        ${user.mac_address ? `<span class="mac">${escapeHtml(user.mac_address)}</span>` : '<span style="color:var(--text-muted);">N/A</span>'}
+                    </td>
                     <td>
                         <div class="row-actions">
                             ${showExtend ? `
@@ -3273,12 +3325,59 @@ function renderDashboard(data) {
         </div>
     </div>
 
+    <!-- Revenue Analytics Modal -->
+    <div class="modal-overlay" id="revenueModal">
+        <div class="modal-box" style="max-width: 800px;">
+            <div class="modal-header">
+                <h3 class="modal-title"><i class="fa-solid fa-chart-line"></i> Revenue Analytics</h3>
+                <button class="modal-close" onclick="closeRevenueModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- Monthly Table -->
+                <h4 style="margin-bottom: 16px; color: var(--text-primary);">
+                    <i class="fa-solid fa-calendar-alt"></i> Last 12 Months
+                </h4>
+                <div style="overflow-x: auto; margin-bottom: 32px;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr><th style="text-align:left; padding: 12px;">Month</th><th style="text-align:right; padding: 12px;">Revenue</th></tr>
+                        </thead>
+                        <tbody id="monthlyRevenueBody">
+                            ${monthlyRevenue.map(m => `
+                                <tr>
+                                    <td style="padding: 10px; border-bottom: 1px solid var(--border);">${m.month_label}</td>
+                                    <td style="padding: 10px; text-align: right; border-bottom: 1px solid var(--border); font-weight: 600;">${naira(m.revenue)}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Daily Progress for Current Month -->
+                <h4 style="margin-bottom: 16px; color: var(--text-primary);">
+                    <i class="fa-solid fa-chart-simple"></i> Daily Progress – ${currentMonthName}
+                </h4>
+                <div style="background: var(--bg-secondary); border-radius: var(--radius-sm); padding: 20px;">
+                    <div id="dailyProgressContainer" style="display: flex; flex-direction: column; gap: 12px;">
+                        ${dailyRevenue.length === 0 ? '<p style="color: var(--text-muted);">No revenue recorded yet this month.</p>' : ''}
+                    </div>
+                    <div style="margin-top: 16px; font-size: 13px; color: var(--text-secondary);">
+                        <i class="fa-solid fa-info-circle"></i> Showing daily totals from 1st to today.
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeRevenueModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Topbar -->
     <nav class="topbar">
         <div class="brand">
-           <div class="brand-mark" style="background: transparent; width: auto; height: auto; box-shadow: none;">
-    <img src="https://i.imgur.com/f0xX5TT.png" style="width: 48px; height: 48px; border-radius: 12px;">
-</div>
+            <div class="brand-mark" style="background: transparent; width: auto; height: auto; box-shadow: none;">
+                <img src="https://i.imgur.com/f0xX5TT.png" style="width: 48px; height: 48px; border-radius: 12px;">
+            </div>
             <div class="brand-info">
                 <div class="brand-name">Dream Hatcher Tech</div>
                 <div class="brand-user">
@@ -3338,7 +3437,7 @@ function renderDashboard(data) {
         <!-- Metrics Grid -->
         <div class="metrics">
             <!-- Lifetime Revenue -->
-            <div class="metric">
+            <div class="metric" id="lifetimeRevenueCard" style="cursor: pointer;">
                 <div class="metric-header">
                     <div class="metric-icon">
                         <i class="fa-solid fa-vault"></i>
@@ -3545,12 +3644,41 @@ function renderDashboard(data) {
             document.getElementById(modalId).classList.remove('open');
         }
 
+        // Revenue modal functions
+        function showRevenueModal() {
+            const container = document.getElementById('dailyProgressContainer');
+            if (container) {
+                const dailyData = ${JSON.stringify(dailyRevenue)};
+                const maxRevenue = dailyData.length ? Math.max(...dailyData.map(d => Number(d.daily_total))) : 1;
+                
+                container.innerHTML = dailyData.map(day => {
+                    const percent = (day.daily_total / maxRevenue) * 100;
+                    return \`
+                        <div style="display: flex; align-items: center; gap: 16px;">
+                            <div style="width: 60px; font-weight: 600;">Day \${day.day}</div>
+                            <div style="flex: 1; background: var(--bg-primary); border-radius: 20px; height: 30px; overflow: hidden;">
+                                <div style="width: \${percent}%; background: linear-gradient(90deg, var(--accent), var(--purple)); height: 100%; display: flex; align-items: center; justify-content: flex-end; padding-right: 10px; color: white; font-size: 12px; font-weight: bold;">
+                                    \${naira(day.daily_total)}
+                                </div>
+                            </div>
+                        </div>
+                    \`;
+                }).join('');
+            }
+            document.getElementById('revenueModal').classList.add('open');
+        }
+
+        function closeRevenueModal() {
+            document.getElementById('revenueModal').classList.remove('open');
+        }
+
         // Close modals on outside click
         document.querySelectorAll('.modal-overlay').forEach(modal => {
             modal.addEventListener('click', function(e) {
                 if (e.target === this) {
                     if (this.id === 'extendModal') closeExtend();
                     else if (this.id === 'adminSessionsModal') closeModal('adminSessionsModal');
+                    else if (this.id === 'revenueModal') closeRevenueModal();
                 }
             });
         });
@@ -3592,6 +3720,9 @@ function renderDashboard(data) {
         setInterval(() => {
             window.location.reload();
         }, 60000);
+
+        // Attach click handler to Lifetime Revenue card
+        document.getElementById('lifetimeRevenueCard')?.addEventListener('click', showRevenueModal);
 
         // Initialize
         updateSessionTimer();
