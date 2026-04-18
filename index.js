@@ -3318,52 +3318,52 @@ function renderDashboard(data) {
         </div>
     </div>
 
-    <!-- Revenue Analytics Modal -->
-    <div class="modal-overlay" id="revenueModal">
-        <div class="modal-box" style="max-width: 800px;">
-            <div class="modal-header">
-                <h3 class="modal-title"><i class="fa-solid fa-chart-line"></i> Revenue Analytics</h3>
-                <button class="modal-close" onclick="closeRevenueModal()">&times;</button>
+   <!-- Revenue Analytics Modal -->
+<div class="modal-overlay" id="revenueModal">
+    <div class="modal-box" style="max-width: 800px; display: flex; flex-direction: column; max-height: 85vh;">
+        <div class="modal-header">
+            <h3 class="modal-title"><i class="fa-solid fa-chart-line"></i> Revenue Analytics</h3>
+            <button class="modal-close" onclick="closeRevenueModal()">&times;</button>
+        </div>
+        <div class="modal-body" style="flex: 1; overflow-y: auto; padding: 24px;">
+            <!-- Monthly Table with horizontal scroll -->
+            <h4 style="margin-bottom: 16px; color: var(--text-primary);">
+                <i class="fa-solid fa-calendar-alt"></i> Last 12 Months
+            </h4>
+            <div style="overflow-x: auto; margin-bottom: 32px;">
+                <table style="width: 100%; border-collapse: collapse; min-width: 300px;">
+                    <thead>
+                        <tr><th style="text-align:left; padding: 12px;">Month</th><th style="text-align:right; padding: 12px;">Revenue</th></tr>
+                    </thead>
+                    <tbody>
+                        ${monthlyRevenue.map(m => `
+                            <tr>
+                                <td style="padding: 10px; border-bottom: 1px solid var(--border);">${m.month_label}</td>
+                                <td style="padding: 10px; text-align: right; border-bottom: 1px solid var(--border); font-weight: 600;">${naira(m.revenue)}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
             </div>
-            <div class="modal-body">
-                <!-- Monthly Table -->
-                <h4 style="margin-bottom: 16px; color: var(--text-primary);">
-                    <i class="fa-solid fa-calendar-alt"></i> Last 12 Months
-                </h4>
-                <div style="overflow-x: auto; margin-bottom: 32px;">
-                    <table style="width: 100%; border-collapse: collapse;">
-                        <thead>
-                            <tr><th style="text-align:left; padding: 12px;">Month</th><th style="text-align:right; padding: 12px;">Revenue</th></tr>
-                        </thead>
-                        <tbody id="monthlyRevenueBody">
-                            ${monthlyRevenue.map(m => `
-                                <tr>
-                                    <td style="padding: 10px; border-bottom: 1px solid var(--border);">${m.month_label}</td>
-                                    <td style="padding: 10px; text-align: right; border-bottom: 1px solid var(--border); font-weight: 600;">${naira(m.revenue)}</td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                </div>
 
-                <!-- Daily Progress for Current Month -->
-                <h4 style="margin-bottom: 16px; color: var(--text-primary);">
-                    <i class="fa-solid fa-chart-simple"></i> Daily Progress – ${currentMonthName}
-                </h4>
-                <div style="background: var(--bg-secondary); border-radius: var(--radius-sm); padding: 20px;">
-                    <div id="dailyProgressContainer" style="display: flex; flex-direction: column; gap: 12px;">
-                        ${dailyRevenue.length === 0 ? '<p style="color: var(--text-muted);">No revenue recorded yet this month.</p>' : ''}
-                    </div>
-                    <div style="margin-top: 16px; font-size: 13px; color: var(--text-secondary);">
-                        <i class="fa-solid fa-info-circle"></i> Showing daily totals from 1st to today.
-                    </div>
+            <!-- Daily Progress for Current Month -->
+            <h4 style="margin-bottom: 16px; color: var(--text-primary);">
+                <i class="fa-solid fa-chart-simple"></i> Daily Progress – ${currentMonthName}
+            </h4>
+            <div style="background: var(--bg-secondary); border-radius: var(--radius-sm); padding: 20px;">
+                <div id="dailyProgressContainer" style="display: flex; flex-direction: column; gap: 16px;">
+                    ${dailyRevenue.length === 0 ? '<p style="color: var(--text-muted);">No revenue recorded yet this month.</p>' : ''}
                 </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="closeRevenueModal()">Close</button>
+                <div style="margin-top: 20px; font-size: 13px; color: var(--text-secondary); text-align: center;">
+                    <i class="fa-solid fa-info-circle"></i> Hover over a bar to see exact amount
+                </div>
             </div>
         </div>
+        <div class="modal-footer">
+            <button class="btn" onclick="closeRevenueModal()">Close</button>
+        </div>
     </div>
+</div>
 
     <!-- Topbar -->
     <nav class="topbar">
@@ -3644,28 +3644,39 @@ function renderDashboard(data) {
         }
 
         // Revenue modal functions
-        function showRevenueModal() {
-            const container = document.getElementById('dailyProgressContainer');
-            if (container) {
-                const dailyData = ${JSON.stringify(dailyRevenue)};
-                const maxRevenue = dailyData.length ? Math.max(...dailyData.map(d => Number(d.daily_total))) : 1;
-                
-                container.innerHTML = dailyData.map(day => {
-                    const percent = (day.daily_total / maxRevenue) * 100;
-                    return \`
-                        <div style="display: flex; align-items: center; gap: 16px;">
-                            <div style="width: 60px; font-weight: 600;">Day \${day.day}</div>
-                            <div style="flex: 1; background: var(--bg-primary); border-radius: 20px; height: 30px; overflow: hidden;">
-                                <div style="width: \${percent}%; background: linear-gradient(90deg, var(--accent), var(--purple)); height: 100%; display: flex; align-items: center; justify-content: flex-end; padding-right: 10px; color: white; font-size: 12px; font-weight: bold;">
-                                    \${formatNaira(day.daily_total)}
-                                </div>
+function showRevenueModal() {
+    const container = document.getElementById('dailyProgressContainer');
+    if (container && container.innerHTML.trim() === '') {
+        const dailyData = ${JSON.stringify(dailyRevenue)};
+        if (dailyData.length === 0) {
+            container.innerHTML = '<p style="color: var(--text-muted);">No revenue recorded yet this month.</p>';
+        } else {
+            const maxRevenue = Math.max(...dailyData.map(d => Number(d.daily_total)), 1);
+            container.innerHTML = dailyData.map(day => {
+                const percent = (day.daily_total / maxRevenue) * 100;
+                const amountFormatted = formatNaira(day.daily_total);
+                return `
+                    <div style="display: flex; align-items: center; gap: 16px;">
+                        <div style="width: 60px; font-weight: 600; color: var(--text-secondary);">Day ${day.day}</div>
+                        <div style="flex: 1; background: var(--bg-primary); border-radius: 20px; height: 36px; overflow: hidden; position: relative;">
+                            <div class="progress-bar" style="width: 0%; background: linear-gradient(90deg, var(--accent), var(--purple)); height: 100%; display: flex; align-items: center; justify-content: flex-end; padding-right: 12px; color: white; font-size: 13px; font-weight: bold; border-radius: 20px; transition: width 0.4s ease-out;" data-amount="${amountFormatted}">
+                                ${amountFormatted}
                             </div>
                         </div>
-                    \`;
-                }).join('');
-            }
-            document.getElementById('revenueModal').classList.add('open');
+                    </div>
+                `;
+            }).join('');
+            // Animate progress bars after they are added
+            setTimeout(() => {
+                document.querySelectorAll('#dailyProgressContainer .progress-bar').forEach((bar, idx) => {
+                    const targetWidth = dailyData[idx].daily_total / maxRevenue * 100;
+                    bar.style.width = targetWidth + '%';
+                });
+            }, 50);
         }
+    }
+    document.getElementById('revenueModal').classList.add('open');
+}
 
         function closeRevenueModal() {
             document.getElementById('revenueModal').classList.remove('open');
