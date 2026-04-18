@@ -2177,7 +2177,7 @@ function getLoginForm(sessionExpired) {
         .logo {
             width: 64px;
             height: 64px;
-            background: linear-gradient(135deg, var(--accent), var(--purple));
+            background: ltransparent;
             border-radius: 12px;
             display: flex;
             align-items: center;
@@ -2304,8 +2304,8 @@ function getLoginForm(sessionExpired) {
 <body>
     <div class="login-container">
         <div class="login-card">
-           <div class="logo">
-    <img src="https://i.imgur.com/f0xX5TT.png" style="width: 48px; height: 48px; border-radius: 12px;">
+          <div class="logo">
+    <img src="https://i.imgur.com/f0xX5TT.png" style="width: 80px; height: 80px; border-radius: 16px;">
 </div>
             <h1>Dream Hatcher Admin</h1>
             <p>Secure Admin Portal with Role-Based Access</p>
@@ -3276,8 +3276,8 @@ function renderDashboard(data) {
     <!-- Topbar -->
     <nav class="topbar">
         <div class="brand">
-            <div class="brand-mark">
-    <img src="https://i.imgur.com/f0xX5TT.png" style="width: 40px; height: 40px; border-radius: 8px;">
+           <div class="brand-mark" style="background: transparent; width: auto; height: auto; box-shadow: none;">
+    <img src="https://i.imgur.com/f0xX5TT.png" style="width: 48px; height: 48px; border-radius: 12px;">
 </div>
             <div class="brand-info">
                 <div class="brand-name">Dream Hatcher Admin</div>
