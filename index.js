@@ -3633,6 +3633,11 @@ app.use((err, req, res, next) => {
   res.status(500).send('Server Error. Please contact support: 07037412314');
 });
 
+// ========== FAVICON FALLBACK (ADD THIS) ==========
+app.get('/favicon.ico', (req, res) => {
+    res.redirect(301, 'https://i.imgpeek.com/eSikilY_SDfQ');
+});
+
 // ========== START SERVER ==========
 const PORT = process.env.PORT || 10000;
 const server = app.listen(PORT, () => {
