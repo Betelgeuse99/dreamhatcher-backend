@@ -1648,6 +1648,46 @@ app.get('/api/check-mac', async (req, res) => {
   }
 });
 
+// ========== MONTHLY DETAILS API (for revenue modal) ==========
+app.get('/admin/monthly-details', async (req, res) => {
+    const { month } = req.query;
+    if (!month) {
+        return res.status(400).json({ error: 'Month parameter required (YYYY-MM-DD)' });
+    }
+    
+    try {
+        const startDate = new Date(month);
+        const endDate = new Date(startDate);
+        endDate.setMonth(endDate.getMonth() + 1);
+        
+        const result = await pool.query(`
+            SELECT 
+                EXTRACT(DAY FROM created_at) as day,
+                COUNT(*) as signups,
+                SUM(
+                    CASE plan
+                        WHEN '24hr' THEN 350
+                        WHEN '3d'  THEN 1050
+                        WHEN '5d'  THEN 1750
+                        WHEN '7d'  THEN 2400
+                        WHEN '14d' THEN 4100
+                        WHEN '30d' THEN 7500
+                        ELSE 0
+                    END
+                ) as revenue
+            FROM payment_queue
+            WHERE created_at >= $1 AND created_at < $2
+            GROUP BY EXTRACT(DAY FROM created_at)
+            ORDER BY day ASC
+        `, [startDate, endDate]);
+        
+        res.json({ success: true, data: result.rows, monthLabel: startDate.toLocaleString('default', { month: 'long', year: 'numeric' }) });
+    } catch (error) {
+        console.error('Monthly details error:', error.message);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 // ========== ADMIN DASHBOARD ROUTE ==========
 app.get('/admin', async (req, res) => {
     const { user, pwd, action, userId, newPlan, sessionId, exportData, forceLogout } = req.query;
@@ -2512,12 +2552,12 @@ function renderDashboard(data) {
                             <i class="fa-solid ${user.plan === '24hr' ? 'fa-bolt' : user.plan === '3d' ? 'fa-clock' : user.plan === '5d' ? 'fa-calendar' : user.plan === '7d' ? 'fa-rocket' : user.plan === '14d' ? 'fa-star' : 'fa-crown'}"></i> 
                             ${planLabel(user.plan)}
                         </span>
-                     </td>
+                    </td>
                     <td>
                         <span class="badge ${statusBadge}">
                             <i class="fa-solid ${statusIcon}"></i> ${statusLabel}
                         </span>
-                     </td>
+                    </td>
                     <td class="time-cell">
                         ${created.toLocaleDateString('en-NG')}<br>
                         <small>${created.toLocaleTimeString('en-NG', {hour:'2-digit',minute:'2-digit'})}</small>
@@ -3030,15 +3070,23 @@ function renderDashboard(data) {
                     <table style="width: 100%; border-collapse: collapse; min-width: 300px;">
                         <thead><tr><th style="text-align:left; padding: 12px;">Month</th><th style="text-align:right; padding: 12px;">Revenue</th></tr></thead>
                         <tbody>
-                            ${monthlyRevenue.map(m => `<tr><td style="padding: 10px; border-bottom: 1px solid var(--border);">${m.month_label}</td><td style="padding: 10px; text-align: right; border-bottom: 1px solid var(--border); font-weight: 600;">${naira(m.revenue)}</td></tr>`).join('')}
+                            ${monthlyRevenue.map(m => `<tr style="cursor: pointer;" data-month-start="${new Date(m.month_start).toISOString().split('T')[0]}" data-month-label="${m.month_label}" onclick="loadMonthDetails(this)">
+                                <td style="padding: 10px; border-bottom: 1px solid var(--border);">${m.month_label}</td>
+                                <td style="padding: 10px; text-align: right; border-bottom: 1px solid var(--border); font-weight: 600;">${naira(m.revenue)}</td>
+                            </tr>`).join('')}
                         </tbody>
                     </table>
                 </div>
-                <h4 style="margin-bottom: 16px; color: var(--text-primary);"><i class="fa-solid fa-chart-simple"></i> Daily Progress – ${currentMonthName}</h4>
+                <h4 style="margin-bottom: 16px; color: var(--text-primary); display: flex; justify-content: space-between; align-items: center;">
+                    <span><i class="fa-solid fa-chart-simple"></i> Daily Progress – <span id="selectedMonthLabel">${currentMonthName}</span></span>
+                    <button id="resetMonthBtn" class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="resetToCurrentMonth()">
+                        <i class="fa-solid fa-arrow-left"></i> Current Month
+                    </button>
+                </h4>
                 <div style="background: var(--bg-secondary); border-radius: var(--radius-sm); padding: 20px;">
                     <div id="dailyProgressContainer" style="display: flex; flex-direction: column; gap: 16px;"></div>
                     <div style="margin-top: 20px; font-size: 13px; color: var(--text-secondary); text-align: center;">
-                        <i class="fa-solid fa-info-circle"></i> Hover over a bar to see exact amount
+                        <i class="fa-solid fa-info-circle"></i> Bars show revenue; signup counts are inside each bar
                     </div>
                 </div>
             </div>
@@ -3194,35 +3242,73 @@ function renderDashboard(data) {
         function showAdminSessions() { document.getElementById('adminSessionsModal').classList.add('open'); }
         function closeModal(modalId) { document.getElementById(modalId).classList.remove('open'); }
 
+        function populateDailyProgress(dailyData, monthLabel) {
+            const container = document.getElementById('dailyProgressContainer');
+            const labelSpan = document.getElementById('selectedMonthLabel');
+            if (labelSpan) labelSpan.innerText = monthLabel;
+            
+            if (!dailyData || dailyData.length === 0) {
+                container.innerHTML = '<p style="color: var(--text-muted);">No revenue recorded yet this month.</p>';
+                return;
+            }
+            const maxRevenue = Math.max(...dailyData.map(d => Number(d.revenue || d.daily_total)), 1);
+            let barsHtml = '';
+            for (let i = 0; i < dailyData.length; i++) {
+                const day = dailyData[i];
+                const revenue = Number(day.revenue !== undefined ? day.revenue : day.daily_total);
+                const signups = day.signups !== undefined ? day.signups : 0;
+                const percent = (revenue / maxRevenue) * 100;
+                const amountFormatted = formatNaira(revenue);
+                barsHtml += '<div style="display: flex; align-items: center; gap: 16px;">' +
+                    '<div style="width: 60px; font-weight: 600; color: var(--text-secondary);">Day ' + day.day + '</div>' +
+                    '<div style="flex: 1; background: var(--bg-primary); border-radius: 20px; height: 36px; overflow: hidden; position: relative;">' +
+                        '<div class="progress-bar" style="width: 0%; background: linear-gradient(90deg, var(--accent), var(--purple)); height: 100%; display: flex; align-items: center; justify-content: flex-end; padding-right: 12px; color: white; font-size: 13px; font-weight: bold; border-radius: 20px;">' + amountFormatted + ' | ' + signups + ' signup' + (signups !== 1 ? 's' : '') + '</div>' +
+                    '</div>' +
+                '</div>';
+            }
+            container.innerHTML = barsHtml;
+            setTimeout(() => {
+                const bars = document.querySelectorAll('#dailyProgressContainer .progress-bar');
+                for (let i = 0; i < bars.length; i++) {
+                    const revenue = Number(dailyData[i].revenue !== undefined ? dailyData[i].revenue : dailyData[i].daily_total);
+                    const targetWidth = (revenue / maxRevenue) * 100;
+                    bars[i].style.width = targetWidth + '%';
+                }
+            }, 50);
+        }
+
+        async function loadMonthDetails(rowElement) {
+            const monthStart = rowElement.getAttribute('data-month-start');
+            const monthLabel = rowElement.getAttribute('data-month-label');
+            if (!monthStart) return;
+            
+            const container = document.getElementById('dailyProgressContainer');
+            container.innerHTML = '<p style="color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Loading...</p>';
+            
+            try {
+                const response = await fetch('/admin/monthly-details?month=' + monthStart);
+                const result = await response.json();
+                if (result.success) {
+                    populateDailyProgress(result.data, monthLabel);
+                } else {
+                    container.innerHTML = '<p style="color: var(--danger);">Failed to load data.</p>';
+                }
+            } catch (error) {
+                console.error('Error loading month details:', error);
+                container.innerHTML = '<p style="color: var(--danger);">Network error. Please try again.</p>';
+            }
+        }
+
+        function resetToCurrentMonth() {
+            const currentDailyData = ${dailyRevenueJson};
+            populateDailyProgress(currentDailyData, "${currentMonthName}");
+        }
+
         function showRevenueModal() {
             const container = document.getElementById('dailyProgressContainer');
             if (container && container.innerHTML === '') {
                 const dailyData = ${dailyRevenueJson};
-                if (dailyData.length === 0) {
-                    container.innerHTML = '<p style="color: var(--text-muted);">No revenue recorded yet this month.</p>';
-                } else {
-                    const maxRevenue = Math.max(...dailyData.map(d => Number(d.daily_total)), 1);
-                    let barsHtml = '';
-                    for (let i = 0; i < dailyData.length; i++) {
-                        const day = dailyData[i];
-                        const percent = (day.daily_total / maxRevenue) * 100;
-                        const amountFormatted = formatNaira(day.daily_total);
-                        barsHtml += '<div style="display: flex; align-items: center; gap: 16px;">' +
-                            '<div style="width: 60px; font-weight: 600; color: var(--text-secondary);">Day ' + day.day + '</div>' +
-                            '<div style="flex: 1; background: var(--bg-primary); border-radius: 20px; height: 36px; overflow: hidden; position: relative;">' +
-                                '<div class="progress-bar" style="width: 0%; background: linear-gradient(90deg, var(--accent), var(--purple)); height: 100%; display: flex; align-items: center; justify-content: flex-end; padding-right: 12px; color: white; font-size: 13px; font-weight: bold; border-radius: 20px;" data-amount="' + amountFormatted + '">' + amountFormatted + '</div>' +
-                            '</div>' +
-                        '</div>';
-                    }
-                    container.innerHTML = barsHtml;
-                    setTimeout(() => {
-                        const bars = document.querySelectorAll('#dailyProgressContainer .progress-bar');
-                        for (let i = 0; i < bars.length; i++) {
-                            const targetWidth = (dailyData[i].daily_total / maxRevenue) * 100;
-                            bars[i].style.width = targetWidth + '%';
-                        }
-                    }, 50);
-                }
+                populateDailyProgress(dailyData, "${currentMonthName}");
             }
             document.getElementById('revenueModal').classList.add('open');
         }
@@ -3267,7 +3353,6 @@ function renderDashboard(data) {
 </body>
 </html>`;
 }
-
 // ========== CHECK MAC FOR EXISTING CREDENTIALS ==========
 app.get('/api/check-mac', async (req, res) => {
   const mac = (req.query.mac || '').trim().toUpperCase();
