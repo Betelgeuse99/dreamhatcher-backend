@@ -1661,26 +1661,143 @@ async function handleAdminDashboard(req, res, sessionId) {
     }
 }
 
-function getLoginForm(sessionExpired) { /* unchanged – keep as before */ }
+// ========== LOGIN FORM ==========
+function getLoginForm(sessionExpired) {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Portal • Dream Hatcher</title>
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-card: #334155;
+            --border: #475569;
+            --text-primary: #f1f5f9;
+            --text-secondary: #cbd5e1;
+            --text-muted: #94a3b8;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --success: #10b981;
+            --danger: #ef4444;
+            --radius: 12px;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', system-ui, sans-serif; }
+        body {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-image: radial-gradient(circle at 50% 50%, #1e293b 0%, #0f172a 100%);
+        }
+        .login-container { width: 100%; max-width: 420px; padding: 24px; }
+        .login-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            text-align: center;
+        }
+        .logo { margin-bottom: 32px; }
+        h1 { font-size: 24px; font-weight: 800; margin-bottom: 8px; }
+        p { color: var(--text-secondary); margin-bottom: 32px; font-size: 15px; }
+        .alert {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            color: #fca5a5;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 24px;
+            font-size: 14px;
+            display: ${sessionExpired ? 'block' : 'none'};
+        }
+        .input-group { text-align: left; margin-bottom: 20px; }
+        label { display: block; font-size: 13px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em; }
+        input {
+            width: 100%;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            color: white;
+            padding: 14px 16px;
+            border-radius: 10px;
+            font-size: 15px;
+            transition: all 0.2s;
+        }
+        input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15); }
+        button {
+            width: 100%;
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 14px;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 8px;
+        }
+        button:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4); }
+        .security-note { margin-top: 28px; font-size: 12px; color: var(--text-muted); padding-top: 20px; border-top: 1px solid var(--border); }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-card">
+            <div class="logo">
+                <img src="https://i.imgur.com/f0xX5TT.png" style="width: 80px; height: 80px; border-radius: 16px;">
+            </div>
+            <h1>Dream Hatcher Tech</h1>
+            <p>Secure Admin Portal</p>
+            <div class="alert">Session expired. Please login again.</div>
+            <form method="GET" action="/admin">
+                <div class="input-group">
+                    <label for="user">Username</label>
+                    <input type="text" id="user" name="user" required autofocus placeholder="Admin username">
+                </div>
+                <div class="input-group">
+                    <label for="pwd">Password</label>
+                    <input type="password" id="pwd" name="pwd" required placeholder="••••••••">
+                </div>
+                <button type="submit">Authenticate</button>
+            </form>
+            <div class="security-note">
+                <i class="fa-solid fa-shield-halved"></i> 256-bit Encrypted Session
+            </div>
+        </div>
+    </div>
+</body>
+</html>`;
+}
 
-function getErrorPage(error) { /* unchanged – keep as before */ }
+// ========== ERROR PAGE ==========
+function getErrorPage(error) {
+    return `<!DOCTYPE html><html><body style="background:#0f172a;color:#f1f5f9;display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;">
+        <div style="text-align:center;padding:40px;background:#1e293b;border-radius:12px;border:1px solid #334155;">
+            <h1 style="color:#ef4444;">Dashboard Error</h1>
+            <p>${escapeHtml(error)}</p>
+            <a href="/admin" style="display:inline-block;margin-top:20px;color:#3b82f6;text-decoration:none;">Back to Login</a>
+        </div>
+    </body></html>`;
+}
 
 // ========== RENDER DASHBOARD WITH NEW COLUMN LAYOUT ==========
 function renderDashboard(data) {
-    // Defensive: if data is missing required properties, show error
     if (!data || !data.session || !data.stats || !data.users) {
         return `<!DOCTYPE html><html><body style="background:#0f172a;color:white;padding:20px;"><h2>Dashboard Error</h2><p>Missing data: ${JSON.stringify(Object.keys(data || {}))}</p></body></html>`;
     }
     
     const { session, sessionId, stats, users, activeCount, expiredCount, pendingCount, suspendedCount, activeAdmins, activeSessions, currentAdminIdleSeconds, actionMessage, messageType, monthlyRevenue } = data;
     const now = new Date();
-    
-    // Ensure arrays and objects exist
     const safeUsers = users || [];
     const safeActiveAdmins = activeAdmins || [];
     const safeMonthlyRevenue = monthlyRevenue || [];
     
-    // Build user rows
     let userRows = '';
     if (safeUsers.length === 0) {
         userRows = '<tr><td colspan="7" style="text-align:center;padding:48px;color:var(--text-muted);">No users found</td></tr>';
@@ -1716,7 +1833,6 @@ function renderDashboard(data) {
         });
     }
     
-    // Build admin sessions rows
     let adminSessionsRows = '';
     safeActiveAdmins.forEach(admin => {
         const loginTime = new Date(admin.login_time);
@@ -1737,7 +1853,6 @@ function renderDashboard(data) {
         `;
     });
     
-    // Full HTML template – one single template literal, no nesting
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
