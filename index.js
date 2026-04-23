@@ -1260,12 +1260,9 @@ app.get('/', (req, res) => {
   res.send(html);
 });
 
-// DREAM HATCHER ENTERPRISE ADMIN DASHBOARD v4.2
+// DREAM HATCHER ENTERPRISE ADMIN DASHBOARD v4.3
 // Professional WiFi Management System with Role-Based Access Control
-// MODIFIED: Removed Plan Performance & Admin Audit Logs
-// ADDED: Email/Password columns in user table
-// ADDED: AJAX month switching for revenue modal
-// FIXED: Logo at top-left, months descending
+// MODIFIED: Removed auto-refresh, removed Actions column, combined user/password, fixed email width
 // ============================================
 
 // ========== SECURITY CONFIGURATION ==========
@@ -1331,7 +1328,6 @@ async function createAdminLogsTable() {
         `);
 
         if (tableCheck.rows[0].exists) {
-            // Table exists – check and add missing columns silently
             const columns = await pool.query(`
                 SELECT column_name 
                 FROM information_schema.columns 
@@ -1351,10 +1347,8 @@ async function createAdminLogsTable() {
 
             await pool.query(`UPDATE admin_logs SET username = 'unknown' WHERE username IS NULL`);
             await pool.query(`UPDATE admin_logs SET role = 'unknown' WHERE role IS NULL`);
-            // Only log if something was changed
             if (changed) console.log('✅ Admin logs table updated with missing columns');
         } else {
-            // Create table from scratch
             await pool.query(`
                 CREATE TABLE IF NOT EXISTS admin_logs (
                     id SERIAL PRIMARY KEY,
@@ -1372,48 +1366,39 @@ async function createAdminLogsTable() {
             console.log('✅ Created admin_logs table');
         }
         
-        // Create indexes silently (no log)
         try {
             await pool.query(`CREATE INDEX IF NOT EXISTS idx_admin_logs_session ON admin_logs(session_id)`);
             await pool.query(`CREATE INDEX IF NOT EXISTS idx_admin_logs_active ON admin_logs(is_active)`);
             await pool.query(`CREATE INDEX IF NOT EXISTS idx_admin_logs_time ON admin_logs(login_time DESC)`);
             await pool.query(`CREATE INDEX IF NOT EXISTS idx_admin_logs_username ON admin_logs(username)`);
-        } catch (error) {
-            // Silently ignore index errors
-        }
+        } catch (error) {}
     } catch (error) {
         console.log('Admin logs table setup error:', error.message);
     }
 }
 
-// Initialize admin logs table
 createAdminLogsTable();
 
-// Log admin login with unique user session
 async function logAdminLogin(username, role, sessionId, ip, userAgent) {
     try {
-        // Close any existing active session for this user
         await pool.query(
             `UPDATE admin_logs SET logout_time = NOW(), is_active = false 
              WHERE username = $1 AND is_active = true`,
             [username]
         );
 
-        // Create new session
         await pool.query(
             `INSERT INTO admin_logs (username, role, session_id, admin_ip, user_agent, login_time, last_activity, is_active) 
              VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), true)`,
             [username, role, sessionId, ip, userAgent]
         );
 
-        // Update tracking
         adminUserSessions[username] = sessionId;
     } catch (error) {
         console.log('Logging admin login error:', error.message);
     }
 }
 
-// Update admin activity
 async function updateAdminActivity(sessionId) {
     try {
         await pool.query(
@@ -1425,7 +1410,6 @@ async function updateAdminActivity(sessionId) {
     }
 }
 
-// Log admin logout
 async function logAdminLogout(sessionId) {
     try {
         const result = await pool.query(
@@ -1446,7 +1430,6 @@ async function logAdminLogout(sessionId) {
     }
 }
 
-// Get active admins (unique by user) - FIXED QUERY
 async function getActiveAdmins() {
     try {
         const result = await pool.query(`
@@ -1464,7 +1447,6 @@ async function getActiveAdmins() {
             ORDER BY last_activity DESC
         `);
 
-        // Group by username to get unique sessions
         const uniqueAdmins = {};
         result.rows.forEach(row => {
             if (!uniqueAdmins[row.username] || 
@@ -1480,24 +1462,15 @@ async function getActiveAdmins() {
     }
 }
 
-// ========== PERMISSION CHECK ==========
 function hasPermission(session, requiredPermission) {
     if (!session || !session.role) return false;
-
-    // Super admin has all permissions
     if (session.role === 'super_admin') return true;
-
-    // Check specific permission
     const userConfig = ADMIN_USERS[session.username];
-    if (!userConfig) return false;
-    
-    return userConfig.permissions.includes(requiredPermission);
+    return userConfig && userConfig.permissions.includes(requiredPermission);
 }
 
-// ========== FIXED EXPIRY CHECK FUNCTION ==========
 async function checkExpiredUsers() {
     try {
-        // Find users who should be expired but aren't marked as expired
         const now = new Date();
         const result = await pool.query(`
             SELECT id, mikrotik_username, expires_at, status
@@ -1510,7 +1483,6 @@ async function checkExpiredUsers() {
         `, [now]);
 
         if (result.rows.length > 0) {
-            // Mark them as expired
             for (const user of result.rows) {
                 await pool.query(
                     `UPDATE payment_queue SET status = 'expired' WHERE id = $1`,
@@ -1523,13 +1495,10 @@ async function checkExpiredUsers() {
     }
 }
 
-// Run expiry check every 2 minutes
 setInterval(checkExpiredUsers, 120000);
 
-// ========== EXPIRY SYNC FUNCTION (For dashboard) ==========
 async function syncExpiredWithMikroTik() {
     try {
-        // Get users that need to be synced with MikroTik
         const result = await pool.query(`
             SELECT 
                 id,
@@ -1547,14 +1516,12 @@ async function syncExpiredWithMikroTik() {
         `);
 
         if (result.rows.length > 0) {
-            // Update last_sync timestamp
             for (const user of result.rows) {
                 await pool.query(
                     `UPDATE payment_queue SET last_sync = NOW() WHERE id = $1`,
                     [user.id]
                 );
             }
-            
             return result.rows;
         }
         return [];
@@ -1563,14 +1530,11 @@ async function syncExpiredWithMikroTik() {
         return [];
     }
 }
-// Run sync every 5 minutes
 setInterval(syncExpiredWithMikroTik, 300000);
 
-// ========== CHECK MAC FOR EXISTING CREDENTIALS (Captive Portal Use) ==========
 app.get('/api/check-mac', async (req, res) => {
   const mac = (req.query.mac || '').trim().toUpperCase();
 
-  // Always return JSON with CORS for captive portal
   res.set({
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
@@ -1582,7 +1546,6 @@ app.get('/api/check-mac', async (req, res) => {
   }
 
   try {
-    // Find the most recent non-expired payment for this MAC
     const result = await pool.query(
       `SELECT mikrotik_username, mikrotik_password, plan, status, expires_at, transaction_id
        FROM payment_queue
@@ -1600,7 +1563,6 @@ app.get('/api/check-mac', async (req, res) => {
 
     const row = result.rows[0];
     if (row.status === 'pending') {
-      // Payment received but not yet provisioned on MikroTik
       return res.json({
         found: true,
         ready: false,
@@ -1608,7 +1570,6 @@ app.get('/api/check-mac', async (req, res) => {
       });
     }
 
-    // Status is 'processed' — credentials are ready
     return res.json({
       found: true,
       ready: true,
@@ -1624,11 +1585,9 @@ app.get('/api/check-mac', async (req, res) => {
   }
 });
 
-// ========== API ENDPOINT FOR MONTHLY DAILY REVENUE (AJAX) ==========
 app.get('/admin/api/daily', async (req, res) => {
     const { sessionId, month } = req.query;
     
-    // Validate session
     if (!sessionId || !adminSessions[sessionId]) {
         return res.status(401).json({ error: 'Unauthorized' });
     }
@@ -1640,12 +1599,10 @@ app.get('/admin/api/daily', async (req, res) => {
         return res.status(401).json({ error: 'Session expired' });
     }
     
-    // Update last activity
     session.lastActivity = Date.now();
     adminSessions[sessionId] = session;
     await updateAdminActivity(sessionId);
     
-    // Validate month format (YYYY-MM)
     if (!month || !/^\d{4}-\d{2}$/.test(month)) {
         return res.status(400).json({ error: 'Invalid month format. Use YYYY-MM.' });
     }
@@ -1680,11 +1637,9 @@ app.get('/admin/api/daily', async (req, res) => {
     }
 });
 
-// ========== ADMIN DASHBOARD ROUTE ==========
 app.get('/admin', async (req, res) => {
     const { user, pwd, action, userId, newPlan, sessionId, exportData, forceLogout, viewMonth } = req.query;
     
-    // ========== FORCE LOGOUT OTHER SESSIONS ==========
     if (forceLogout === 'all' && sessionId && adminSessions[sessionId]) {
         const currentSession = adminSessions[sessionId];
         if (currentSession.role !== 'super_admin') {
@@ -1692,7 +1647,6 @@ app.get('/admin', async (req, res) => {
         }
     
         try {
-            // Logout all other sessions except current one
             Object.keys(adminSessions).forEach(key => {
                 if (key !== sessionId) {
                     logAdminLogout(key);
@@ -1700,7 +1654,6 @@ app.get('/admin', async (req, res) => {
                 }
             });
             
-            // Mark all other sessions as inactive
             await pool.query(
                 `UPDATE admin_logs SET logout_time = NOW(), is_active = false 
                  WHERE session_id != $1 AND is_active = true`,
@@ -1714,18 +1667,15 @@ app.get('/admin', async (req, res) => {
         }
     }
     
-    // ========== SESSION-BASED AUTH ==========
     if (sessionId && adminSessions[sessionId]) {
         const session = adminSessions[sessionId];
 
-        // Check session expiry
         if (Date.now() - session.lastActivity > SESSION_TIMEOUT) {
             await logAdminLogout(sessionId);
             delete adminSessions[sessionId];
             return res.redirect('/admin?sessionExpired=true');
         }
         
-        // Update last activity
         session.lastActivity = Date.now();
         adminSessions[sessionId] = session;
         await updateAdminActivity(sessionId);
@@ -1733,22 +1683,18 @@ app.get('/admin', async (req, res) => {
         return await handleAdminDashboard(req, res, sessionId);
     }
     
-    // ========== USER/PASSWORD LOGIN ==========
     if (user && pwd) {
         const userConfig = ADMIN_USERS[user];
 
         if (userConfig && userConfig.password === pwd) {
-            // Check if user already has active session
             const existingSessionId = adminUserSessions[user];
 
             if (existingSessionId && adminSessions[existingSessionId]) {
-                // Use existing session
                 const session = adminSessions[existingSessionId];
                 session.lastActivity = Date.now();
                 return res.redirect(`/admin?sessionId=${existingSessionId}`);
             }
             
-            // Create new session
             const newSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
             adminSessions[newSessionId] = {
                 id: newSessionId,
@@ -1766,11 +1712,9 @@ app.get('/admin', async (req, res) => {
         }
     }
     
-    // ========== SHOW LOGIN FORM ==========
     return res.send(getLoginForm(req.query.sessionExpired));
 });
 
-// ========== ADMIN DASHBOARD HANDLER ==========
 async function handleAdminDashboard(req, res, sessionId) {
     try {
         const session = adminSessions[sessionId];
@@ -1783,7 +1727,6 @@ async function handleAdminDashboard(req, res, sessionId) {
         let actionMessage = '';
         let messageType = '';
 
-        // ========== HANDLE ADMIN ACTIONS WITH PERMISSION CHECK ==========
         if (action === 'delete' && userId) {
             if (!hasPermission(session, 'delete')) {
                 actionMessage = 'Permission denied: Cannot delete users';
@@ -1800,7 +1743,6 @@ async function handleAdminDashboard(req, res, sessionId) {
                 actionMessage = 'Permission denied: Cannot extend plans';
                 messageType = 'error';
             } else {
-                // Calculate proper expiry based on plan
                 let interval = '';
                 if (newPlan === '24hr') interval = '24 hours';
                 else if (newPlan === '3d') interval = '3 days';
@@ -1851,13 +1793,11 @@ async function handleAdminDashboard(req, res, sessionId) {
             }
         }
 
-        // ========== BULK CLEANUP (Super Admin Only) ==========
         if (action === 'cleanup') {
             if (!hasPermission(session, 'delete')) {
                 actionMessage = 'Permission denied: Cannot perform cleanup';
                 messageType = 'error';
             } else {
-                // Proper cleanup of expired users
                 const result = await pool.query(`
                     DELETE FROM payment_queue 
                     WHERE (
@@ -1871,7 +1811,6 @@ async function handleAdminDashboard(req, res, sessionId) {
             }
         }
 
-        // ========== SYNC EXPIRED WITH MIKROTIK ==========
         if (action === 'sync_expired') {
             if (!hasPermission(session, 'update')) {
                 actionMessage = 'Permission denied: Cannot sync expired users';
@@ -1883,7 +1822,6 @@ async function handleAdminDashboard(req, res, sessionId) {
             }
         }
 
-        // ========== FORCE LOGOUT MESSAGES ==========
         if (action === 'force_logout_success') {
             actionMessage = 'All other admin sessions have been terminated';
             messageType = 'success';
@@ -1897,7 +1835,6 @@ async function handleAdminDashboard(req, res, sessionId) {
             messageType = 'error';
         }
 
-        // ========== EXPORT CSV (Super Admin Only) ==========
         if (exportData === 'csv') {
             if (!hasPermission(session, 'export')) {
                 return res.status(403).send('Permission denied');
@@ -1939,10 +1876,7 @@ async function handleAdminDashboard(req, res, sessionId) {
             res.setHeader('Content-Disposition', 'attachment; filename="dreamhatcher_users_' + new Date().toISOString().split('T')[0] + '.csv"');
             return res.send(csvData);
         }
-
-        // ========== GET DASHBOARD STATISTICS ==========
         
-        // 1. CORE METRICS (removed plan_distribution)
         const metrics = await pool.query(`
             WITH user_stats AS (
                 SELECT 
@@ -2013,7 +1947,6 @@ async function handleAdminDashboard(req, res, sessionId) {
             FROM user_stats u, revenue_stats r
         `);
 
-        // 2. USERS WITH FIXED EXPIRY CALCULATION (REAL-TIME CHECK)
         const recentActivity = await pool.query(`
           SELECT 
             id,
@@ -2025,9 +1958,7 @@ async function handleAdminDashboard(req, res, sessionId) {
             customer_email,
             created_at,
             expires_at,
-            -- Use COALESCE to handle missing last_sync column gracefully
             COALESCE(last_sync, created_at) as last_sync,
-            -- FIXED: REAL-TIME STATUS CHECK (IMMEDIATE EXPIRY)
             CASE 
               WHEN status = 'expired' THEN 'expired'
               WHEN status = 'pending' THEN 'pending'
@@ -2042,7 +1973,6 @@ async function handleAdminDashboard(req, res, sessionId) {
           LIMIT 100
         `);
 
-        // 3. MONTHLY REVENUE FOR MODAL (last 12 months, DESCENDING)
         const monthlyRevenue = await pool.query(`
             WITH months AS (
                 SELECT 
@@ -2072,11 +2002,9 @@ async function handleAdminDashboard(req, res, sessionId) {
             LIMIT 12
         `);
 
-        // 4. GET ACTIVE ADMINS (UNIQUE BY USER) WITH ROLE FILTERING
         let activeAdmins = await getActiveAdmins();
         let visibleSessionCount = activeAdmins.length;
 
-        // Regular admins must NOT see superadmin sessions
         if (session.role !== 'super_admin') {
             activeAdmins = activeAdmins.filter(admin => admin.role !== 'super_admin');
             visibleSessionCount = activeAdmins.length;
@@ -2085,18 +2013,15 @@ async function handleAdminDashboard(req, res, sessionId) {
         const stats = metrics.rows[0];
         const users = recentActivity.rows;
 
-        // Count realtime statuses
         const activeCount = users.filter(u => u.realtime_status === 'active').length;
         const expiredCount = users.filter(u => u.realtime_status === 'expired').length;
         const pendingCount = users.filter(u => u.realtime_status === 'pending').length;
         const suspendedCount = users.filter(u => u.realtime_status === 'suspended').length;
         
-        // Current session info
         const currentSession = session;
         const currentAdminIdleSeconds = currentSession ? Math.floor((Date.now() - currentSession.lastActivity) / 1000) : 0;
         const activeSessions = visibleSessionCount;
 
-        // ========== RENDER DASHBOARD ==========
         res.send(renderDashboard({
             session: session,
             sessionId: sessionId,
@@ -2121,7 +2046,6 @@ async function handleAdminDashboard(req, res, sessionId) {
     }
 }
 
-// ========== LOGIN FORM ==========
 function getLoginForm(sessionExpired) {
     return `<!DOCTYPE html>
 <html lang="en">
@@ -2204,10 +2128,6 @@ function getLoginForm(sessionExpired) {
         }
         button:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4); }
         .security-note { margin-top: 28px; font-size: 12px; color: var(--text-muted); padding-top: 20px; border-top: 1px solid var(--border); }
-        .credentials-hint { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-top: 24px; font-size: 13px; color: var(--text-secondary); text-align: left; }
-        .credentials-hint h4 { color: var(--text-primary); margin-bottom: 10px; font-size: 14px; }
-        .cred-item { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed var(--border); }
-        .cred-item:last-child { border-bottom: none; }
     </style>
 </head>
 <body>
@@ -2239,28 +2159,26 @@ function getLoginForm(sessionExpired) {
 </html>`;
 }
 
-// ========== ERROR PAGE ==========
 function getErrorPage(error) {
     return `<!DOCTYPE html><html><body style="background:#0f172a;color:#f1f5f9;display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;">
         <div style="text-align:center;padding:40px;background:#1e293b;border-radius:12px;border:1px solid #334155;">
             <h1 style="color:#ef4444;">Dashboard Error</h1>
-            <p>${error}</p>
+            <p>${escapeHtml(error)}</p>
             <a href="/admin" style="display:inline-block;margin-top:20px;color:#3b82f6;text-decoration:none;">Back to Login</a>
         </div>
     </body></html>`;
 }
 
-// ========== MAIN RENDER FUNCTION ==========
 function renderDashboard(data) {
-    const { session, sessionId, stats, users, activeCount, expiredCount, pendingCount, suspendedCount, activeAdmins, activeSessions, currentAdminIdleSeconds, currentAdminIP, actionMessage, messageType, monthlyRevenue } = data;
+    const { session, sessionId, stats, users, activeCount, expiredCount, pendingCount, suspendedCount, activeAdmins, activeSessions, currentAdminIdleSeconds, actionMessage, messageType, monthlyRevenue } = data;
     
     const now = new Date();
     const sessionEnd = now.getTime() + (5 * 60 * 1000);
 
-    // Build user table rows WITH EMAIL AND PASSWORD COLUMNS
+    // Build user table rows – combined Username/Password column, no Actions column, no #id
     let userRows = '';
     if (users.length === 0) {
-        userRows = '<tr><td colspan="9" style="text-align:center;padding:48px;color:var(--text-muted);">No users found</td></tr>';
+        userRows = '<tr><td colspan="7" style="text-align:center;padding:48px;color:var(--text-muted);">No users found</td></tr>';
     } else {
         users.forEach(user => {
             const created = new Date(user.created_at);
@@ -2275,11 +2193,10 @@ function renderDashboard(data) {
                         <div class="user-avatar">${(user.mikrotik_username || '?')[0].toUpperCase()}</div>
                         <div>
                             <div class="username">${escapeHtml(user.mikrotik_username)}</div>
-                            <div class="user-id">#${user.id}</div>
+                            <div class="user-password mono">${escapeHtml(user.mikrotik_password)}</div>
                         </div>
                     </td>
-                    <td class="mono" style="font-family: monospace; font-size:13px;">${escapeHtml(user.mikrotik_password)}</td>
-                    <td>${escapeHtml(user.customer_email || 'N/A')}</td>
+                    <td class="email-cell">${escapeHtml(user.customer_email || 'N/A')}</td>
                     <td><div class="plan-tag tag-${user.plan}">${planLabel(user.plan)}</div></td>
                     <td>
                         <span class="badge ${statusBadge}">
@@ -2292,14 +2209,6 @@ function renderDashboard(data) {
                         <div style="font-size:11px;opacity:0.6">${expires ? expires.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : ''}</div>
                     </td>
                     <td class="mono" style="font-size:12px;">${escapeHtml(user.mac_address || 'N/A')}</td>
-                    <td>
-                        <div class="action-stack">
-                            <button class="act-btn a-copy" onclick="copyCreds('${escapeHtml(user.mikrotik_username)}', '${escapeHtml(user.mikrotik_password)}')" title="Copy Credentials"><i class="fa-solid fa-copy"></i></button>
-                            <button class="act-btn a-extend" onclick="openExtend(${user.id}, '${escapeHtml(user.mikrotik_username)}')" title="Extend Plan"><i class="fa-solid fa-calendar-plus"></i></button>
-                            ${hasPermission(session, 'update') ? `<button class="act-btn a-reset" onclick="confirmReset(${user.id})" title="Reset User"><i class="fa-solid fa-arrows-rotate"></i></button>` : ''}
-                            ${hasPermission(session, 'delete') ? `<button class="act-btn a-delete" onclick="confirmDelete(${user.id})" title="Delete User"><i class="fa-solid fa-trash"></i></button>` : ''}
-                        </div>
-                    </td>
                 </tr>
             `;
         });
@@ -2324,12 +2233,6 @@ function renderDashboard(data) {
             </tr>
         `;
     });
-
-    function hasPermission(sess, perm) {
-        if (sess.role === 'super_admin') return true;
-        const config = ADMIN_USERS[sess.username];
-        return config && config.permissions.includes(perm);
-    }
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -2368,7 +2271,6 @@ function renderDashboard(data) {
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Plus Jakarta Sans', sans-serif; }
         body { background: var(--bg-primary); color: var(--text-primary); min-height: 100vh; overflow-x: hidden; }
 
-        /* Navigation */
         .topbar {
             height: 72px;
             background: rgba(15, 23, 42, 0.8);
@@ -2401,10 +2303,8 @@ function renderDashboard(data) {
         .btn-danger { color: var(--danger); }
         .btn-danger:hover { background: var(--danger-bg); border-color: var(--danger); }
 
-        /* Main Content */
         .main-container { max-width: 1400px; margin: 0 auto; padding: 32px; }
 
-        /* Metrics Grid */
         .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-bottom: 40px; }
         .metric { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; box-shadow: var(--shadow); transition: transform 0.2s; cursor: pointer; }
         .metric:hover { transform: translateY(-4px); border-color: var(--border-light); }
@@ -2416,26 +2316,25 @@ function renderDashboard(data) {
         .metric-label { font-size: 14px; color: var(--text-secondary); margin-bottom: 16px; }
         .metric-footer { padding-top: 16px; border-top: 1px solid var(--border); font-size: 13px; color: var(--text-muted); display: flex; align-items: center; gap: 8px; }
 
-        /* Card System */
         .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 32px; overflow: hidden; box-shadow: var(--shadow); }
         .card-header { padding: 24px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; background: var(--bg-secondary); }
         .card-title { font-size: 18px; font-weight: 700; color: var(--text-primary); }
         .card-subtitle { font-size: 14px; color: var(--text-secondary); margin-top: 4px; }
         .card-tools { display: flex; gap: 12px; align-items: center; }
 
-        /* Table Design */
         .table-wrap { overflow-x: auto; }
         table { width: 100%; border-collapse: collapse; text-align: left; }
         th { padding: 16px 24px; background: rgba(15, 23, 42, 0.4); color: var(--text-muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--border); }
-        td { padding: 16px 24px; border-bottom: 1px solid var(--border); font-size: 14px; }
+        td { padding: 16px 24px; border-bottom: 1px solid var(--border); font-size: 14px; vertical-align: middle; }
         tr:hover td { background: rgba(51, 65, 85, 0.3); }
 
         .user-cell { display: flex; align-items: center; gap: 12px; }
         .user-avatar { width: 32px; height: 32px; border-radius: 8px; background: var(--bg-hover); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; color: var(--accent); border: 1px solid var(--border); }
-        .username { font-weight: 700; color: var(--text-primary); }
-        .user-id { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+        .username { font-weight: 700; color: var(--text-primary); margin-bottom: 4px; }
+        .user-password { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; letter-spacing: 0.5px; }
 
-        /* Badges */
+        .email-cell { max-width: 200px; word-break: break-word; white-space: normal; }
+
         .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; }
         .badge-active { background: var(--success-bg); color: var(--success); }
         .badge-expired { background: var(--danger-bg); color: var(--danger); }
@@ -2450,15 +2349,6 @@ function renderDashboard(data) {
         .tag-14d { background: rgba(245, 158, 11, 0.1); color: var(--warning); }
         .tag-30d { background: rgba(236, 72, 153, 0.1); color: #ec4899; }
 
-        /* Actions */
-        .action-stack { display: flex; gap: 6px; }
-        .act-btn { width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-muted); cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; }
-        .act-btn:hover { background: var(--bg-hover); color: var(--text-primary); transform: scale(1.05); box-shadow: var(--shadow); }
-        .act-btn.a-extend:hover { color: var(--success); border-color: var(--success); }
-        .act-btn.a-reset:hover { color: var(--warning); border-color: var(--warning); }
-        .act-btn.a-delete:hover { color: var(--danger); border-color: var(--danger); }
-
-        /* Search & Filter */
         .search-wrap { position: relative; min-width: 240px; }
         .search-wrap i { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 14px; }
         .search-input { width: 100%; padding: 11px 16px 11px 40px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-primary); font-size: 14px; transition: all 0.2s; }
@@ -2469,7 +2359,6 @@ function renderDashboard(data) {
         .filter-tab:hover { background: var(--bg-hover); }
         .filter-tab.active { background: var(--accent); border-color: var(--accent); color: white; }
 
-        /* Modal Design */
         .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(4px); z-index: 1000; align-items: center; justify-content: center; padding: 20px; }
         .modal-overlay.open { display: flex; }
         .modal-box { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); width: 100%; max-width: 800px; max-height: 90vh; overflow-y: auto; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
@@ -2479,43 +2368,35 @@ function renderDashboard(data) {
         .modal-body { padding: 24px; }
         .modal-footer { padding: 20px 24px; border-top: 1px solid var(--border); background: rgba(15, 23, 42, 0.4); display: flex; justify-content: flex-end; gap: 12px; }
 
-        /* Analytics Specific */
         .progress-row { margin-bottom: 12px; }
         .progress-info { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; color: var(--text-secondary); }
         .progress-track { height: 10px; background: var(--bg-primary); border-radius: 5px; overflow: hidden; position: relative; }
         .progress-fill { height: 100%; background: var(--accent); border-radius: 5px; transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1); }
+
         .revenue-link { background: none; border: none; color: var(--accent); font-weight: 600; cursor: pointer; transition: color 0.2s; display: block; text-align: left; width: 100%; font-size: inherit; }
         .revenue-link:hover { color: var(--text-primary); text-decoration: underline; }
 
-        /* Toast feedback */
-        .toast { position: fixed; bottom: 24px; right: 24px; background: var(--bg-card); border-left: 4px solid var(--accent); padding: 16px 24px; border-radius: 8px; box-shadow: var(--shadow); transform: translateY(100px); opacity: 0; transition: all 0.3s; z-index: 9999; display: flex; align-items: center; gap: 12px; }
-        .toast.show { transform: translateY(0); opacity: 1; }
-        .toast-success { border-color: var(--success); }
-        .toast-error { border-color: var(--danger); }
+        .page-footer { text-align: center; padding: 32px; border-top: 1px solid var(--border); margin-top: 32px; color: var(--text-muted); font-size: 14px; background: var(--bg-card); border-radius: var(--radius); box-shadow: var(--shadow); }
+        .footer-stats { display: flex; justify-content: center; gap: 32px; margin-top: 16px; flex-wrap: wrap; font-size: 13px; }
 
-        /* Responsive */
-        @media (max-width: 768px) {
-            .topbar { padding: 0 16px; }
-            .nav-actions .btn span { display: none; }
-            .main-container { padding: 20px; }
-            .metrics { grid-template-columns: 1fr; }
-            .card-header { padding: 16px; }
-            .card-tools { width: 100%; }
-            .search-wrap { min-width: 100%; }
-        }
-        .progress-bar { transition: width 0.4s ease-out; }
         .mono { font-family: 'JetBrains Mono', monospace; }
         .text-success { color: var(--success); }
         .text-danger { color: var(--danger); }
         .text-secondary { color: var(--text-secondary); }
         .font-600 { font-weight: 600; }
+
+        @media (max-width: 768px) {
+            .topbar { padding: 0 16px; }
+            .main-container { padding: 20px; }
+            .metrics { grid-template-columns: 1fr; }
+            .card-header { padding: 16px; }
+            .card-tools { width: 100%; }
+            .search-wrap { min-width: 100%; }
+            .email-cell { max-width: 120px; }
+        }
     </style>
 </head>
 <body>
-
-    <div class="copy-feedback" id="copyToast" style="position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(100px); background:var(--success); color:white; padding:12px 24px; border-radius:8px; font-size:14px; font-weight:600; z-index:9999; opacity:0; transition:all 0.3s;">
-        <i class="fa-solid fa-check"></i> Copied to clipboard
-    </div>
 
     <div class="modal-overlay" id="extendModal">
         <div class="modal-box" style="max-width: 500px;">
@@ -2600,9 +2481,7 @@ function renderDashboard(data) {
                 <h4 style="margin-bottom: 16px; color: var(--text-primary);"><i class="fa-solid fa-calendar-alt"></i> Last 12 Months (Descending)</h4>
                 <div style="overflow-x: auto; margin-bottom: 32px;">
                     <table style="width: 100%; border-collapse: collapse; min-width: 300px;">
-                        <thead>
-                            <tr><th style="text-align:left; padding: 12px;">Month</th><th style="text-align:right; padding: 12px;">Revenue</th></tr>
-                        </thead>
+                        <thead><tr><th style="text-align:left; padding: 12px;">Month</th><th style="text-align:right; padding: 12px;">Revenue</th></tr></thead>
                         <tbody>
                             ${monthlyRevenue.map(m => `
                                 <tr>
@@ -2657,6 +2536,7 @@ function renderDashboard(data) {
                     <i class="fa-solid fa-file-export"></i> <span>Export Users</span>
                 </a>
             ` : ''}
+            <button class="btn" onclick="location.reload()"><i class="fa-solid fa-rotate"></i> Refresh</button>
             <a href="/admin" class="btn btn-danger">
                 <i class="fa-solid fa-right-from-bracket"></i> <span>Logout</span>
             </a>
@@ -2683,8 +2563,7 @@ function renderDashboard(data) {
                 <p style="color: var(--text-secondary);">Real-time monitoring and management of WiFi clients</p>
             </div>
             <div style="text-align: right; color: var(--text-muted); font-size: 13px;">
-                <i class="fa-solid fa-clock"></i> Next Refresh: <span id="refreshTimer">60</span>s
-                <div style="margin-top: 4px;"><i class="fa-solid fa-server"></i> Server Time: ${now.toLocaleTimeString()}</div>
+                <i class="fa-solid fa-server"></i> Server Time: ${now.toLocaleTimeString()}
             </div>
         </div>
 
@@ -2748,7 +2627,7 @@ function renderDashboard(data) {
             <div class="card-header">
                 <div>
                     <div class="card-title"><i class="fa-solid fa-users-gear" style="color:var(--accent); margin-right:10px;"></i>WiFi Client Management</div>
-                    <div class="card-subtitle">Showing latest 100 transactions with email & password</div>
+                    <div class="card-subtitle">Latest 100 users with credentials</div>
                 </div>
                 <div class="card-tools">
                     <div class="search-wrap">
@@ -2775,15 +2654,13 @@ function renderDashboard(data) {
                 <table>
                     <thead>
                         <tr>
-                            <th>User</th>
-                            <th>Password</th>
+                            <th>User / Password</th>
                             <th>Email</th>
                             <th>Plan</th>
                             <th>Status</th>
                             <th>Created</th>
                             <th>Expires</th>
                             <th>MAC Address</th>
-                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody id="usersTbody">
@@ -2794,7 +2671,7 @@ function renderDashboard(data) {
         </div>
 
         <div class="page-footer">
-            <p>Dream Hatcher Tech Dashboard v4.2 — Professional WiFi Management System</p>
+            <p>Dream Hatcher Tech Dashboard v4.3 — Professional WiFi Management System</p>
             <div class="footer-stats">
                 <span><i class="fa-solid fa-database"></i> ${stats.total_users} Total Users</span>
                 <span><i class="fa-solid fa-money-bill-wave"></i> ${naira(stats.total_revenue_lifetime)} Lifetime Revenue</span>
@@ -2806,28 +2683,10 @@ function renderDashboard(data) {
 
     <script>
         let currentFilter = 'all';
-        let refreshSecs = 60;
         let extendTargetId = null;
 
-        // Initialize refresh timer
-        setInterval(() => {
-            refreshSecs--;
-            if (refreshSecs <= 0) window.location.reload();
-            const timerEl = document.getElementById('refreshTimer');
-            if (timerEl) timerEl.textContent = refreshSecs;
-        }, 1000);
-
         function copyCreds(u, p) {
-            const text = "Username: " + u + "\\nPassword: " + p;
-            navigator.clipboard.writeText(text).then(() => {
-                const toast = document.getElementById('copyToast');
-                toast.style.opacity = '1';
-                toast.style.transform = 'translateX(-50%) translateY(0)';
-                setTimeout(() => {
-                    toast.style.opacity = '0';
-                    toast.style.transform = 'translateX(-50%) translateY(100px)';
-                }, 2000);
-            });
+            // This function is kept for potential future use but no button calls it
         }
 
         function openExtend(id, name) {
@@ -2894,12 +2753,10 @@ function renderDashboard(data) {
             }
         }
 
-        // AJAX load month data without page reload
         async function loadMonthData(monthRaw) {
             const container = document.getElementById('dailyProgressContainer');
             const monthLabelSpan = document.getElementById('currentMonthLabel');
             
-            // Show loading state
             container.innerHTML = '<div style="text-align: center; padding: 20px;"><i class="fa-solid fa-spinner fa-spin"></i> Loading...</div>';
             
             try {
@@ -2937,7 +2794,6 @@ function renderDashboard(data) {
                 }
                 container.innerHTML = barsHtml;
                 
-                // Animate bars
                 setTimeout(() => {
                     document.querySelectorAll('.progress-fill').forEach(bar => {
                         bar.style.width = bar.dataset.w + '%';
@@ -2955,10 +2811,8 @@ function renderDashboard(data) {
         }
 
         function showRevenueModal() {
-            // Load current month data by default if container is empty
             const container = document.getElementById('dailyProgressContainer');
             if (container.innerHTML.includes('Click a month')) {
-                // Get current month in YYYY-MM format
                 const now = new Date();
                 const currentMonth = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
                 loadMonthData(currentMonth);
@@ -2970,10 +2824,8 @@ function renderDashboard(data) {
             document.getElementById('revenueModal').classList.remove('open');
         }
 
-        // Search and Filter logic
         document.getElementById('searchInput').addEventListener('input', filterTable);
 
-        // Close modals on overlay click
         document.querySelectorAll('.modal-overlay').forEach(overlay => {
             overlay.addEventListener('click', function(e) {
                 if (e.target === this) {
