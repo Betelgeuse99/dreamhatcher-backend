@@ -2245,7 +2245,6 @@ function renderDashboard(data) {
 </body>
 </html>`;
 }
-}
 // ========== FAVICON FALLBACK ==========
 app.get('/favicon.ico', (req, res) => {
     res.redirect(301, 'https://i.imgpeek.com/eSikilY_SDfQ');
