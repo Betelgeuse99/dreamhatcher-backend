@@ -1260,20 +1260,19 @@ app.get('/', (req, res) => {
   res.send(html);
 });
 
-// DREAM HATCHER ENTERPRISE ADMIN DASHBOARD v4.3
+// DREAM HATCHER ENTERPRISE ADMIN DASHBOARD v4.4
 // Professional WiFi Management System with Role-Based Access Control
-// MODIFIED: Removed auto-refresh, removed Actions column, combined user/password, fixed email width
+// MODIFIED: White password, daily signups in revenue modal, return to current month button,
+//           idle time red & far right in admin sessions modal.
 // ============================================
 
 // ========== SECURITY CONFIGURATION ==========
 const ADMIN_USERS = {
-    // SUPER ADMIN - Full access (100%)
     'superadmin': {
         password: 'dreamatcher@2024',
         role: 'super_admin',
         permissions: ['delete', 'create', 'update', 'extend', 'manage_users', 'export', 'force_logout']
     },
-    // ADMIN - Read-only access
     'admin': {
         password: 'yusuf200',
         role: 'check',
@@ -1282,13 +1281,10 @@ const ADMIN_USERS = {
 };
 
 const SESSION_TIMEOUT = 5 * 60 * 1000; // 5 minutes
-
-// Session storage with unique user tracking
 const adminSessions = {};
-const adminUserSessions = {}; // Track by username to prevent duplicates
+const adminUserSessions = {};
 
 // ========== HELPER FUNCTIONS ==========
-
 function naira(amount) {
     const num = Number(amount) || 0;
     return '₦' + num.toLocaleString('en-NG');
@@ -1306,36 +1302,18 @@ function planLabel(plan) {
 
 function escapeHtml(text) {
     if (!text) return '';
-    const map = {
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#039;'
-    };
+    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
     return text.toString().replace(/[&<>"']/g, m => map[m]);
 }
 
 // ========== ADMIN SESSION MANAGEMENT ==========
-
 async function createAdminLogsTable() {
     try {
-        const tableCheck = await pool.query(`
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_name = 'admin_logs'
-            );
-        `);
-
+        const tableCheck = await pool.query(`SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'admin_logs');`);
         if (tableCheck.rows[0].exists) {
-            const columns = await pool.query(`
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = 'admin_logs'
-            `);
+            const columns = await pool.query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'admin_logs'`);
             const columnNames = columns.rows.map(row => row.column_name);
             let changed = false;
-
             if (!columnNames.includes('username')) {
                 await pool.query(`ALTER TABLE admin_logs ADD COLUMN IF NOT EXISTS username VARCHAR(50) DEFAULT 'unknown'`);
                 changed = true;
@@ -1344,10 +1322,9 @@ async function createAdminLogsTable() {
                 await pool.query(`ALTER TABLE admin_logs ADD COLUMN IF NOT EXISTS role VARCHAR(20) DEFAULT 'unknown'`);
                 changed = true;
             }
-
             await pool.query(`UPDATE admin_logs SET username = 'unknown' WHERE username IS NULL`);
             await pool.query(`UPDATE admin_logs SET role = 'unknown' WHERE role IS NULL`);
-            if (changed) console.log('✅ Admin logs table updated with missing columns');
+            if (changed) console.log('✅ Admin logs table updated');
         } else {
             await pool.query(`
                 CREATE TABLE IF NOT EXISTS admin_logs (
@@ -1365,7 +1342,6 @@ async function createAdminLogsTable() {
             `);
             console.log('✅ Created admin_logs table');
         }
-        
         try {
             await pool.query(`CREATE INDEX IF NOT EXISTS idx_admin_logs_session ON admin_logs(session_id)`);
             await pool.query(`CREATE INDEX IF NOT EXISTS idx_admin_logs_active ON admin_logs(is_active)`);
@@ -1376,90 +1352,45 @@ async function createAdminLogsTable() {
         console.log('Admin logs table setup error:', error.message);
     }
 }
-
 createAdminLogsTable();
 
 async function logAdminLogin(username, role, sessionId, ip, userAgent) {
     try {
-        await pool.query(
-            `UPDATE admin_logs SET logout_time = NOW(), is_active = false 
-             WHERE username = $1 AND is_active = true`,
-            [username]
-        );
-
-        await pool.query(
-            `INSERT INTO admin_logs (username, role, session_id, admin_ip, user_agent, login_time, last_activity, is_active) 
-             VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), true)`,
-            [username, role, sessionId, ip, userAgent]
-        );
-
+        await pool.query(`UPDATE admin_logs SET logout_time = NOW(), is_active = false WHERE username = $1 AND is_active = true`, [username]);
+        await pool.query(`INSERT INTO admin_logs (username, role, session_id, admin_ip, user_agent, login_time, last_activity, is_active) VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), true)`, [username, role, sessionId, ip, userAgent]);
         adminUserSessions[username] = sessionId;
-    } catch (error) {
-        console.log('Logging admin login error:', error.message);
-    }
+    } catch (error) { console.log('Logging admin login error:', error.message); }
 }
 
 async function updateAdminActivity(sessionId) {
     try {
-        await pool.query(
-            'UPDATE admin_logs SET last_activity = NOW() WHERE session_id = $1 AND is_active = true',
-            [sessionId]
-        );
-    } catch (error) {
-        console.log('Updating admin activity error:', error.message);
-    }
+        await pool.query('UPDATE admin_logs SET last_activity = NOW() WHERE session_id = $1 AND is_active = true', [sessionId]);
+    } catch (error) { console.log('Updating admin activity error:', error.message); }
 }
 
 async function logAdminLogout(sessionId) {
     try {
-        const result = await pool.query(
-            'SELECT username FROM admin_logs WHERE session_id = $1',
-            [sessionId]
-        );
-        if (result.rows[0]) {
-            const username = result.rows[0].username;
-            delete adminUserSessions[username];
-        }
-        
-        await pool.query(
-            'UPDATE admin_logs SET logout_time = NOW(), is_active = false WHERE session_id = $1',
-            [sessionId]
-        );
-    } catch (error) {
-        console.log('Logging admin logout error:', error.message);
-    }
+        const result = await pool.query('SELECT username FROM admin_logs WHERE session_id = $1', [sessionId]);
+        if (result.rows[0]) delete adminUserSessions[result.rows[0].username];
+        await pool.query('UPDATE admin_logs SET logout_time = NOW(), is_active = false WHERE session_id = $1', [sessionId]);
+    } catch (error) { console.log('Logging admin logout error:', error.message); }
 }
 
 async function getActiveAdmins() {
     try {
         const result = await pool.query(`
-            SELECT 
-                username,
-                role,
-                session_id,
-                admin_ip,
-                user_agent,
-                login_time,
-                last_activity,
-                EXTRACT(EPOCH FROM (NOW() - last_activity)) as idle_seconds
-            FROM admin_logs 
-            WHERE is_active = true 
-            ORDER BY last_activity DESC
+            SELECT username, role, session_id, admin_ip, user_agent, login_time, last_activity,
+                   EXTRACT(EPOCH FROM (NOW() - last_activity)) as idle_seconds
+            FROM admin_logs WHERE is_active = true ORDER BY last_activity DESC
         `);
-
         const uniqueAdmins = {};
         result.rows.forEach(row => {
-            if (!uniqueAdmins[row.username] || 
-                new Date(row.last_activity) > new Date(uniqueAdmins[row.username].last_activity)) {
+            if (!uniqueAdmins[row.username] || new Date(row.last_activity) > new Date(uniqueAdmins[row.username].last_activity)) {
                 uniqueAdmins[row.username] = row;
             }
         });
-
         return Object.values(uniqueAdmins);
-    } catch (error) {
-        console.log('Getting active admins error:', error.message);
-        return [];
-    }
+    } catch (error) { console.log('Getting active admins error:', error.message); return []; }
 }
 
 function hasPermission(session, requiredPermission) {
@@ -1473,163 +1404,82 @@ async function checkExpiredUsers() {
     try {
         const now = new Date();
         const result = await pool.query(`
-            SELECT id, mikrotik_username, expires_at, status
-            FROM payment_queue 
-            WHERE (status = 'processed' OR status = 'pending')
-            AND expires_at IS NOT NULL 
-            AND expires_at <= $1
-            AND (status != 'expired' OR status IS NULL)
-            LIMIT 50
+            SELECT id FROM payment_queue 
+            WHERE (status = 'processed' OR status = 'pending') AND expires_at IS NOT NULL 
+            AND expires_at <= $1 AND (status != 'expired' OR status IS NULL) LIMIT 50
         `, [now]);
-
-        if (result.rows.length > 0) {
-            for (const user of result.rows) {
-                await pool.query(
-                    `UPDATE payment_queue SET status = 'expired' WHERE id = $1`,
-                    [user.id]
-                );
-            }
+        for (const user of result.rows) {
+            await pool.query(`UPDATE payment_queue SET status = 'expired' WHERE id = $1`, [user.id]);
         }
-    } catch (error) {
-        console.log('Checking expired users error:', error.message);
-    }
+    } catch (error) { console.log('Checking expired users error:', error.message); }
 }
-
 setInterval(checkExpiredUsers, 120000);
 
 async function syncExpiredWithMikroTik() {
     try {
         const result = await pool.query(`
-            SELECT 
-                id,
-                mikrotik_username,
-                mac_address,
-                expires_at
+            SELECT id, mikrotik_username, mac_address, expires_at
             FROM payment_queue
-            WHERE status = 'expired'
-            AND expires_at IS NOT NULL
-            AND expires_at < NOW() - INTERVAL '1 minute'
-            AND mikrotik_username IS NOT NULL
-            AND mikrotik_username != ''
-            AND (last_sync IS NULL OR last_sync < expires_at)
-            LIMIT 20
+            WHERE status = 'expired' AND expires_at IS NOT NULL AND expires_at < NOW() - INTERVAL '1 minute'
+            AND mikrotik_username IS NOT NULL AND mikrotik_username != ''
+            AND (last_sync IS NULL OR last_sync < expires_at) LIMIT 20
         `);
-
-        if (result.rows.length > 0) {
-            for (const user of result.rows) {
-                await pool.query(
-                    `UPDATE payment_queue SET last_sync = NOW() WHERE id = $1`,
-                    [user.id]
-                );
-            }
-            return result.rows;
+        for (const user of result.rows) {
+            await pool.query(`UPDATE payment_queue SET last_sync = NOW() WHERE id = $1`, [user.id]);
         }
-        return [];
-    } catch (error) {
-        console.log('Syncing expired users error:', error.message);
-        return [];
-    }
+        return result.rows;
+    } catch (error) { console.log('Syncing expired users error:', error.message); return []; }
 }
 setInterval(syncExpiredWithMikroTik, 300000);
 
 app.get('/api/check-mac', async (req, res) => {
-  const mac = (req.query.mac || '').trim().toUpperCase();
-
-  res.set({
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
-    'Cache-Control': 'no-store'
-  });
-
-  if (!mac || mac === 'UNKNOWN' || mac.length < 10) {
-    return res.json({ found: false });
-  }
-
-  try {
-    const result = await pool.query(
-      `SELECT mikrotik_username, mikrotik_password, plan, status, expires_at, transaction_id
-       FROM payment_queue
-       WHERE UPPER(mac_address) = $1
-       AND status IN ('pending', 'processed')
-       AND (expires_at IS NULL OR expires_at > NOW())
-       ORDER BY created_at DESC
-       LIMIT 1`,
-      [mac]
-    );
-
-    if (result.rows.length === 0) {
-      return res.json({ found: false });
-    }
-
-    const row = result.rows[0];
-    if (row.status === 'pending') {
-      return res.json({
-        found: true,
-        ready: false,
-        message: 'Account is being created, please wait...'
-      });
-    }
-
-    return res.json({
-      found: true,
-      ready: true,
-      username: row.mikrotik_username,
-      password: row.mikrotik_password,
-      plan: row.plan,
-      expires: row.expires_at ? row.expires_at.toISOString() : '',
-      reference: row.transaction_id
-    });
-  } catch (error) {
-    console.error('Check-MAC error:', error.message);
-    return res.json({ found: false });
-  }
+    const mac = (req.query.mac || '').trim().toUpperCase();
+    res.set({ 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' });
+    if (!mac || mac === 'UNKNOWN' || mac.length < 10) return res.json({ found: false });
+    try {
+        const result = await pool.query(
+            `SELECT mikrotik_username, mikrotik_password, plan, status, expires_at, transaction_id
+             FROM payment_queue WHERE UPPER(mac_address) = $1 AND status IN ('pending', 'processed')
+             AND (expires_at IS NULL OR expires_at > NOW()) ORDER BY created_at DESC LIMIT 1`,
+            [mac]
+        );
+        if (result.rows.length === 0) return res.json({ found: false });
+        const row = result.rows[0];
+        if (row.status === 'pending') return res.json({ found: true, ready: false, message: 'Account is being created, please wait...' });
+        return res.json({ found: true, ready: true, username: row.mikrotik_username, password: row.mikrotik_password, plan: row.plan, expires: row.expires_at ? row.expires_at.toISOString() : '', reference: row.transaction_id });
+    } catch (error) { console.error('Check-MAC error:', error.message); return res.json({ found: false }); }
 });
 
+// ========== API ENDPOINT FOR DAILY REVENUE + SIGNUPS (AJAX) ==========
 app.get('/admin/api/daily', async (req, res) => {
     const { sessionId, month } = req.query;
-    
-    if (!sessionId || !adminSessions[sessionId]) {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
-    
+    if (!sessionId || !adminSessions[sessionId]) return res.status(401).json({ error: 'Unauthorized' });
     const session = adminSessions[sessionId];
     if (Date.now() - session.lastActivity > SESSION_TIMEOUT) {
         await logAdminLogout(sessionId);
         delete adminSessions[sessionId];
         return res.status(401).json({ error: 'Session expired' });
     }
-    
     session.lastActivity = Date.now();
     adminSessions[sessionId] = session;
     await updateAdminActivity(sessionId);
-    
-    if (!month || !/^\d{4}-\d{2}$/.test(month)) {
-        return res.status(400).json({ error: 'Invalid month format. Use YYYY-MM.' });
-    }
-    
+    if (!month || !/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'Invalid month format. Use YYYY-MM.' });
     try {
         const queryDate = `${month}-01`;
         const result = await pool.query(`
             SELECT 
                 EXTRACT(DAY FROM created_at) as day,
-                SUM(
-                    CASE plan
-                        WHEN '24hr' THEN 350
-                        WHEN '3d'  THEN 1050
-                        WHEN '5d'  THEN 1750
-                        WHEN '7d'  THEN 2400
-                        WHEN '14d' THEN 4100
-                        WHEN '30d' THEN 7500
-                        ELSE 0
-                    END
-                ) as daily_total
+                SUM(CASE plan
+                    WHEN '24hr' THEN 350 WHEN '3d' THEN 1050 WHEN '5d' THEN 1750
+                    WHEN '7d' THEN 2400 WHEN '14d' THEN 4100 WHEN '30d' THEN 7500 ELSE 0 END
+                ) as daily_total,
+                COUNT(*) as signups_count
             FROM payment_queue
             WHERE created_at >= DATE_TRUNC('month', $1::date)
               AND created_at < DATE_TRUNC('month', $1::date) + INTERVAL '1 month'
             GROUP BY EXTRACT(DAY FROM created_at)
             ORDER BY day ASC
         `, [queryDate]);
-        
         res.json({ success: true, data: result.rows, month: month });
     } catch (error) {
         console.error('Daily revenue API error:', error.message);
@@ -1637,112 +1487,69 @@ app.get('/admin/api/daily', async (req, res) => {
     }
 });
 
+// ========== ADMIN DASHBOARD ROUTE ==========
 app.get('/admin', async (req, res) => {
-    const { user, pwd, action, userId, newPlan, sessionId, exportData, forceLogout, viewMonth } = req.query;
+    const { user, pwd, action, userId, newPlan, sessionId, exportData, forceLogout } = req.query;
     
     if (forceLogout === 'all' && sessionId && adminSessions[sessionId]) {
         const currentSession = adminSessions[sessionId];
-        if (currentSession.role !== 'super_admin') {
-            return res.redirect(`/admin?sessionId=${sessionId}&action=permission_denied`);
-        }
-    
+        if (currentSession.role !== 'super_admin') return res.redirect(`/admin?sessionId=${sessionId}&action=permission_denied`);
         try {
-            Object.keys(adminSessions).forEach(key => {
-                if (key !== sessionId) {
-                    logAdminLogout(key);
-                    delete adminSessions[key];
-                }
-            });
-            
-            await pool.query(
-                `UPDATE admin_logs SET logout_time = NOW(), is_active = false 
-                 WHERE session_id != $1 AND is_active = true`,
-                [sessionId]
-            );
-
+            Object.keys(adminSessions).forEach(key => { if (key !== sessionId) { logAdminLogout(key); delete adminSessions[key]; } });
+            await pool.query(`UPDATE admin_logs SET logout_time = NOW(), is_active = false WHERE session_id != $1 AND is_active = true`, [sessionId]);
             return res.redirect(`/admin?sessionId=${sessionId}&action=force_logout_success`);
-        } catch (error) {
-            console.log('Force logout error:', error.message);
-            return res.redirect(`/admin?sessionId=${sessionId}&action=force_logout_error`);
-        }
+        } catch (error) { return res.redirect(`/admin?sessionId=${sessionId}&action=force_logout_error`); }
     }
     
     if (sessionId && adminSessions[sessionId]) {
         const session = adminSessions[sessionId];
-
         if (Date.now() - session.lastActivity > SESSION_TIMEOUT) {
             await logAdminLogout(sessionId);
             delete adminSessions[sessionId];
             return res.redirect('/admin?sessionExpired=true');
         }
-        
         session.lastActivity = Date.now();
         adminSessions[sessionId] = session;
         await updateAdminActivity(sessionId);
-        
         return await handleAdminDashboard(req, res, sessionId);
     }
     
     if (user && pwd) {
         const userConfig = ADMIN_USERS[user];
-
         if (userConfig && userConfig.password === pwd) {
             const existingSessionId = adminUserSessions[user];
-
             if (existingSessionId && adminSessions[existingSessionId]) {
                 const session = adminSessions[existingSessionId];
                 session.lastActivity = Date.now();
                 return res.redirect(`/admin?sessionId=${existingSessionId}`);
             }
-            
             const newSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
             adminSessions[newSessionId] = {
-                id: newSessionId,
-                username: user,
-                role: userConfig.role,
-                permissions: userConfig.permissions,
-                loggedInAt: new Date(),
-                lastActivity: Date.now(),
-                ip: req.ip,
-                userAgent: req.headers['user-agent']
+                id: newSessionId, username: user, role: userConfig.role, permissions: userConfig.permissions,
+                loggedInAt: new Date(), lastActivity: Date.now(), ip: req.ip, userAgent: req.headers['user-agent']
             };
-
             await logAdminLogin(user, userConfig.role, newSessionId, req.ip, req.headers['user-agent']);
             return res.redirect(`/admin?sessionId=${newSessionId}`);
         }
     }
-    
     return res.send(getLoginForm(req.query.sessionExpired));
 });
 
 async function handleAdminDashboard(req, res, sessionId) {
     try {
         const session = adminSessions[sessionId];
-
-        if (!session) {
-            return res.redirect('/admin');
-        }
+        if (!session) return res.redirect('/admin');
         
-        const { action, userId, newPlan, exportData, viewMonth } = req.query;
-        let actionMessage = '';
-        let messageType = '';
+        const { action, userId, newPlan, exportData } = req.query;
+        let actionMessage = '', messageType = '';
 
         if (action === 'delete' && userId) {
-            if (!hasPermission(session, 'delete')) {
-                actionMessage = 'Permission denied: Cannot delete users';
-                messageType = 'error';
-            } else {
-                await pool.query('DELETE FROM payment_queue WHERE id = $1', [userId]);
-                actionMessage = 'User account permanently deleted';
-                messageType = 'success';
-            }
+            if (!hasPermission(session, 'delete')) { actionMessage = 'Permission denied: Cannot delete users'; messageType = 'error'; }
+            else { await pool.query('DELETE FROM payment_queue WHERE id = $1', [userId]); actionMessage = 'User account permanently deleted'; messageType = 'success'; }
         }
-
         if (action === 'extend' && userId && newPlan) {
-            if (!hasPermission(session, 'extend')) {
-                actionMessage = 'Permission denied: Cannot extend plans';
-                messageType = 'error';
-            } else {
+            if (!hasPermission(session, 'extend')) { actionMessage = 'Permission denied: Cannot extend plans'; messageType = 'error'; }
+            else {
                 let interval = '';
                 if (newPlan === '24hr') interval = '24 hours';
                 else if (newPlan === '3d') interval = '3 days';
@@ -1750,128 +1557,45 @@ async function handleAdminDashboard(req, res, sessionId) {
                 else if (newPlan === '7d') interval = '7 days';
                 else if (newPlan === '14d') interval = '14 days';
                 else if (newPlan === '30d') interval = '30 days';
-
-                await pool.query(
-                    `UPDATE payment_queue 
-                     SET plan = $1, 
-                         expires_at = NOW() + INTERVAL '${interval}', 
-                         status = 'processed' 
-                     WHERE id = $2`,
-                    [newPlan, userId]
-                );
-                actionMessage = 'User plan extended to ' + interval;
-                messageType = 'success';
+                await pool.query(`UPDATE payment_queue SET plan = $1, expires_at = NOW() + INTERVAL '${interval}', status = 'processed' WHERE id = $2`, [newPlan, userId]);
+                actionMessage = 'User plan extended to ' + interval; messageType = 'success';
             }
         }
-
         if (action === 'reset' && userId) {
-            if (!hasPermission(session, 'update')) {
-                actionMessage = 'Permission denied: Cannot reset users';
-                messageType = 'error';
-            } else {
-                await pool.query(
-                    `UPDATE payment_queue 
-                     SET status = 'pending', expires_at = NULL 
-                     WHERE id = $1`,
-                    [userId]
-                );
-                actionMessage = 'User reset to pending - will be recreated on MikroTik';
-                messageType = 'warning';
-            }
+            if (!hasPermission(session, 'update')) { actionMessage = 'Permission denied: Cannot reset users'; messageType = 'error'; }
+            else { await pool.query(`UPDATE payment_queue SET status = 'pending', expires_at = NULL WHERE id = $1`, [userId]); actionMessage = 'User reset to pending - will be recreated on MikroTik'; messageType = 'warning'; }
         }
-
         if (action === 'toggle_status' && userId) {
-            if (!hasPermission(session, 'toggle_status')) {
-                actionMessage = 'Permission denied: Cannot toggle status';
-                messageType = 'error';
-            } else {
+            if (!hasPermission(session, 'toggle_status')) { actionMessage = 'Permission denied: Cannot toggle status'; messageType = 'error'; }
+            else {
                 const current = await pool.query('SELECT status FROM payment_queue WHERE id = $1', [userId]);
                 const newStatus = current.rows[0].status === 'processed' ? 'suspended' : 'processed';
                 await pool.query('UPDATE payment_queue SET status = $1 WHERE id = $2', [newStatus, userId]);
-                actionMessage = 'User status changed to ' + newStatus;
-                messageType = 'info';
+                actionMessage = 'User status changed to ' + newStatus; messageType = 'info';
             }
         }
-
         if (action === 'cleanup') {
-            if (!hasPermission(session, 'delete')) {
-                actionMessage = 'Permission denied: Cannot perform cleanup';
-                messageType = 'error';
-            } else {
-                const result = await pool.query(`
-                    DELETE FROM payment_queue 
-                    WHERE (
-                        (status = 'expired') OR
-                        (status = 'processed' AND expires_at < NOW() - INTERVAL '7 days') OR
-                        (status = 'pending' AND created_at < NOW() - INTERVAL '7 days')
-                    )
-                `);
-                actionMessage = 'Cleaned up ' + result.rowCount + ' expired/pending users';
-                messageType = 'success';
+            if (!hasPermission(session, 'delete')) { actionMessage = 'Permission denied: Cannot perform cleanup'; messageType = 'error'; }
+            else {
+                const result = await pool.query(`DELETE FROM payment_queue WHERE (status = 'expired') OR (status = 'processed' AND expires_at < NOW() - INTERVAL '7 days') OR (status = 'pending' AND created_at < NOW() - INTERVAL '7 days')`);
+                actionMessage = 'Cleaned up ' + result.rowCount + ' expired/pending users'; messageType = 'success';
             }
         }
-
         if (action === 'sync_expired') {
-            if (!hasPermission(session, 'update')) {
-                actionMessage = 'Permission denied: Cannot sync expired users';
-                messageType = 'error';
-            } else {
-                const expiredUsers = await syncExpiredWithMikroTik();
-                actionMessage = 'Synced ' + expiredUsers.length + ' expired users with MikroTik';
-                messageType = 'success';
-            }
+            if (!hasPermission(session, 'update')) { actionMessage = 'Permission denied: Cannot sync expired users'; messageType = 'error'; }
+            else { const expiredUsers = await syncExpiredWithMikroTik(); actionMessage = 'Synced ' + expiredUsers.length + ' expired users with MikroTik'; messageType = 'success'; }
         }
-
-        if (action === 'force_logout_success') {
-            actionMessage = 'All other admin sessions have been terminated';
-            messageType = 'success';
-        }
-        if (action === 'force_logout_error') {
-            actionMessage = 'Error terminating other sessions';
-            messageType = 'error';
-        }
-        if (action === 'permission_denied') {
-            actionMessage = 'Permission denied: Requires Super Admin access';
-            messageType = 'error';
-        }
+        if (action === 'force_logout_success') { actionMessage = 'All other admin sessions have been terminated'; messageType = 'success'; }
+        if (action === 'force_logout_error') { actionMessage = 'Error terminating other sessions'; messageType = 'error'; }
+        if (action === 'permission_denied') { actionMessage = 'Permission denied: Requires Super Admin access'; messageType = 'error'; }
 
         if (exportData === 'csv') {
-            if (!hasPermission(session, 'export')) {
-                return res.status(403).send('Permission denied');
-            }
-            
-            const { rows } = await pool.query(`
-                SELECT 
-                    id,
-                    mikrotik_username as username,
-                    mikrotik_password as password,
-                    plan,
-                    status,
-                    mac_address as mac,
-                    customer_email as email,
-                    created_at,
-                    expires_at,
-                    last_sync
-                FROM payment_queue 
-                ORDER BY created_at DESC
-            `);
-            
+            if (!hasPermission(session, 'export')) return res.status(403).send('Permission denied');
+            const { rows } = await pool.query(`SELECT id, mikrotik_username as username, mikrotik_password as password, plan, status, mac_address as mac, customer_email as email, created_at, expires_at, last_sync FROM payment_queue ORDER BY created_at DESC`);
             let csvData = 'ID,Username,Password,Plan,Status,MAC Address,Email,Created,Expires,Last Sync\n';
             rows.forEach(row => {
-                csvData += [
-                    row.id,
-                    '"' + (row.username || '').replace(/"/g, '""') + '"',
-                    '"' + (row.password || '').replace(/"/g, '""') + '"',
-                    '"' + (row.plan || '').replace(/"/g, '""') + '"',
-                    '"' + (row.status || '').replace(/"/g, '""') + '"',
-                    '"' + (row.mac || 'N/A').replace(/"/g, '""') + '"',
-                    '"' + (row.email || 'N/A').replace(/"/g, '""') + '"',
-                    '"' + new Date(row.created_at).toISOString() + '"',
-                    '"' + (row.expires_at ? new Date(row.expires_at).toISOString() : 'N/A') + '"',
-                    '"' + (row.last_sync ? new Date(row.last_sync).toISOString() : 'N/A') + '"'
-                ].join(',') + '\n';
+                csvData += [row.id, '"' + (row.username || '').replace(/"/g, '""') + '"', '"' + (row.password || '').replace(/"/g, '""') + '"', '"' + (row.plan || '').replace(/"/g, '""') + '"', '"' + (row.status || '').replace(/"/g, '""') + '"', '"' + (row.mac || 'N/A').replace(/"/g, '""') + '"', '"' + (row.email || 'N/A').replace(/"/g, '""') + '"', '"' + new Date(row.created_at).toISOString() + '"', '"' + (row.expires_at ? new Date(row.expires_at).toISOString() : 'N/A') + '"', '"' + (row.last_sync ? new Date(row.last_sync).toISOString() : 'N/A') + '"'].join(',') + '\n';
             });
-            
             res.setHeader('Content-Type', 'text/csv');
             res.setHeader('Content-Disposition', 'attachment; filename="dreamhatcher_users_' + new Date().toISOString().split('T')[0] + '.csv"');
             return res.send(csvData);
@@ -1879,132 +1603,46 @@ async function handleAdminDashboard(req, res, sessionId) {
         
         const metrics = await pool.query(`
             WITH user_stats AS (
-                SELECT 
-                    COUNT(*) as total_users,
-                    COUNT(CASE WHEN status = 'processed' AND (expires_at IS NULL OR expires_at > NOW()) THEN 1 END) as active_users,
-                    COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_users,
-                    COUNT(CASE WHEN status = 'expired' OR (status = 'processed' AND expires_at <= NOW()) THEN 1 END) as expired_users,
-                    COUNT(CASE WHEN status = 'suspended' THEN 1 END) as suspended_users,
-                    COUNT(CASE WHEN created_at::date = CURRENT_DATE THEN 1 END) as signups_today,
-                    COUNT(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' THEN 1 END) as signups_week
+                SELECT COUNT(*) as total_users,
+                       COUNT(CASE WHEN status = 'processed' AND (expires_at IS NULL OR expires_at > NOW()) THEN 1 END) as active_users,
+                       COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_users,
+                       COUNT(CASE WHEN status = 'expired' OR (status = 'processed' AND expires_at <= NOW()) THEN 1 END) as expired_users,
+                       COUNT(CASE WHEN status = 'suspended' THEN 1 END) as suspended_users,
+                       COUNT(CASE WHEN created_at::date = CURRENT_DATE THEN 1 END) as signups_today,
+                       COUNT(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' THEN 1 END) as signups_week
                 FROM payment_queue
             ),
             revenue_stats AS (
-                SELECT
-                    COALESCE(SUM(
-                        CASE 
-                            WHEN plan = '24hr' THEN 350
-                            WHEN plan = '3d' THEN 1050
-                            WHEN plan = '5d' THEN 1750
-                            WHEN plan = '7d' THEN 2400
-                            WHEN plan = '14d' THEN 4100
-                            WHEN plan = '30d' THEN 7500
-                            ELSE 0
-                        END
-                    ), 0) as total_revenue_lifetime,
-                    
-                    COALESCE(SUM(
-                        CASE WHEN created_at::date = CURRENT_DATE
-                        THEN CASE 
-                            WHEN plan = '24hr' THEN 350
-                            WHEN plan = '3d' THEN 1050
-                            WHEN plan = '5d' THEN 1750
-                            WHEN plan = '7d' THEN 2400
-                            WHEN plan = '14d' THEN 4100
-                            WHEN plan = '30d' THEN 7500
-                            ELSE 0
-                        END ELSE 0 END
-                    ), 0) as revenue_today,
-                    
-                    COALESCE(SUM(
-                        CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days'
-                        THEN CASE 
-                            WHEN plan = '24hr' THEN 350
-                            WHEN plan = '3d' THEN 1050
-                            WHEN plan = '5d' THEN 1750
-                            WHEN plan = '7d' THEN 2400
-                            WHEN plan = '14d' THEN 4100
-                            WHEN plan = '30d' THEN 7500
-                        END ELSE 0 END
-                    ), 0) as revenue_week,
-             
-                    COALESCE(SUM(
-                        CASE WHEN created_at >= CURRENT_DATE - INTERVAL '30 days'
-                        THEN CASE 
-                            WHEN plan = '24hr' THEN 350
-                            WHEN plan = '3d' THEN 1050
-                            WHEN plan = '5d' THEN 1750
-                            WHEN plan = '7d' THEN 2400
-                            WHEN plan = '14d' THEN 4100
-                            WHEN plan = '30d' THEN 7500
-                        END ELSE 0 END
-                    ), 0) as revenue_month
+                SELECT COALESCE(SUM(CASE WHEN plan = '24hr' THEN 350 WHEN plan = '3d' THEN 1050 WHEN plan = '5d' THEN 1750 WHEN plan = '7d' THEN 2400 WHEN plan = '14d' THEN 4100 WHEN plan = '30d' THEN 7500 ELSE 0 END),0) as total_revenue_lifetime,
+                       COALESCE(SUM(CASE WHEN created_at::date = CURRENT_DATE THEN CASE WHEN plan = '24hr' THEN 350 WHEN plan = '3d' THEN 1050 WHEN plan = '5d' THEN 1750 WHEN plan = '7d' THEN 2400 WHEN plan = '14d' THEN 4100 WHEN plan = '30d' THEN 7500 ELSE 0 END ELSE 0 END),0) as revenue_today,
+                       COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' THEN CASE WHEN plan = '24hr' THEN 350 WHEN plan = '3d' THEN 1050 WHEN plan = '5d' THEN 1750 WHEN plan = '7d' THEN 2400 WHEN plan = '14d' THEN 4100 WHEN plan = '30d' THEN 7500 END ELSE 0 END),0) as revenue_week,
+                       COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '30 days' THEN CASE WHEN plan = '24hr' THEN 350 WHEN plan = '3d' THEN 1050 WHEN plan = '5d' THEN 1750 WHEN plan = '7d' THEN 2400 WHEN plan = '14d' THEN 4100 WHEN plan = '30d' THEN 7500 END ELSE 0 END),0) as revenue_month
                 FROM payment_queue
             )
-            SELECT 
-                u.*, 
-                r.*
-            FROM user_stats u, revenue_stats r
+            SELECT u.*, r.* FROM user_stats u, revenue_stats r
         `);
 
         const recentActivity = await pool.query(`
-          SELECT 
-            id,
-            mikrotik_username,
-            mikrotik_password,
-            plan,
-            status,
-            mac_address,
-            customer_email,
-            created_at,
-            expires_at,
-            COALESCE(last_sync, created_at) as last_sync,
-            CASE 
-              WHEN status = 'expired' THEN 'expired'
-              WHEN status = 'pending' THEN 'pending'
-              WHEN status = 'suspended' THEN 'suspended'
-              WHEN status = 'processed' AND (expires_at IS NULL) THEN 'active'
-              WHEN status = 'processed' AND (expires_at > NOW()) THEN 'active'
-              WHEN status = 'processed' AND (expires_at <= NOW()) THEN 'expired'
-              ELSE 'unknown'
-            END as realtime_status
-          FROM payment_queue
-          ORDER BY created_at DESC
-          LIMIT 100
+            SELECT id, mikrotik_username, mikrotik_password, plan, status, mac_address, customer_email, created_at, expires_at,
+                   COALESCE(last_sync, created_at) as last_sync,
+                   CASE WHEN status = 'expired' THEN 'expired' WHEN status = 'pending' THEN 'pending' WHEN status = 'suspended' THEN 'suspended'
+                        WHEN status = 'processed' AND (expires_at IS NULL OR expires_at > NOW()) THEN 'active'
+                        WHEN status = 'processed' AND expires_at <= NOW() THEN 'expired' ELSE 'unknown' END as realtime_status
+            FROM payment_queue ORDER BY created_at DESC LIMIT 100
         `);
 
         const monthlyRevenue = await pool.query(`
             WITH months AS (
-                SELECT 
-                    DATE_TRUNC('month', created_at) as month_start,
-                    SUM(
-                        CASE plan
-                            WHEN '24hr' THEN 350
-                            WHEN '3d'  THEN 1050
-                            WHEN '5d'  THEN 1750
-                            WHEN '7d'  THEN 2400
-                            WHEN '14d' THEN 4100
-                            WHEN '30d' THEN 7500
-                            ELSE 0
-                        END
-                    ) as total
-                FROM payment_queue
-                WHERE created_at >= NOW() - INTERVAL '12 months'
-                GROUP BY DATE_TRUNC('month', created_at)
+                SELECT DATE_TRUNC('month', created_at) as month_start,
+                       SUM(CASE plan WHEN '24hr' THEN 350 WHEN '3d' THEN 1050 WHEN '5d' THEN 1750 WHEN '7d' THEN 2400 WHEN '14d' THEN 4100 WHEN '30d' THEN 7500 ELSE 0 END) as total
+                FROM payment_queue WHERE created_at >= NOW() - INTERVAL '12 months' GROUP BY DATE_TRUNC('month', created_at)
                 ORDER BY month_start DESC
             )
-            SELECT 
-                to_char(month_start, 'Mon YYYY') as month_label,
-                to_char(month_start, 'YYYY-MM') as month_raw,
-                month_start,
-                COALESCE(total, 0) as revenue
-            FROM months
-            LIMIT 12
+            SELECT to_char(month_start, 'Mon YYYY') as month_label, to_char(month_start, 'YYYY-MM') as month_raw, month_start, COALESCE(total, 0) as revenue FROM months LIMIT 12
         `);
 
         let activeAdmins = await getActiveAdmins();
         let visibleSessionCount = activeAdmins.length;
-
         if (session.role !== 'super_admin') {
             activeAdmins = activeAdmins.filter(admin => admin.role !== 'super_admin');
             visibleSessionCount = activeAdmins.length;
@@ -2012,34 +1650,19 @@ async function handleAdminDashboard(req, res, sessionId) {
 
         const stats = metrics.rows[0];
         const users = recentActivity.rows;
-
         const activeCount = users.filter(u => u.realtime_status === 'active').length;
         const expiredCount = users.filter(u => u.realtime_status === 'expired').length;
         const pendingCount = users.filter(u => u.realtime_status === 'pending').length;
         const suspendedCount = users.filter(u => u.realtime_status === 'suspended').length;
-        
         const currentSession = session;
         const currentAdminIdleSeconds = currentSession ? Math.floor((Date.now() - currentSession.lastActivity) / 1000) : 0;
         const activeSessions = visibleSessionCount;
 
         res.send(renderDashboard({
-            session: session,
-            sessionId: sessionId,
-            stats: stats,
-            users: users,
-            activeCount: activeCount,
-            expiredCount: expiredCount,
-            pendingCount: pendingCount,
-            suspendedCount: suspendedCount,
-            activeAdmins: activeAdmins,
-            activeSessions: activeSessions,
-            currentAdminIdleSeconds: currentAdminIdleSeconds,
-            currentAdminIP: currentSession ? currentSession.ip : 'Unknown',
-            actionMessage: actionMessage,
-            messageType: messageType,
-            monthlyRevenue: monthlyRevenue.rows
+            session, sessionId, stats, users, activeCount, expiredCount, pendingCount, suspendedCount,
+            activeAdmins, activeSessions, currentAdminIdleSeconds, currentAdminIP: currentSession ? currentSession.ip : 'Unknown',
+            actionMessage, messageType, monthlyRevenue: monthlyRevenue.rows
         }));
-
     } catch (error) {
         console.log('Dashboard handler error:', error.message);
         res.status(500).send(getErrorPage(error.message));
@@ -2171,11 +1794,10 @@ function getErrorPage(error) {
 
 function renderDashboard(data) {
     const { session, sessionId, stats, users, activeCount, expiredCount, pendingCount, suspendedCount, activeAdmins, activeSessions, currentAdminIdleSeconds, actionMessage, messageType, monthlyRevenue } = data;
-    
     const now = new Date();
     const sessionEnd = now.getTime() + (5 * 60 * 1000);
 
-    // Build user table rows – combined Username/Password column, no Actions column, no #id
+    // Build user table rows – combined Username/Password column, no Actions column, password now white
     let userRows = '';
     if (users.length === 0) {
         userRows = '<tr><td colspan="7" style="text-align:center;padding:48px;color:var(--text-muted);">No users found</td></tr>';
@@ -2193,7 +1815,7 @@ function renderDashboard(data) {
                         <div class="user-avatar">${(user.mikrotik_username || '?')[0].toUpperCase()}</div>
                         <div>
                             <div class="username">${escapeHtml(user.mikrotik_username)}</div>
-                            <div class="user-password mono">${escapeHtml(user.mikrotik_password)}</div>
+                            <div class="user-password">${escapeHtml(user.mikrotik_password)}</div>
                         </div>
                     </td>
                     <td class="email-cell">${escapeHtml(user.customer_email || 'N/A')}</td>
@@ -2214,13 +1836,14 @@ function renderDashboard(data) {
         });
     }
 
-    // Build admin sessions rows
+    // Build admin sessions rows – Idle Time column now last (far right) and turns red if >5 min
     let adminSessionsRows = '';
     activeAdmins.forEach(admin => {
         const loginTime = new Date(admin.login_time);
         const idleMins = Math.floor(admin.idle_seconds / 60);
+        const idleSeconds = Math.floor(admin.idle_seconds % 60);
         const isCurrentUser = admin.username === session.username;
-        
+        const idleTooLong = admin.idle_seconds > 300; // > 5 minutes
         adminSessionsRows += `
             <tr style="${isCurrentUser ? 'background: rgba(139, 92, 246, 0.1);' : ''}">
                 <td style="padding: 12px;">
@@ -2229,7 +1852,7 @@ function renderDashboard(data) {
                 </td>
                 <td style="padding: 12px; font-family: monospace;">${admin.admin_ip}</td>
                 <td style="padding: 12px;">${loginTime.toLocaleString()}</td>
-                <td style="padding: 12px;">${idleMins} min idle</td>
+                <td style="padding: 12px; ${idleTooLong ? 'color: var(--danger); font-weight: 600;' : ''}">${idleMins}m ${idleSeconds}s idle</td>
             </tr>
         `;
     });
@@ -2331,7 +1954,7 @@ function renderDashboard(data) {
         .user-cell { display: flex; align-items: center; gap: 12px; }
         .user-avatar { width: 32px; height: 32px; border-radius: 8px; background: var(--bg-hover); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; color: var(--accent); border: 1px solid var(--border); }
         .username { font-weight: 700; color: var(--text-primary); margin-bottom: 4px; }
-        .user-password { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; letter-spacing: 0.5px; }
+        .user-password { font-size: 11px; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.5px; color: var(--text-primary); }  /* WHITE password */
 
         .email-cell { max-width: 200px; word-break: break-word; white-space: normal; }
 
@@ -2497,13 +2120,16 @@ function renderDashboard(data) {
                     </table>
                 </div>
 
-                <h4 style="margin-bottom: 16px; color: var(--text-primary);"><i class="fa-solid fa-chart-simple"></i> Daily Progress – <span id="currentMonthLabel">Current Month</span></h4>
+                <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
+                    <h4 style="color: var(--text-primary); margin: 0;"><i class="fa-solid fa-chart-simple"></i> Daily Progress – <span id="currentMonthLabel">Current Month</span></h4>
+                    <button id="returnToCurrentMonthBtn" class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="returnToCurrentMonth()"><i class="fa-solid fa-arrow-left"></i> Return to Current Month</button>
+                </div>
                 <div style="background: var(--bg-secondary); border-radius: var(--radius-sm); padding: 20px;">
                     <div id="dailyProgressContainer" style="display: flex; flex-direction: column; gap: 16px;">
-                        <div style="text-align: center; color: var(--text-muted);">Click a month to view daily revenue</div>
+                        <div style="text-align: center; color: var(--text-muted);">Click a month to view daily revenue & signups</div>
                     </div>
                     <div style="margin-top: 20px; font-size: 13px; color: var(--text-secondary); text-align: center;">
-                        <i class="fa-solid fa-info-circle"></i> Daily earnings breakdown
+                        <i class="fa-solid fa-info-circle"></i> Each day shows revenue (white) and signups (green)
                     </div>
                 </div>
             </div>
@@ -2527,19 +2153,10 @@ function renderDashboard(data) {
             </div>
         </div>
         <div class="nav-actions">
-            <div class="chip">
-                <i class="fa-solid fa-satellite-dish"></i>
-                <span>Network Live</span>
-            </div>
-            ${hasPermission(session, 'export') ? `
-                <a href="/admin?sessionId=${sessionId}&exportData=csv" class="btn">
-                    <i class="fa-solid fa-file-export"></i> <span>Export Users</span>
-                </a>
-            ` : ''}
+            <div class="chip"><i class="fa-solid fa-satellite-dish"></i><span>Network Live</span></div>
+            ${hasPermission(session, 'export') ? `<a href="/admin?sessionId=${sessionId}&exportData=csv" class="btn"><i class="fa-solid fa-file-export"></i> <span>Export Users</span></a>` : ''}
             <button class="btn" onclick="location.reload()"><i class="fa-solid fa-rotate"></i> Refresh</button>
-            <a href="/admin" class="btn btn-danger">
-                <i class="fa-solid fa-right-from-bracket"></i> <span>Logout</span>
-            </a>
+            <a href="/admin" class="btn btn-danger"><i class="fa-solid fa-right-from-bracket"></i> <span>Logout</span></a>
         </div>
     </nav>
 
@@ -2570,9 +2187,7 @@ function renderDashboard(data) {
         <div class="metrics">
             <div class="metric" onclick="showRevenueModal()" style="cursor:pointer; border-color: rgba(16, 185, 129, 0.3);">
                 <div class="metric-header">
-                    <div class="metric-icon" style="background:var(--success-bg); color:var(--success);">
-                        <i class="fa-solid fa-money-bill-trend-up"></i>
-                    </div>
+                    <div class="metric-icon" style="background:var(--success-bg); color:var(--success);"><i class="fa-solid fa-money-bill-trend-up"></i></div>
                     <span class="metric-tag" style="background:var(--success-bg); color:var(--success);">Lifetime</span>
                 </div>
                 <div class="metric-value currency">${naira(stats.total_revenue_lifetime)}</div>
@@ -2582,9 +2197,7 @@ function renderDashboard(data) {
 
             <div class="metric">
                 <div class="metric-header">
-                    <div class="metric-icon" style="background:rgba(59, 130, 246, 0.2); color:var(--accent);">
-                        <i class="fa-solid fa-calendar-day"></i>
-                    </div>
+                    <div class="metric-icon" style="background:rgba(59, 130, 246, 0.2); color:var(--accent);"><i class="fa-solid fa-calendar-day"></i></div>
                     <span class="metric-tag" style="background:rgba(59, 130, 246, 0.2); color:var(--accent);">TODAY</span>
                 </div>
                 <div class="metric-value currency" style="color:var(--accent);">${naira(stats.revenue_today)}</div>
@@ -2594,9 +2207,7 @@ function renderDashboard(data) {
 
             <div class="metric">
                 <div class="metric-header">
-                    <div class="metric-icon" style="background:var(--success-bg); color:var(--success);">
-                        <i class="fa-solid fa-users"></i>
-                    </div>
+                    <div class="metric-icon" style="background:var(--success-bg); color:var(--success);"><i class="fa-solid fa-users"></i></div>
                     <span class="metric-tag" style="background:var(--success-bg); color:var(--success);">ACTIVE</span>
                 </div>
                 <div class="metric-value" style="color:var(--success);">${activeCount}</div>
@@ -2609,9 +2220,7 @@ function renderDashboard(data) {
 
             <div class="metric" onclick="showAdminSessions()" style="cursor:pointer;">
                 <div class="metric-header">
-                    <div class="metric-icon" style="background:var(--purple-bg); color:var(--purple);">
-                        <i class="fa-solid fa-user-shield"></i>
-                    </div>
+                    <div class="metric-icon" style="background:var(--purple-bg); color:var(--purple);"><i class="fa-solid fa-user-shield"></i></div>
                     <span class="metric-tag" style="background:var(--purple-bg); color:var(--purple);">SESSIONS</span>
                 </div>
                 <div class="metric-value" style="color:var(--purple);">${activeSessions}</div>
@@ -2654,13 +2263,7 @@ function renderDashboard(data) {
                 <table>
                     <thead>
                         <tr>
-                            <th>User / Password</th>
-                            <th>Email</th>
-                            <th>Plan</th>
-                            <th>Status</th>
-                            <th>Created</th>
-                            <th>Expires</th>
-                            <th>MAC Address</th>
+                            <th>User / Password</th><th>Email</th><th>Plan</th><th>Status</th><th>Created</th><th>Expires</th><th>MAC Address</th>
                         </tr>
                     </thead>
                     <tbody id="usersTbody">
@@ -2671,7 +2274,7 @@ function renderDashboard(data) {
         </div>
 
         <div class="page-footer">
-            <p>Dream Hatcher Tech Dashboard v4.3 — Professional WiFi Management System</p>
+            <p>Dream Hatcher Tech Dashboard v4.4 — Professional WiFi Management System</p>
             <div class="footer-stats">
                 <span><i class="fa-solid fa-database"></i> ${stats.total_users} Total Users</span>
                 <span><i class="fa-solid fa-money-bill-wave"></i> ${naira(stats.total_revenue_lifetime)} Lifetime Revenue</span>
@@ -2684,130 +2287,82 @@ function renderDashboard(data) {
     <script>
         let currentFilter = 'all';
         let extendTargetId = null;
-
-        function copyCreds(u, p) {
-            // This function is kept for potential future use but no button calls it
-        }
+        let currentMonthRaw = null;
 
         function openExtend(id, name) {
             extendTargetId = id;
             document.getElementById('extendUser').textContent = name;
             document.getElementById('extendModal').classList.add('open');
         }
-
-        function closeExtend() {
-            document.getElementById('extendModal').classList.remove('open');
-            extendTargetId = null;
-        }
-
+        function closeExtend() { document.getElementById('extendModal').classList.remove('open'); extendTargetId = null; }
         function selectPlan(element) {
-            document.querySelectorAll('.plan-option').forEach(opt => {
-                opt.style.borderColor = 'var(--border)';
-                opt.style.background = 'var(--bg-secondary)';
-            });
+            document.querySelectorAll('.plan-option').forEach(opt => { opt.style.borderColor = 'var(--border)'; opt.style.background = 'var(--bg-secondary)'; });
             element.style.borderColor = 'var(--accent)';
             element.style.background = 'rgba(59, 130, 246, 0.1)';
             element.querySelector('input').checked = true;
         }
-
         document.getElementById('extendConfirmBtn').addEventListener('click', function() {
             if (!extendTargetId) return;
             const sel = document.querySelector('input[name="extPlan"]:checked');
             if (!sel) return;
             window.location.href = '/admin?sessionId=${sessionId}&action=extend&userId=' + extendTargetId + '&newPlan=' + sel.value;
         });
+        function confirmReset(id) { if (confirm('Reset this user?')) window.location.href = '/admin?sessionId=${sessionId}&action=reset&userId=' + id; }
+        function confirmDelete(id) { if (confirm('PERMANENTLY DELETE this user?')) window.location.href = '/admin?sessionId=${sessionId}&action=delete&userId=' + id; }
+        function confirmCleanup() { if (confirm('Clean up expired/pending records?')) window.location.href = '/admin?sessionId=${sessionId}&action=cleanup'; }
+        function confirmSync() { window.location.href = '/admin?sessionId=${sessionId}&action=sync_expired'; }
+        function showAdminSessions() { document.getElementById('adminSessionsModal').classList.add('open'); }
+        function closeModal(modalId) { document.getElementById(modalId).classList.remove('open'); }
+        function forceLogoutAll() { if (confirm('Force logout all other admin sessions?')) window.location.href = '/admin?sessionId=${sessionId}&forceLogout=all'; }
 
-        function confirmReset(id) {
-            if (confirm('Reset this user? Account will be deleted from MikroTik and pending for re-creation.')) {
-                window.location.href = '/admin?sessionId=${sessionId}&action=reset&userId=' + id;
-            }
-        }
-
-        function confirmDelete(id) {
-            if (confirm('PERMANENTLY DELETE this user from the database? This cannot be undone.')) {
-                window.location.href = '/admin?sessionId=${sessionId}&action=delete&userId=' + id;
-            }
-        }
-
-        function confirmCleanup() {
-            if (confirm('Clean up expired and old pending records? This helps keep the database fast.')) {
-                window.location.href = '/admin?sessionId=${sessionId}&action=cleanup';
-            }
-        }
-
-        function confirmSync() {
-            window.location.href = '/admin?sessionId=${sessionId}&action=sync_expired';
-        }
-
-        function showAdminSessions() {
-            document.getElementById('adminSessionsModal').classList.add('open');
-        }
-
-        function closeModal(modalId) {
-            document.getElementById(modalId).classList.remove('open');
-        }
-
-        function forceLogoutAll() {
-            if (confirm('Force logout all other admin sessions? Only you will remain logged in.')) {
-                window.location.href = '/admin?sessionId=${sessionId}&forceLogout=all';
-            }
-        }
+        function formatNaira(amount) { const num = Number(amount) || 0; return '₦' + num.toLocaleString('en-NG'); }
 
         async function loadMonthData(monthRaw) {
             const container = document.getElementById('dailyProgressContainer');
             const monthLabelSpan = document.getElementById('currentMonthLabel');
-            
+            currentMonthRaw = monthRaw;
             container.innerHTML = '<div style="text-align: center; padding: 20px;"><i class="fa-solid fa-spinner fa-spin"></i> Loading...</div>';
-            
             try {
                 const response = await fetch('/admin/api/daily?sessionId=${sessionId}&month=' + monthRaw);
                 const result = await response.json();
-                
-                if (!result.success) {
-                    throw new Error(result.error || 'Failed to load data');
-                }
-                
+                if (!result.success) throw new Error(result.error || 'Failed to load data');
                 const dailyData = result.data;
                 const monthDisplay = new Date(monthRaw + '-01').toLocaleString('default', { month: 'long', year: 'numeric' });
                 monthLabelSpan.textContent = monthDisplay;
-                
-                if (dailyData.length === 0) {
-                    container.innerHTML = '<p style="color: var(--text-muted); text-align: center;">No revenue recorded for this month.</p>';
-                    return;
-                }
-                
+                if (dailyData.length === 0) { container.innerHTML = '<p style="color: var(--text-muted); text-align: center;">No revenue recorded for this month.</p>'; return; }
                 const maxRevenue = Math.max(...dailyData.map(d => Number(d.daily_total)), 1);
                 let barsHtml = '';
                 for (let i = 0; i < dailyData.length; i++) {
                     const day = dailyData[i];
                     const percent = (Number(day.daily_total) / maxRevenue) * 100;
-                    const amountFormatted = formatNaira(day.daily_total);
-                    barsHtml += '<div class="progress-row">' +
-                        '<div class="progress-info">' +
-                            '<span>Day ' + day.day + '</span>' +
-                            '<span style="font-weight:700; color:var(--text-primary);">' + amountFormatted + '</span>' +
-                        '</div>' +
-                        '<div class="progress-track">' +
-                            '<div class="progress-fill" style="width: 0%;" data-w="' + percent + '"></div>' +
-                        '</div>' +
-                    '</div>';
+                    const revenueFormatted = formatNaira(day.daily_total);
+                    const signups = day.signups_count || 0;
+                    barsHtml += `
+                        <div class="progress-row">
+                            <div class="progress-info">
+                                <span>Day ${day.day}</span>
+                                <div style="display: flex; gap: 16px;">
+                                    <span style="font-weight:700; color: var(--text-primary);">${revenueFormatted}</span>
+                                    <span style="font-weight:700; color: var(--success);"><i class="fa-solid fa-user-plus"></i> +${signups} signups</span>
+                                </div>
+                            </div>
+                            <div class="progress-track">
+                                <div class="progress-fill" style="width: 0%;" data-w="${percent}"></div>
+                            </div>
+                        </div>
+                    `;
                 }
                 container.innerHTML = barsHtml;
-                
-                setTimeout(() => {
-                    document.querySelectorAll('.progress-fill').forEach(bar => {
-                        bar.style.width = bar.dataset.w + '%';
-                    });
-                }, 50);
-                
+                setTimeout(() => { document.querySelectorAll('.progress-fill').forEach(bar => { bar.style.width = bar.dataset.w + '%'; }); }, 50);
             } catch (err) {
                 container.innerHTML = '<p style="color: var(--danger); text-align: center;">Error loading data: ' + err.message + '</p>';
             }
         }
-        
-        function formatNaira(amount) {
-            const num = Number(amount) || 0;
-            return '₦' + num.toLocaleString('en-NG');
+
+        function returnToCurrentMonth() {
+            const now = new Date();
+            const currentMonth = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+            loadMonthData(currentMonth);
         }
 
         function showRevenueModal() {
@@ -2819,15 +2374,11 @@ function renderDashboard(data) {
             }
             document.getElementById('revenueModal').classList.add('open');
         }
-
-        function closeRevenueModal() {
-            document.getElementById('revenueModal').classList.remove('open');
-        }
+        function closeRevenueModal() { document.getElementById('revenueModal').classList.remove('open'); }
 
         document.getElementById('searchInput').addEventListener('input', filterTable);
-
-        document.querySelectorAll('.modal-overlay').forEach(overlay => {
-            overlay.addEventListener('click', function(e) {
+        document.querySelectorAll('.modal-overlay').forEach(modal => {
+            modal.addEventListener('click', function(e) {
                 if (e.target === this) {
                     if (this.id === 'extendModal') closeExtend();
                     else if (this.id === 'adminSessionsModal') closeModal('adminSessionsModal');
@@ -2841,7 +2392,6 @@ function renderDashboard(data) {
             document.querySelectorAll('.filter-tab').forEach(tab => tab.classList.toggle('active', tab.dataset.filter === filter));
             filterTable();
         }
-
         function filterTable() {
             const search = document.getElementById('searchInput').value.toLowerCase();
             const rows = document.querySelectorAll('#usersTbody tr');
@@ -2852,7 +2402,6 @@ function renderDashboard(data) {
                 row.style.display = (matchSearch && matchFilter) ? '' : 'none';
             });
         }
-
         document.getElementById('searchInput')?.addEventListener('focus', function() { this.select(); });
     </script>
 </body>
