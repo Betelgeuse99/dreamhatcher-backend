@@ -1667,18 +1667,28 @@ function getErrorPage(error) { /* unchanged – keep as before */ }
 
 // ========== RENDER DASHBOARD WITH NEW COLUMN LAYOUT ==========
 function renderDashboard(data) {
+    // Defensive: if data is missing required properties, show error
+    if (!data || !data.session || !data.stats || !data.users) {
+        return `<!DOCTYPE html><html><body style="background:#0f172a;color:white;padding:20px;"><h2>Dashboard Error</h2><p>Missing data: ${JSON.stringify(Object.keys(data || {}))}</p></body></html>`;
+    }
+    
     const { session, sessionId, stats, users, activeCount, expiredCount, pendingCount, suspendedCount, activeAdmins, activeSessions, currentAdminIdleSeconds, actionMessage, messageType, monthlyRevenue } = data;
     const now = new Date();
-
-    // Build user rows: first column = username + email (stacked), second column = password
+    
+    // Ensure arrays and objects exist
+    const safeUsers = users || [];
+    const safeActiveAdmins = activeAdmins || [];
+    const safeMonthlyRevenue = monthlyRevenue || [];
+    
+    // Build user rows
     let userRows = '';
-    if (users.length === 0) {
+    if (safeUsers.length === 0) {
         userRows = '<tr><td colspan="7" style="text-align:center;padding:48px;color:var(--text-muted);">No users found</td></tr>';
     } else {
-        users.forEach(user => {
+        safeUsers.forEach(user => {
             const created = new Date(user.created_at);
             const expires = user.expires_at ? new Date(user.expires_at) : null;
-            const isExpired = user.realtime_status === 'expired';
+            const isExpired = (user.realtime_status === 'expired');
             const statusBadge = 'badge-' + user.realtime_status;
             const statusIcon = user.realtime_status === 'active' ? 'fa-circle-check' : user.realtime_status === 'expired' ? 'fa-circle-xmark' : user.realtime_status === 'pending' ? 'fa-hourglass-half' : user.realtime_status === 'suspended' ? 'fa-pause-circle' : 'fa-circle-question';
             
@@ -1705,10 +1715,10 @@ function renderDashboard(data) {
             `;
         });
     }
-
+    
     // Build admin sessions rows
     let adminSessionsRows = '';
-    activeAdmins.forEach(admin => {
+    safeActiveAdmins.forEach(admin => {
         const loginTime = new Date(admin.login_time);
         const idleMins = Math.floor(admin.idle_seconds / 60);
         const idleSeconds = Math.floor(admin.idle_seconds % 60);
@@ -1726,7 +1736,8 @@ function renderDashboard(data) {
             </tr>
         `;
     });
-
+    
+    // Full HTML template – one single template literal, no nesting
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1760,10 +1771,8 @@ function renderDashboard(data) {
             --radius-sm: 10px;
             --shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
         }
-
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Plus Jakarta Sans', sans-serif; }
         body { background: var(--bg-primary); color: var(--text-primary); min-height: 100vh; overflow-x: hidden; }
-
         .topbar {
             height: 72px;
             background: rgba(15, 23, 42, 0.8);
@@ -1786,7 +1795,6 @@ function renderDashboard(data) {
             color: ${session.role === 'super_admin' ? 'var(--purple)' : 'var(--success)'}; 
             padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; text-transform: uppercase; 
         }
-
         .nav-actions { display: flex; align-items: center; gap: 12px; }
         .chip { display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 20px; font-size: 13px; font-weight: 600; background: var(--success-bg); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.3); }
         .btn { display: inline-flex; align-items: center; gap: 8px; padding: 9px 18px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary); font-size: 14px; font-weight: 600; cursor: pointer; text-decoration: none; transition: all 0.2s; white-space: nowrap; }
@@ -1795,7 +1803,6 @@ function renderDashboard(data) {
         .btn-danger { color: var(--danger); }
         .btn-danger:hover { background: var(--danger-bg); border-color: var(--danger); }
         .main-container { max-width: 1400px; margin: 0 auto; padding: 32px; }
-
         .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-bottom: 40px; }
         .metric { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; box-shadow: var(--shadow); transition: transform 0.2s; cursor: pointer; }
         .metric:hover { transform: translateY(-4px); border-color: var(--border-light); }
@@ -1806,50 +1813,25 @@ function renderDashboard(data) {
         .metric-value.currency { color: var(--success); }
         .metric-label { font-size: 14px; color: var(--text-secondary); margin-bottom: 16px; }
         .metric-footer { padding-top: 16px; border-top: 1px solid var(--border); font-size: 13px; color: var(--text-muted); display: flex; align-items: center; gap: 8px; }
-
         .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 32px; overflow: hidden; box-shadow: var(--shadow); }
         .card-header { padding: 24px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; background: var(--bg-secondary); }
         .card-title { font-size: 18px; font-weight: 700; color: var(--text-primary); }
         .card-subtitle { font-size: 14px; color: var(--text-secondary); margin-top: 4px; }
         .card-tools { display: flex; gap: 12px; align-items: center; }
-
         .table-wrap { overflow-x: auto; }
         table { width: 100%; border-collapse: collapse; text-align: left; }
         th { padding: 16px 24px; background: rgba(15, 23, 42, 0.4); color: var(--text-muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--border); }
         td { padding: 16px 24px; border-bottom: 1px solid var(--border); font-size: 14px; vertical-align: middle; }
         tr:hover td { background: rgba(51, 65, 85, 0.3); }
-
-        .user-email-cell {
-            min-width: 260px;
-            max-width: 320px;
-            word-break: break-word;
-            white-space: normal;
-        }
-        .username {
-            font-weight: 700;
-            color: var(--text-primary);
-            margin-bottom: 6px;
-        }
-        .user-email {
-            font-size: 12px;
-            color: var(--text-primary);  /* WHITE email */
-            word-break: break-word;
-        }
-        .password-cell {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 13px;
-            color: var(--text-primary);
-            white-space: nowrap;
-            overflow-x: auto;
-            max-width: 150px;
-        }
-
+        .user-email-cell { min-width: 260px; max-width: 320px; word-break: break-word; white-space: normal; }
+        .username { font-weight: 700; color: var(--text-primary); margin-bottom: 6px; }
+        .user-email { font-size: 12px; color: var(--text-primary); word-break: break-word; }
+        .password-cell { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--text-primary); white-space: nowrap; overflow-x: auto; max-width: 150px; }
         .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; }
         .badge-active { background: var(--success-bg); color: var(--success); }
         .badge-expired { background: var(--danger-bg); color: var(--danger); }
         .badge-pending { background: var(--warning-bg); color: var(--warning); }
         .badge-suspended { background: #334155; color: #94a3b8; }
-
         .plan-tag { padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; display: inline-block; }
         .tag-24hr { background: rgba(59, 130, 246, 0.1); color: var(--accent); }
         .tag-3d { background: rgba(6, 182, 212, 0.1); color: #06b6d4; }
@@ -1857,17 +1839,14 @@ function renderDashboard(data) {
         .tag-7d { background: rgba(16, 185, 129, 0.1); color: var(--success); }
         .tag-14d { background: rgba(245, 158, 11, 0.1); color: var(--warning); }
         .tag-30d { background: rgba(236, 72, 153, 0.1); color: #ec4899; }
-
         .search-wrap { position: relative; min-width: 240px; }
         .search-wrap i { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 14px; }
         .search-input { width: 100%; padding: 11px 16px 11px 40px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-primary); font-size: 14px; transition: all 0.2s; }
         .search-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2); }
-
         .filter-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
         .filter-tab { padding: 8px 16px; border-radius: 20px; font-size: 13px; font-weight: 600; border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-secondary); cursor: pointer; transition: all 0.2s; }
         .filter-tab:hover { background: var(--bg-hover); }
         .filter-tab.active { background: var(--accent); border-color: var(--accent); color: white; }
-
         .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(4px); z-index: 1000; align-items: center; justify-content: center; padding: 20px; }
         .modal-overlay.open { display: flex; }
         .modal-box { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); width: 100%; max-width: 800px; max-height: 90vh; overflow-y: auto; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
@@ -1876,24 +1855,19 @@ function renderDashboard(data) {
         .modal-close { background: none; border: none; color: var(--text-muted); font-size: 24px; cursor: pointer; }
         .modal-body { padding: 24px; }
         .modal-footer { padding: 20px 24px; border-top: 1px solid var(--border); background: rgba(15, 23, 42, 0.4); display: flex; justify-content: flex-end; gap: 12px; }
-
         .progress-row { margin-bottom: 12px; }
         .progress-info { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; color: var(--text-secondary); }
         .progress-track { height: 10px; background: var(--bg-primary); border-radius: 5px; overflow: hidden; position: relative; }
         .progress-fill { height: 100%; background: var(--accent); border-radius: 5px; transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1); }
-
         .revenue-link { background: none; border: none; color: var(--accent); font-weight: 600; cursor: pointer; transition: color 0.2s; display: block; text-align: left; width: 100%; font-size: inherit; }
         .revenue-link:hover { color: var(--text-primary); text-decoration: underline; }
-
         .page-footer { text-align: center; padding: 32px; border-top: 1px solid var(--border); margin-top: 32px; color: var(--text-muted); font-size: 14px; background: var(--bg-card); border-radius: var(--radius); box-shadow: var(--shadow); }
         .footer-stats { display: flex; justify-content: center; gap: 32px; margin-top: 16px; flex-wrap: wrap; font-size: 13px; }
-
         .mono { font-family: 'JetBrains Mono', monospace; }
         .text-success { color: var(--success); }
         .text-danger { color: var(--danger); }
         .text-secondary { color: var(--text-secondary); }
         .font-600 { font-weight: 600; }
-
         @media (max-width: 768px) {
             .topbar { padding: 0 16px; }
             .main-container { padding: 20px; }
@@ -1907,7 +1881,6 @@ function renderDashboard(data) {
     </style>
 </head>
 <body>
-
     <!-- Extend Modal -->
     <div class="modal-overlay" id="extendModal">
         <div class="modal-box" style="max-width: 500px;">
@@ -1967,18 +1940,14 @@ function renderDashboard(data) {
             <div class="modal-body">
                 <div class="table-wrap">
                     <table style="width:100%">
-                        <thead>
-                            <tr><th>Admin User</th><th>IP Address</th><th>Login Time</th><th>Idle Time</th></tr>
-                        </thead>
-                        <tbody>
-                            ${activeAdmins.length > 0 ? adminSessionsRows : '<tr><td colspan="4" style="text-align:center; padding:32px;">No active admin sessions</td></td>'}
-                        </tbody>
+                        <thead><tr><th>Admin User</th><th>IP Address</th><th>Login Time</th><th>Idle Time</th></tr></thead>
+                        <tbody>${safeActiveAdmins.length > 0 ? adminSessionsRows : '<tr><td colspan="4" style="text-align:center; padding:32px;">No active admin sessions</td></tr>'}</tbody>
                     </table>
                 </div>
             </div>
             <div class="modal-footer">
                 <button class="btn" onclick="closeModal('adminSessionsModal')">Close</button>
-                ${activeSessions > 1 && hasPermission(session, 'force_logout') ? `<button class="btn btn-danger" onclick="forceLogoutAll()"><i class="fa-solid fa-power-off"></i> Force Logout All Others</button>` : ''}
+                ${activeSessions > 1 && hasPermission(session, 'force_logout') ? '<button class="btn btn-danger" onclick="forceLogoutAll()"><i class="fa-solid fa-power-off"></i> Force Logout All Others</button>' : ''}
             </div>
         </div>
     </div>
@@ -1996,7 +1965,7 @@ function renderDashboard(data) {
                     <table style="width: 100%; border-collapse: collapse; min-width: 300px;">
                         <thead><tr><th style="text-align:left; padding: 12px;">Month</th><th style="text-align:right; padding: 12px;">Revenue</th></tr></thead>
                         <tbody>
-                            ${monthlyRevenue.map(m => `
+                            ${safeMonthlyRevenue.map(m => `
                                 <tr>
                                     <td style="padding: 10px; border-bottom: 1px solid var(--border);">
                                         <button class="revenue-link" onclick="loadMonthData('${m.month_raw}')">${m.month_label}</button>
@@ -2009,7 +1978,6 @@ function renderDashboard(data) {
                         </tbody>
                     </table>
                 </div>
-
                 <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
                     <h4 style="color: var(--text-primary); margin: 0;"><i class="fa-solid fa-chart-simple"></i> Daily Progress – <span id="currentMonthLabel">Current Month</span></h4>
                     <button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="returnToCurrentMonth()"><i class="fa-solid fa-arrow-left"></i> Return to Current Month</button>
@@ -2031,9 +1999,7 @@ function renderDashboard(data) {
 
     <nav class="topbar">
         <div class="brand">
-            <div class="brand-logo">
-                <img src="https://i.imgur.com/f0xX5TT.png" style="width: 48px; height: 48px; border-radius: 12px;">
-            </div>
+            <div class="brand-logo"><img src="https://i.imgur.com/f0xX5TT.png" style="width: 48px; height: 48px; border-radius: 12px;"></div>
             <div>
                 <div class="brand-name">Dream Hatcher Tech</div>
                 <div class="brand-user">
@@ -2084,7 +2050,6 @@ function renderDashboard(data) {
                 <div class="metric-label">Total Revenue Generated</div>
                 <div class="metric-footer"><i class="fa-solid fa-chart-line"></i> Click for detailed analytics</div>
             </div>
-
             <div class="metric">
                 <div class="metric-header">
                     <div class="metric-icon" style="background:rgba(59, 130, 246, 0.2); color:var(--accent);"><i class="fa-solid fa-calendar-day"></i></div>
@@ -2094,7 +2059,6 @@ function renderDashboard(data) {
                 <div class="metric-label">Today's Revenue</div>
                 <div class="metric-footer"><i class="fa-solid fa-user-plus"></i> ${stats.signups_today} signups today</div>
             </div>
-
             <div class="metric">
                 <div class="metric-header">
                     <div class="metric-icon" style="background:var(--success-bg); color:var(--success);"><i class="fa-solid fa-users"></i></div>
@@ -2107,7 +2071,6 @@ function renderDashboard(data) {
                     <span style="color:var(--warning); margin-left:12px;"><i class="fa-solid fa-clock"></i> ${pendingCount} pending</span>
                 </div>
             </div>
-
             <div class="metric" onclick="showAdminSessions()" style="cursor:pointer;">
                 <div class="metric-header">
                     <div class="metric-icon" style="background:var(--purple-bg); color:var(--purple);"><i class="fa-solid fa-user-shield"></i></div>
@@ -2129,42 +2092,21 @@ function renderDashboard(data) {
                     <div class="card-subtitle">Latest 100 users – Username + Email, separate Password column</div>
                 </div>
                 <div class="card-tools">
-                    <div class="search-wrap">
-                        <i class="fa-solid fa-magnifying-glass"></i>
-                        <input type="text" class="search-input" id="searchInput" placeholder="Search username, MAC, email..." autocomplete="off">
-                    </div>
+                    <div class="search-wrap"><i class="fa-solid fa-magnifying-glass"></i><input type="text" class="search-input" id="searchInput" placeholder="Search username, MAC, email..." autocomplete="off"></div>
                     <div class="filter-tabs">
                         <button class="filter-tab active" onclick="setFilter('all')" data-filter="all">All</button>
                         <button class="filter-tab" onclick="setFilter('active')" data-filter="active">Active</button>
                         <button class="filter-tab" onclick="setFilter('pending')" data-filter="pending">Pending</button>
                         <button class="filter-tab" onclick="setFilter('expired')" data-filter="expired">Expired</button>
                     </div>
-                    ${hasPermission(session, 'delete') ? `
-                        <button class="btn btn-danger" onclick="confirmCleanup()" title="Remove inactive/old data">
-                            <i class="fa-solid fa-broom"></i> <span>Cleanup</span>
-                        </button>
-                    ` : ''}
-                    <button class="btn" onclick="confirmSync()" title="Sync expired users with MikroTik">
-                        <i class="fa-solid fa-sync"></i> <span>Sync</span>
-                    </button>
+                    ${hasPermission(session, 'delete') ? `<button class="btn btn-danger" onclick="confirmCleanup()" title="Remove inactive/old data"><i class="fa-solid fa-broom"></i> <span>Cleanup</span></button>` : ''}
+                    <button class="btn" onclick="confirmSync()" title="Sync expired users with MikroTik"><i class="fa-solid fa-sync"></i> <span>Sync</span></button>
                 </div>
             </div>
             <div class="table-wrap">
                 <table>
-                    <thead>
-                        <tr>
-                            <th>User / Email</th>
-                            <th>Password</th>
-                            <th>Plan</th>
-                            <th>Status</th>
-                            <th>Created</th>
-                            <th>Expires</th>
-                            <th>MAC Address</th>
-                        </tr>
-                    </thead>
-                    <tbody id="usersTbody">
-                        ${userRows}
-                    </tbody>
+                    <thead><tr><th>User / Email</th><th>Password</th><th>Plan</th><th>Status</th><th>Created</th><th>Expires</th><th>MAC Address</th></tr></thead>
+                    <tbody id="usersTbody">${userRows}</tbody>
                 </table>
             </div>
         </div>
@@ -2191,7 +2133,7 @@ function renderDashboard(data) {
             const container = document.getElementById('dailyProgressContainer');
             const monthLabelSpan = document.getElementById('currentMonthLabel');
             currentMonthRaw = monthRaw;
-            container.innerHTML = '<div style="text-align: center; padding: 20px;"><i class=\"fa-solid fa-spinner fa-spin\"></i> Loading...</div>';
+            container.innerHTML = '<div style="text-align: center; padding: 20px;"><i class="fa-solid fa-spinner fa-spin"></i> Loading...</div>';
             fetch('/admin/api/daily?sessionId=${sessionId}&month=' + monthRaw)
                 .then(response => response.json())
                 .then(result => {
@@ -2302,6 +2244,7 @@ function renderDashboard(data) {
     </script>
 </body>
 </html>`;
+}
 }
 // ========== FAVICON FALLBACK ==========
 app.get('/favicon.ico', (req, res) => {
