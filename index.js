@@ -224,7 +224,7 @@ app.post('/api/monnify-webhook', async (req, res) => {
 
     const username = `user_${Date.now().toString().slice(-6)}`;
     const password = generatePassword();
-    const oneTimeToken = crypto.randomBytes(32).toString('hex'); // <-- new
+    const oneTimeToken = crypto.randomBytes(32).toString('hex');
 
     let expiresAt;
     const now = new Date();
@@ -1260,6 +1260,9 @@ app.get('/', (req, res) => {
   res.send(html);
 });
 
+// ========== ADMIN DASHBOARD (FULLY INTEGRATED) ==========
+// Everything below this line is the admin dashboard with the fixed monthly-details endpoint.
+
 // DREAM HATCHER ENTERPRISE ADMIN DASHBOARD v4.1
 // Professional WiFi Management System with Role-Based Access Control
 // FIXED DATABASE SCHEMA & EXPIRY ISSUES
@@ -1416,7 +1419,7 @@ async function syncExpiredWithMikroTik() {
 }
 setInterval(syncExpiredWithMikroTik, 300000);
 
-// ========== CHECK MAC ==========
+// ========== CHECK MAC (single version) ==========
 app.get('/api/check-mac', async (req, res) => {
     const mac = (req.query.mac || '').trim().toUpperCase();
     res.set({ 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' });
@@ -1430,7 +1433,7 @@ app.get('/api/check-mac', async (req, res) => {
     } catch (error) { console.error('Check-MAC error:', error.message); return res.json({ found: false }); }
 });
 
-// ========== MONTHLY DETAILS API (FIXED) ==========
+// ========== MONTHLY DETAILS API (FIXED USING LOCAL TIMEZONE) ==========
 app.get('/admin/monthly-details', async (req, res) => {
     const { month } = req.query;
     if (!month) return res.status(400).json({ error: 'Month parameter required (YYYY-MM-DD)' });
@@ -1443,10 +1446,10 @@ app.get('/admin/monthly-details', async (req, res) => {
         const isCurrentMonth = (year === now.getFullYear() && monthIndex === now.getMonth());
         const maxDay = isCurrentMonth ? now.getDate() : lastDay;
         
-        // Use EXTRACT to avoid timezone issues
+        // Convert created_at to local Africa/Lagos time before extracting year/month/day
         const result = await pool.query(`
             SELECT 
-                EXTRACT(DAY FROM created_at) as day,
+                EXTRACT(DAY FROM (created_at AT TIME ZONE 'Africa/Lagos')) as day,
                 COUNT(*) as signups,
                 SUM(CASE plan
                     WHEN '24hr' THEN 350
@@ -1458,8 +1461,9 @@ app.get('/admin/monthly-details', async (req, res) => {
                     ELSE 0
                 END) as revenue
             FROM payment_queue
-            WHERE EXTRACT(YEAR FROM created_at) = $1 AND EXTRACT(MONTH FROM created_at) = $2
-            GROUP BY EXTRACT(DAY FROM created_at)
+            WHERE EXTRACT(YEAR FROM (created_at AT TIME ZONE 'Africa/Lagos')) = $1
+              AND EXTRACT(MONTH FROM (created_at AT TIME ZONE 'Africa/Lagos')) = $2
+            GROUP BY EXTRACT(DAY FROM (created_at AT TIME ZONE 'Africa/Lagos'))
             ORDER BY day ASC
         `, [year, monthIndex + 1]);
         
@@ -1479,6 +1483,7 @@ app.get('/admin/monthly-details', async (req, res) => {
         res.status(500).json({ error: 'Internal server error' });
     }
 });
+
 // ========== ADMIN DASHBOARD ROUTE ==========
 app.get('/admin', async (req, res) => {
     const { user, pwd, action, userId, newPlan, sessionId, exportData, forceLogout } = req.query;
@@ -1533,7 +1538,7 @@ async function handleAdminDashboard(req, res, sessionId) {
         const { action, userId, newPlan, exportData } = req.query;
         let actionMessage = '', messageType = '';
         
-        // Actions (unchanged, but ensure permissions)
+        // Actions (unchanged)
         if (action === 'delete' && userId) {
             if (!hasPermission(session, 'delete')) { actionMessage = 'Permission denied: Cannot delete users'; messageType = 'error'; }
             else { await pool.query('DELETE FROM payment_queue WHERE id = $1', [userId]); actionMessage = 'User account permanently deleted'; messageType = 'success'; }
@@ -1601,7 +1606,7 @@ async function handleAdminDashboard(req, res, sessionId) {
         
         const monthlyRevenue = await pool.query(`WITH months AS (SELECT DATE_TRUNC('month', created_at) as month_start, SUM(CASE plan WHEN '24hr' THEN 350 WHEN '3d' THEN 1050 WHEN '5d' THEN 1750 WHEN '7d' THEN 2400 WHEN '14d' THEN 4100 WHEN '30d' THEN 7500 ELSE 0 END) as total FROM payment_queue WHERE created_at >= NOW() - INTERVAL '12 months' GROUP BY DATE_TRUNC('month', created_at) ORDER BY month_start ASC) SELECT to_char(month_start, 'Mon YYYY') as month_label, month_start, COALESCE(total, 0) as revenue FROM months LIMIT 12`);
         
-        // CURRENT MONTH: only days up to TODAY
+        // CURRENT MONTH: only days up to TODAY (using local time)
         const today = new Date();
         const currentYear = today.getFullYear();
         const currentMonthIndex = today.getMonth();
@@ -1857,37 +1862,16 @@ updateSessionTimer();document.getElementById('searchInput')?.addEventListener('f
 </script>
 </body></html>`;
 }
-// ========== CHECK MAC FOR EXISTING CREDENTIALS ==========
-app.get('/api/check-mac', async (req, res) => {
-  const mac = (req.query.mac || '').trim().toUpperCase();
-  res.set({ 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' });
-  if (!mac || mac === 'UNKNOWN' || mac.length < 10) return res.json({ found: false });
-  try {
-    const result = await pool.query(`
-      SELECT mikrotik_username, mikrotik_password, plan, status, expires_at, transaction_id
-      FROM payment_queue
-      WHERE UPPER(mac_address) = $1 AND status IN ('pending', 'processed') AND (expires_at IS NULL OR expires_at > NOW())
-      ORDER BY created_at DESC LIMIT 1`, [mac]);
-    if (result.rows.length === 0) return res.json({ found: false });
-    const row = result.rows[0];
-    if (row.status === 'pending') return res.json({ found: true, ready: false, message: 'Account is being created...' });
-    return res.json({ found: true, ready: true, username: row.mikrotik_username, password: row.mikrotik_password,
-      plan: row.plan, expires: row.expires_at ? row.expires_at.toISOString() : '', reference: row.transaction_id });
-  } catch (error) {
-    console.error('Check-MAC error:', error.message);
-    return res.json({ found: false });
-  }
+
+// ========== FAVICON FALLBACK ==========
+app.get('/favicon.ico', (req, res) => {
+    res.redirect(301, 'https://i.imgpeek.com/eSikilY_SDfQ');
 });
 
 // ========== ERROR HANDLER ==========
 app.use((err, req, res, next) => {
   console.error('💥 Uncaught error:', err.message);
   res.status(500).send('Server Error. Please contact support: 07037412314');
-});
-
-// ========== FAVICON FALLBACK (ADD THIS) ==========
-app.get('/favicon.ico', (req, res) => {
-    res.redirect(301, 'https://i.imgpeek.com/eSikilY_SDfQ');
 });
 
 // ========== START SERVER ==========
