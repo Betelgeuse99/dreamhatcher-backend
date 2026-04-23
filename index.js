@@ -1649,6 +1649,11 @@ app.get('/api/check-mac', async (req, res) => {
 });
 
 // ========== MONTHLY DETAILS API (for revenue modal) ==========
+// Helper to get days in month (local time)
+function getDaysInMonth(year, month) {
+    return new Date(year, month + 1, 0).getDate();
+}
+
 app.get('/admin/monthly-details', async (req, res) => {
     const { month } = req.query;
     if (!month) {
@@ -1656,16 +1661,16 @@ app.get('/admin/monthly-details', async (req, res) => {
     }
     
     try {
-        const startDate = new Date(month);
-        const endDate = new Date(startDate);
-        endDate.setMonth(endDate.getMonth() + 1);
+        // Parse month string as local date (YYYY-MM-DD)
+        const parts = month.split('-');
+        const year = parseInt(parts[0], 10);
+        const monthIndex = parseInt(parts[1], 10) - 1; // 0-based
+        const startDate = new Date(year, monthIndex, 1);
+        startDate.setHours(0, 0, 0, 0);
+        const endDate = new Date(year, monthIndex + 1, 1);
+        endDate.setHours(0, 0, 0, 0);
         
-        // Generate all days of the month for complete reporting (no skipped days)
-        const daysInMonth = new Date(startDate.getFullYear(), startDate.getMonth() + 1, 0).getDate();
-        const allDays = [];
-        for (let d = 1; d <= daysInMonth; d++) {
-            allDays.push({ day: d, revenue: 0, signups: 0 });
-        }
+        const daysInMonth = getDaysInMonth(year, monthIndex);
         
         const result = await pool.query(`
             SELECT 
@@ -1688,14 +1693,19 @@ app.get('/admin/monthly-details', async (req, res) => {
             ORDER BY day ASC
         `, [startDate, endDate]);
         
-        // Merge actual data into all days
+        // Build array for all days
+        const allDays = [];
+        for (let d = 1; d <= daysInMonth; d++) {
+            allDays.push({ day: d, revenue: 0, signups: 0 });
+        }
         for (const row of result.rows) {
             const dayIndex = row.day - 1;
             allDays[dayIndex].revenue = Number(row.revenue) || 0;
             allDays[dayIndex].signups = Number(row.signups) || 0;
         }
         
-        res.json({ success: true, data: allDays, monthLabel: startDate.toLocaleString('default', { month: 'long', year: 'numeric' }) });
+        const monthLabel = startDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+        res.json({ success: true, data: allDays, monthLabel: monthLabel });
     } catch (error) {
         console.error('Monthly details error:', error.message);
         res.status(500).json({ error: 'Internal server error' });
@@ -2113,8 +2123,17 @@ async function handleAdminDashboard(req, res, sessionId) {
             LIMIT 12
         `);
 
-        // FIXED: Include signups in daily revenue for current month
-        const dailyRevenue = await pool.query(`
+        // Get current month's daily data with all days (local time)
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        const currentMonthIndex = now.getMonth();
+        const daysInCurrentMonth = new Date(currentYear, currentMonthIndex + 1, 0).getDate();
+        const startOfMonth = new Date(currentYear, currentMonthIndex, 1);
+        startOfMonth.setHours(0,0,0,0);
+        const endOfMonth = new Date(currentYear, currentMonthIndex + 1, 1);
+        endOfMonth.setHours(0,0,0,0);
+
+        const dailyRevenueResult = await pool.query(`
             SELECT 
                 EXTRACT(DAY FROM created_at) as day,
                 COUNT(*) as signups,
@@ -2130,27 +2149,21 @@ async function handleAdminDashboard(req, res, sessionId) {
                     END
                 ) as revenue
             FROM payment_queue
-            WHERE created_at >= DATE_TRUNC('month', CURRENT_DATE)
-              AND created_at < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month'
+            WHERE created_at >= $1 AND created_at < $2
             GROUP BY EXTRACT(DAY FROM created_at)
             ORDER BY day ASC
-        `);
-        
-        // Generate all days of current month for complete display
-        const currentYear = new Date().getFullYear();
-        const currentMonth = new Date().getMonth();
-        const daysInCurrentMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+        `, [startOfMonth, endOfMonth]);
+
         const allDaysCurrent = [];
         for (let d = 1; d <= daysInCurrentMonth; d++) {
             allDaysCurrent.push({ day: d, revenue: 0, signups: 0 });
         }
-        for (const row of dailyRevenue.rows) {
-            const dayIndex = row.day - 1;
-            allDaysCurrent[dayIndex].revenue = Number(row.revenue) || 0;
-            allDaysCurrent[dayIndex].signups = Number(row.signups) || 0;
+        for (const row of dailyRevenueResult.rows) {
+            const idx = row.day - 1;
+            allDaysCurrent[idx].revenue = Number(row.revenue) || 0;
+            allDaysCurrent[idx].signups = Number(row.signups) || 0;
         }
-        
-        const currentMonthName = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
+        const currentMonthName = now.toLocaleString('default', { month: 'long', year: 'numeric' });
 
         // 4. GET ACTIVE ADMINS (UNIQUE BY USER) WITH ROLE FILTERING
         let activeAdmins = await getActiveAdmins();
@@ -2232,7 +2245,7 @@ async function handleAdminDashboard(req, res, sessionId) {
             actionMessage: actionMessage,
             messageType: messageType,
             monthlyRevenue: monthlyRevenue.rows,
-            dailyRevenue: allDaysCurrent,  // now includes all days with signups
+            dailyRevenue: allDaysCurrent,
             currentMonthName: currentMonthName
         }));
 
@@ -2550,7 +2563,7 @@ function renderDashboard(data) {
     const now = new Date();
     const sessionEnd = now.getTime() + (5 * 60 * 1000);
     
-    // Build user table rows (unchanged, same as before)
+    // Build user table rows
     let userRows = '';
     if (users.length === 0) {
         userRows = '<tr><td colspan="9" style="text-align:center;padding:48px;color:var(--text-muted);">No users found</td></tr>';
@@ -2584,12 +2597,12 @@ function renderDashboard(data) {
                             <i class="fa-solid ${user.plan === '24hr' ? 'fa-bolt' : user.plan === '3d' ? 'fa-clock' : user.plan === '5d' ? 'fa-calendar' : user.plan === '7d' ? 'fa-rocket' : user.plan === '14d' ? 'fa-star' : 'fa-crown'}"></i> 
                             ${planLabel(user.plan)}
                         </span>
-                    </td>
+                     </td>
                     <td>
                         <span class="badge ${statusBadge}">
                             <i class="fa-solid ${statusIcon}"></i> ${statusLabel}
                         </span>
-                    </td>
+                     </td>
                     <td class="time-cell">
                         ${created.toLocaleDateString('en-NG')}<br>
                         <small>${created.toLocaleTimeString('en-NG', {hour:'2-digit',minute:'2-digit'})}</small>
@@ -2617,7 +2630,7 @@ function renderDashboard(data) {
         });
     }
     
-    // Build admin sessions rows (unchanged)
+    // Build admin sessions rows
     let adminSessionsRows = '';
     activeAdmins.forEach(admin => {
         const loginTime = new Date(admin.login_time);
@@ -3012,6 +3025,10 @@ function renderDashboard(data) {
         .progress-bar {
             transition: width 0.4s ease-out;
         }
+        .active-month-row {
+            background: rgba(59, 130, 246, 0.2);
+            border-left: 3px solid var(--accent);
+        }
     </style>
 </head>
 <body>
@@ -3101,11 +3118,11 @@ function renderDashboard(data) {
                 <div style="overflow-x: auto; margin-bottom: 32px;">
                     <table style="width: 100%; border-collapse: collapse; min-width: 300px;">
                         <thead><tr><th style="text-align:left; padding: 12px;">Month</th><th style="text-align:right; padding: 12px;">Revenue</th></tr></thead>
-                        <tbody>
-                            ${monthlyRevenue.map(m => `<tr style="cursor: pointer;" data-month-start="${new Date(m.month_start).toISOString().split('T')[0]}" data-month-label="${m.month_label}" onclick="loadMonthDetails(this)">
+                        <tbody id="monthlyRevenueBody">
+                            ${monthlyRevenue.map(m => `<tr class="month-row" data-month-start="${new Date(m.month_start).toISOString().split('T')[0]}" data-month-label="${m.month_label}" onclick="loadMonthDetails(this)" style="cursor: pointer;">
                                 <td style="padding: 10px; border-bottom: 1px solid var(--border);">${m.month_label}</td>
                                 <td style="padding: 10px; text-align: right; border-bottom: 1px solid var(--border); font-weight: 600;">${naira(m.revenue)}</td>
-                             </tr>`).join('')}
+                              </tr>`).join('')}
                         </tbody>
                     </table>
                 </div>
@@ -3224,6 +3241,7 @@ function renderDashboard(data) {
         let sessionEndTime = ${sessionEnd};
         let extendTargetId = null;
         let currentFilter = 'all';
+        let activeMonthRow = null;
 
         function formatNaira(amount) {
             const num = Number(amount) || 0;
@@ -3274,6 +3292,14 @@ function renderDashboard(data) {
         function showAdminSessions() { document.getElementById('adminSessionsModal').classList.add('open'); }
         function closeModal(modalId) { document.getElementById(modalId).classList.remove('open'); }
 
+        function highlightMonthRow(row) {
+            if (activeMonthRow) {
+                activeMonthRow.classList.remove('active-month-row');
+            }
+            activeMonthRow = row;
+            activeMonthRow.classList.add('active-month-row');
+        }
+
         function populateDailyProgress(dailyData, monthLabel) {
             const container = document.getElementById('dailyProgressContainer');
             const labelSpan = document.getElementById('selectedMonthLabel');
@@ -3314,6 +3340,9 @@ function renderDashboard(data) {
             const monthLabel = rowElement.getAttribute('data-month-label');
             if (!monthStart) return;
             
+            // Highlight the clicked row
+            highlightMonthRow(rowElement);
+            
             const container = document.getElementById('dailyProgressContainer');
             container.innerHTML = '<p style="color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Loading...</p>';
             
@@ -3334,6 +3363,11 @@ function renderDashboard(data) {
         function resetToCurrentMonth() {
             const currentDailyData = ${dailyRevenueJson};
             populateDailyProgress(currentDailyData, "${currentMonthName}");
+            // Remove highlight from any month row
+            if (activeMonthRow) {
+                activeMonthRow.classList.remove('active-month-row');
+                activeMonthRow = null;
+            }
         }
 
         function showRevenueModal() {
@@ -3341,6 +3375,11 @@ function renderDashboard(data) {
             if (container && container.innerHTML === '') {
                 const dailyData = ${dailyRevenueJson};
                 populateDailyProgress(dailyData, "${currentMonthName}");
+                // No active month highlight initially
+                if (activeMonthRow) {
+                    activeMonthRow.classList.remove('active-month-row');
+                    activeMonthRow = null;
+                }
             }
             document.getElementById('revenueModal').classList.add('open');
         }
