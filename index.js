@@ -1649,8 +1649,8 @@ app.get('/api/check-mac', async (req, res) => {
 });
 
 // ========== MONTHLY DETAILS API (for revenue modal) ==========
-// Helper to get days in month (local time)
-function getDaysInMonth(year, month) {
+// Helper: get days in month (local time, no timezone mess)
+function getDaysInMonth(year, month) { // month is 0-based
     return new Date(year, month + 1, 0).getDate();
 }
 
@@ -1671,6 +1671,14 @@ app.get('/admin/monthly-details', async (req, res) => {
         endDate.setHours(0, 0, 0, 0);
         
         const daysInMonth = getDaysInMonth(year, monthIndex);
+        
+        // Check if this is the current month (year and month match today)
+        const today = new Date();
+        const isCurrentMonth = (year === today.getFullYear() && monthIndex === today.getMonth());
+        let maxDay = daysInMonth;
+        if (isCurrentMonth) {
+            maxDay = today.getDate(); // only show days up to today
+        }
         
         const result = await pool.query(`
             SELECT 
@@ -1693,15 +1701,18 @@ app.get('/admin/monthly-details', async (req, res) => {
             ORDER BY day ASC
         `, [startDate, endDate]);
         
-        // Build array for all days
+        // Build array for days 1..maxDay
         const allDays = [];
-        for (let d = 1; d <= daysInMonth; d++) {
+        for (let d = 1; d <= maxDay; d++) {
             allDays.push({ day: d, revenue: 0, signups: 0 });
         }
         for (const row of result.rows) {
-            const dayIndex = row.day - 1;
-            allDays[dayIndex].revenue = Number(row.revenue) || 0;
-            allDays[dayIndex].signups = Number(row.signups) || 0;
+            const dayNum = row.day;
+            if (dayNum <= maxDay) {
+                const idx = dayNum - 1;
+                allDays[idx].revenue = Number(row.revenue) || 0;
+                allDays[idx].signups = Number(row.signups) || 0;
+            }
         }
         
         const monthLabel = startDate.toLocaleString('default', { month: 'long', year: 'numeric' });
@@ -2123,11 +2134,11 @@ async function handleAdminDashboard(req, res, sessionId) {
             LIMIT 12
         `);
 
-        // Get current month's daily data with all days (local time)
-        const now = new Date();
-        const currentYear = now.getFullYear();
-        const currentMonthIndex = now.getMonth();
-        const daysInCurrentMonth = new Date(currentYear, currentMonthIndex + 1, 0).getDate();
+        // Current month daily data (only days 1..today)
+        const today = new Date();
+        const currentYear = today.getFullYear();
+        const currentMonthIndex = today.getMonth();
+        const currentDay = today.getDate();
         const startOfMonth = new Date(currentYear, currentMonthIndex, 1);
         startOfMonth.setHours(0,0,0,0);
         const endOfMonth = new Date(currentYear, currentMonthIndex + 1, 1);
@@ -2154,16 +2165,20 @@ async function handleAdminDashboard(req, res, sessionId) {
             ORDER BY day ASC
         `, [startOfMonth, endOfMonth]);
 
+        // Build array for days 1..currentDay
         const allDaysCurrent = [];
-        for (let d = 1; d <= daysInCurrentMonth; d++) {
+        for (let d = 1; d <= currentDay; d++) {
             allDaysCurrent.push({ day: d, revenue: 0, signups: 0 });
         }
         for (const row of dailyRevenueResult.rows) {
-            const idx = row.day - 1;
-            allDaysCurrent[idx].revenue = Number(row.revenue) || 0;
-            allDaysCurrent[idx].signups = Number(row.signups) || 0;
+            const dayNum = row.day;
+            if (dayNum <= currentDay) {
+                const idx = dayNum - 1;
+                allDaysCurrent[idx].revenue = Number(row.revenue) || 0;
+                allDaysCurrent[idx].signups = Number(row.signups) || 0;
+            }
         }
-        const currentMonthName = now.toLocaleString('default', { month: 'long', year: 'numeric' });
+        const currentMonthName = today.toLocaleString('default', { month: 'long', year: 'numeric' });
 
         // 4. GET ACTIVE ADMINS (UNIQUE BY USER) WITH ROLE FILTERING
         let activeAdmins = await getActiveAdmins();
@@ -2606,7 +2621,7 @@ function renderDashboard(data) {
                     <td class="time-cell">
                         ${created.toLocaleDateString('en-NG')}<br>
                         <small>${created.toLocaleTimeString('en-NG', {hour:'2-digit',minute:'2-digit'})}</small>
-                    </td>
+                     </td>
                     <td class="time-cell">
                         ${expires ? 
                             `<span class="time-cell ${isExpired ? 'expires-gone' : 'expires-ok'}">
@@ -2615,17 +2630,17 @@ function renderDashboard(data) {
                             </span>` : 
                             '<span style="color:var(--text-muted);">N/A</span>'
                         }
-                    </td>
+                     </td>
                     <td>
                         ${user.mac_address ? `<span class="mac">${escapeHtml(user.mac_address)}</span>` : '<span style="color:var(--text-muted);">N/A</span>'}
-                    </td>
+                     </td>
                     <td class="row-actions">
                         ${showExtend ? `<button class="act-btn a-extend" title="Extend Plan" onclick="openExtend(${user.id}, '${escapeHtml(user.mikrotik_username || '')}')"><i class="fa-solid fa-clock-rotate-left"></i></button>` : ''}
                         ${showToggle ? `<a href="/admin?sessionId=${sessionId}&action=toggle_status&userId=${user.id}" class="act-btn a-reset" title="Toggle Status"><i class="fa-solid fa-power-off"></i></a>` : ''}
                         ${showReset ? `<a href="/admin?sessionId=${sessionId}&action=reset&userId=${user.id}" class="act-btn a-reset" onclick="return confirm('Reset user to pending?')" title="Reset to Pending"><i class="fa-solid fa-arrow-rotate-left"></i></a>` : ''}
                         ${showDelete ? `<a href="/admin?sessionId=${sessionId}&action=delete&userId=${user.id}" class="act-btn a-delete" onclick="return confirm('Permanently delete this user?')" title="Delete User"><i class="fa-solid fa-trash-can"></i></a>` : ''}
-                    </td>
-                </tr>
+                     </td>
+                 </tr>
             `;
         });
     }
@@ -2647,26 +2662,26 @@ function renderDashboard(data) {
                         ${isCurrentUser ? '<span style="color: var(--success); font-size: 11px; margin-left: 5px;">(You)</span>' : ''}
                     </div>
                     <div style="font-size: 11px; color: var(--text-muted);">${admin.role.replace('_', ' ').toUpperCase()}</div>
-                </td>
+                 </td>
                 <td style="padding: 12px; font-size: 13px; font-family: monospace;">${admin.admin_ip}</td>
                 <td style="padding: 12px; font-size: 13px;">
                     ${loginTime.toLocaleTimeString('en-NG', {hour:'2-digit', minute:'2-digit'})}<br>
                     <small style="color: var(--text-muted);">${loginTime.toLocaleDateString('en-NG', {day:'numeric', month:'short'})}</small>
-                </td>
+                 </td>
                 <td style="padding: 12px; font-size: 13px;">
                     ${lastActivity.toLocaleTimeString('en-NG', {hour:'2-digit', minute:'2-digit'})}<br>
                     <small style="color: var(--text-muted);">${idleMinutes}m ago</small>
-                </td>
+                 </td>
                 <td style="padding: 12px;">
                     <span class="${admin.idle_seconds > 300 ? 'badge-expired' : 'badge-active'}" style="font-size: 12px; padding: 4px 10px;">
                         ${idleMinutes}m ${idleSeconds}s
                     </span>
-                </td>
-            </tr>
+                 </td>
+             </tr>
         `;
     });
     
-    // Prepare daily revenue JSON (already includes all days and signups)
+    // Prepare daily revenue JSON (already includes only days up to today)
     const dailyRevenueJson = JSON.stringify(dailyRevenue);
     
     return `<!DOCTYPE html>
