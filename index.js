@@ -1437,20 +1437,31 @@ app.get('/admin/monthly-details', async (req, res) => {
     try {
         const parts = month.split('-');
         const year = parseInt(parts[0], 10);
-        const monthIndex = parseInt(parts[1], 10) - 1;
-        const startDate = new Date(year, monthIndex, 1);
-        startDate.setHours(0, 0, 0, 0);
-        const endDate = new Date(year, monthIndex + 1, 1);
-        endDate.setHours(0, 0, 0, 0);
+        const monthIndex = parseInt(parts[1], 10) - 1; // 0-based
         const lastDay = new Date(year, monthIndex + 1, 0).getDate();
         const now = new Date();
         const isCurrentMonth = (year === now.getFullYear() && monthIndex === now.getMonth());
         const maxDay = isCurrentMonth ? now.getDate() : lastDay;
         
+        // Use EXTRACT to avoid timezone issues
         const result = await pool.query(`
-            SELECT EXTRACT(DAY FROM created_at) as day, COUNT(*) as signups, SUM(CASE plan WHEN '24hr' THEN 350 WHEN '3d' THEN 1050 WHEN '5d' THEN 1750 WHEN '7d' THEN 2400 WHEN '14d' THEN 4100 WHEN '30d' THEN 7500 ELSE 0 END) as revenue
-            FROM payment_queue WHERE created_at >= $1 AND created_at < $2 GROUP BY EXTRACT(DAY FROM created_at) ORDER BY day ASC
-        `, [startDate, endDate]);
+            SELECT 
+                EXTRACT(DAY FROM created_at) as day,
+                COUNT(*) as signups,
+                SUM(CASE plan
+                    WHEN '24hr' THEN 350
+                    WHEN '3d'  THEN 1050
+                    WHEN '5d'  THEN 1750
+                    WHEN '7d'  THEN 2400
+                    WHEN '14d' THEN 4100
+                    WHEN '30d' THEN 7500
+                    ELSE 0
+                END) as revenue
+            FROM payment_queue
+            WHERE EXTRACT(YEAR FROM created_at) = $1 AND EXTRACT(MONTH FROM created_at) = $2
+            GROUP BY EXTRACT(DAY FROM created_at)
+            ORDER BY day ASC
+        `, [year, monthIndex + 1]);
         
         const days = [];
         for (let d = 1; d <= maxDay; d++) days.push({ day: d, revenue: 0, signups: 0 });
@@ -1461,10 +1472,13 @@ app.get('/admin/monthly-details', async (req, res) => {
                 days[dayNum - 1].signups = Number(row.signups) || 0;
             }
         }
-        res.json({ success: true, data: days, monthLabel: startDate.toLocaleString('default', { month: 'long', year: 'numeric' }) });
-    } catch (error) { console.error('Monthly details error:', error.message); res.status(500).json({ error: 'Internal server error' }); }
+        const monthLabel = new Date(year, monthIndex, 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+        res.json({ success: true, data: days, monthLabel });
+    } catch (error) {
+        console.error('Monthly details error:', error.message);
+        res.status(500).json({ error: 'Internal server error' });
+    }
 });
-
 // ========== ADMIN DASHBOARD ROUTE ==========
 app.get('/admin', async (req, res) => {
     const { user, pwd, action, userId, newPlan, sessionId, exportData, forceLogout } = req.query;
