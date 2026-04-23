@@ -1660,6 +1660,13 @@ app.get('/admin/monthly-details', async (req, res) => {
         const endDate = new Date(startDate);
         endDate.setMonth(endDate.getMonth() + 1);
         
+        // Generate all days of the month for complete reporting (no skipped days)
+        const daysInMonth = new Date(startDate.getFullYear(), startDate.getMonth() + 1, 0).getDate();
+        const allDays = [];
+        for (let d = 1; d <= daysInMonth; d++) {
+            allDays.push({ day: d, revenue: 0, signups: 0 });
+        }
+        
         const result = await pool.query(`
             SELECT 
                 EXTRACT(DAY FROM created_at) as day,
@@ -1681,7 +1688,14 @@ app.get('/admin/monthly-details', async (req, res) => {
             ORDER BY day ASC
         `, [startDate, endDate]);
         
-        res.json({ success: true, data: result.rows, monthLabel: startDate.toLocaleString('default', { month: 'long', year: 'numeric' }) });
+        // Merge actual data into all days
+        for (const row of result.rows) {
+            const dayIndex = row.day - 1;
+            allDays[dayIndex].revenue = Number(row.revenue) || 0;
+            allDays[dayIndex].signups = Number(row.signups) || 0;
+        }
+        
+        res.json({ success: true, data: allDays, monthLabel: startDate.toLocaleString('default', { month: 'long', year: 'numeric' }) });
     } catch (error) {
         console.error('Monthly details error:', error.message);
         res.status(500).json({ error: 'Internal server error' });
@@ -2099,9 +2113,11 @@ async function handleAdminDashboard(req, res, sessionId) {
             LIMIT 12
         `);
 
+        // FIXED: Include signups in daily revenue for current month
         const dailyRevenue = await pool.query(`
             SELECT 
                 EXTRACT(DAY FROM created_at) as day,
+                COUNT(*) as signups,
                 SUM(
                     CASE plan
                         WHEN '24hr' THEN 350
@@ -2112,13 +2128,28 @@ async function handleAdminDashboard(req, res, sessionId) {
                         WHEN '30d' THEN 7500
                         ELSE 0
                     END
-                ) as daily_total
+                ) as revenue
             FROM payment_queue
             WHERE created_at >= DATE_TRUNC('month', CURRENT_DATE)
               AND created_at < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month'
             GROUP BY EXTRACT(DAY FROM created_at)
             ORDER BY day ASC
         `);
+        
+        // Generate all days of current month for complete display
+        const currentYear = new Date().getFullYear();
+        const currentMonth = new Date().getMonth();
+        const daysInCurrentMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+        const allDaysCurrent = [];
+        for (let d = 1; d <= daysInCurrentMonth; d++) {
+            allDaysCurrent.push({ day: d, revenue: 0, signups: 0 });
+        }
+        for (const row of dailyRevenue.rows) {
+            const dayIndex = row.day - 1;
+            allDaysCurrent[dayIndex].revenue = Number(row.revenue) || 0;
+            allDaysCurrent[dayIndex].signups = Number(row.signups) || 0;
+        }
+        
         const currentMonthName = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
 
         // 4. GET ACTIVE ADMINS (UNIQUE BY USER) WITH ROLE FILTERING
@@ -2201,7 +2232,7 @@ async function handleAdminDashboard(req, res, sessionId) {
             actionMessage: actionMessage,
             messageType: messageType,
             monthlyRevenue: monthlyRevenue.rows,
-            dailyRevenue: dailyRevenue.rows,
+            dailyRevenue: allDaysCurrent,  // now includes all days with signups
             currentMonthName: currentMonthName
         }));
 
@@ -2492,6 +2523,7 @@ function getErrorPage(error) {
 </html>`;
 }
 
+// ========== DASHBOARD RENDERER ==========
 function renderDashboard(data) {
     const { 
         session,
@@ -2518,7 +2550,7 @@ function renderDashboard(data) {
     const now = new Date();
     const sessionEnd = now.getTime() + (5 * 60 * 1000);
     
-    // Build user table rows WITH CORRECT COLUMN ORDER: Created, Expires, MAC
+    // Build user table rows (unchanged, same as before)
     let userRows = '';
     if (users.length === 0) {
         userRows = '<tr><td colspan="9" style="text-align:center;padding:48px;color:var(--text-muted);">No users found</td></tr>';
@@ -2585,7 +2617,7 @@ function renderDashboard(data) {
         });
     }
     
-    // Build admin sessions rows
+    // Build admin sessions rows (unchanged)
     let adminSessionsRows = '';
     activeAdmins.forEach(admin => {
         const loginTime = new Date(admin.login_time);
@@ -2621,7 +2653,7 @@ function renderDashboard(data) {
         `;
     });
     
-    // Prepare the daily revenue data as JSON for JavaScript
+    // Prepare daily revenue JSON (already includes all days and signups)
     const dailyRevenueJson = JSON.stringify(dailyRevenue);
     
     return `<!DOCTYPE html>
@@ -3073,7 +3105,7 @@ function renderDashboard(data) {
                             ${monthlyRevenue.map(m => `<tr style="cursor: pointer;" data-month-start="${new Date(m.month_start).toISOString().split('T')[0]}" data-month-label="${m.month_label}" onclick="loadMonthDetails(this)">
                                 <td style="padding: 10px; border-bottom: 1px solid var(--border);">${m.month_label}</td>
                                 <td style="padding: 10px; text-align: right; border-bottom: 1px solid var(--border); font-weight: 600;">${naira(m.revenue)}</td>
-                            </tr>`).join('')}
+                             </tr>`).join('')}
                         </tbody>
                     </table>
                 </div>
@@ -3251,7 +3283,7 @@ function renderDashboard(data) {
                 container.innerHTML = '<p style="color: var(--text-muted);">No revenue recorded yet this month.</p>';
                 return;
             }
-            const maxRevenue = Math.max(...dailyData.map(d => Number(d.revenue || d.daily_total)), 1);
+            const maxRevenue = Math.max(...dailyData.map(d => Number(d.revenue !== undefined ? d.revenue : d.daily_total)), 1);
             let barsHtml = '';
             for (let i = 0; i < dailyData.length; i++) {
                 const day = dailyData[i];
