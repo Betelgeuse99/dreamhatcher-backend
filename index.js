@@ -1649,8 +1649,8 @@ app.get('/api/check-mac', async (req, res) => {
 });
 
 // ========== MONTHLY DETAILS API (for revenue modal) ==========
-// Helper: get days in month (local time, no timezone mess)
-function getDaysInMonth(year, month) { // month is 0-based
+// Helper: get the last day of a month (local time, no timezone issues)
+function getLastDayOfMonth(year, month) {
     return new Date(year, month + 1, 0).getDate();
 }
 
@@ -1661,7 +1661,7 @@ app.get('/admin/monthly-details', async (req, res) => {
     }
     
     try {
-        // Parse month string as local date (YYYY-MM-DD)
+        // Parse the month string as local date (YYYY-MM-DD)
         const parts = month.split('-');
         const year = parseInt(parts[0], 10);
         const monthIndex = parseInt(parts[1], 10) - 1; // 0-based
@@ -1670,16 +1670,17 @@ app.get('/admin/monthly-details', async (req, res) => {
         const endDate = new Date(year, monthIndex + 1, 1);
         endDate.setHours(0, 0, 0, 0);
         
-        const daysInMonth = getDaysInMonth(year, monthIndex);
+        const lastDay = getLastDayOfMonth(year, monthIndex);
         
-        // Check if this is the current month (year and month match today)
+        // Check if this is the current month (same year and month)
         const today = new Date();
         const isCurrentMonth = (year === today.getFullYear() && monthIndex === today.getMonth());
-        let maxDay = daysInMonth;
+        let maxDay = lastDay;
         if (isCurrentMonth) {
-            maxDay = today.getDate(); // only show days up to today
+            maxDay = today.getDate(); // only up to today for current month
         }
         
+        // Query the database for days that have data
         const result = await pool.query(`
             SELECT 
                 EXTRACT(DAY FROM created_at) as day,
@@ -1701,11 +1702,12 @@ app.get('/admin/monthly-details', async (req, res) => {
             ORDER BY day ASC
         `, [startDate, endDate]);
         
-        // Build array for days 1..maxDay
+        // Build an array for all days 1..maxDay, default zero
         const allDays = [];
         for (let d = 1; d <= maxDay; d++) {
             allDays.push({ day: d, revenue: 0, signups: 0 });
         }
+        // Fill in existing data
         for (const row of result.rows) {
             const dayNum = row.day;
             if (dayNum <= maxDay) {
@@ -2581,7 +2583,7 @@ function renderDashboard(data) {
     // Build user table rows
     let userRows = '';
     if (users.length === 0) {
-        userRows = '<tr><td colspan="9" style="text-align:center;padding:48px;color:var(--text-muted);">No users found</td></tr>';
+        userRows = '<td><td colspan="9" style="text-align:center;padding:48px;color:var(--text-muted);">No users found</td></tr>';
     } else {
         users.forEach(user => {
             const created = new Date(user.created_at);
@@ -2612,16 +2614,16 @@ function renderDashboard(data) {
                             <i class="fa-solid ${user.plan === '24hr' ? 'fa-bolt' : user.plan === '3d' ? 'fa-clock' : user.plan === '5d' ? 'fa-calendar' : user.plan === '7d' ? 'fa-rocket' : user.plan === '14d' ? 'fa-star' : 'fa-crown'}"></i> 
                             ${planLabel(user.plan)}
                         </span>
-                     </td>
+                    </td>
                     <td>
                         <span class="badge ${statusBadge}">
                             <i class="fa-solid ${statusIcon}"></i> ${statusLabel}
                         </span>
-                     </td>
+                    </td>
                     <td class="time-cell">
                         ${created.toLocaleDateString('en-NG')}<br>
                         <small>${created.toLocaleTimeString('en-NG', {hour:'2-digit',minute:'2-digit'})}</small>
-                     </td>
+                    </td>
                     <td class="time-cell">
                         ${expires ? 
                             `<span class="time-cell ${isExpired ? 'expires-gone' : 'expires-ok'}">
@@ -2630,17 +2632,17 @@ function renderDashboard(data) {
                             </span>` : 
                             '<span style="color:var(--text-muted);">N/A</span>'
                         }
-                     </td>
+                    </td>
                     <td>
                         ${user.mac_address ? `<span class="mac">${escapeHtml(user.mac_address)}</span>` : '<span style="color:var(--text-muted);">N/A</span>'}
-                     </td>
+                    </td>
                     <td class="row-actions">
                         ${showExtend ? `<button class="act-btn a-extend" title="Extend Plan" onclick="openExtend(${user.id}, '${escapeHtml(user.mikrotik_username || '')}')"><i class="fa-solid fa-clock-rotate-left"></i></button>` : ''}
                         ${showToggle ? `<a href="/admin?sessionId=${sessionId}&action=toggle_status&userId=${user.id}" class="act-btn a-reset" title="Toggle Status"><i class="fa-solid fa-power-off"></i></a>` : ''}
                         ${showReset ? `<a href="/admin?sessionId=${sessionId}&action=reset&userId=${user.id}" class="act-btn a-reset" onclick="return confirm('Reset user to pending?')" title="Reset to Pending"><i class="fa-solid fa-arrow-rotate-left"></i></a>` : ''}
                         ${showDelete ? `<a href="/admin?sessionId=${sessionId}&action=delete&userId=${user.id}" class="act-btn a-delete" onclick="return confirm('Permanently delete this user?')" title="Delete User"><i class="fa-solid fa-trash-can"></i></a>` : ''}
-                     </td>
-                 </tr>
+                    </td>
+                </tr>
             `;
         });
     }
@@ -2662,22 +2664,22 @@ function renderDashboard(data) {
                         ${isCurrentUser ? '<span style="color: var(--success); font-size: 11px; margin-left: 5px;">(You)</span>' : ''}
                     </div>
                     <div style="font-size: 11px; color: var(--text-muted);">${admin.role.replace('_', ' ').toUpperCase()}</div>
-                 </td>
+                </td>
                 <td style="padding: 12px; font-size: 13px; font-family: monospace;">${admin.admin_ip}</td>
                 <td style="padding: 12px; font-size: 13px;">
                     ${loginTime.toLocaleTimeString('en-NG', {hour:'2-digit', minute:'2-digit'})}<br>
                     <small style="color: var(--text-muted);">${loginTime.toLocaleDateString('en-NG', {day:'numeric', month:'short'})}</small>
-                 </td>
+                </td>
                 <td style="padding: 12px; font-size: 13px;">
                     ${lastActivity.toLocaleTimeString('en-NG', {hour:'2-digit', minute:'2-digit'})}<br>
                     <small style="color: var(--text-muted);">${idleMinutes}m ago</small>
-                 </td>
+                </td>
                 <td style="padding: 12px;">
                     <span class="${admin.idle_seconds > 300 ? 'badge-expired' : 'badge-active'}" style="font-size: 12px; padding: 4px 10px;">
                         ${idleMinutes}m ${idleSeconds}s
                     </span>
-                 </td>
-             </tr>
+                </td>
+            </tr>
         `;
     });
     
