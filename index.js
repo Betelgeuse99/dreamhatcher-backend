@@ -1955,6 +1955,9 @@ function renderDashboard(data) {
         .user-avatar { width: 32px; height: 32px; border-radius: 8px; background: var(--bg-hover); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; color: var(--accent); border: 1px solid var(--border); }
         .username { font-weight: 700; color: var(--text-primary); margin-bottom: 4px; }
         .user-password { font-size: 11px; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.5px; color: var(--text-primary); }  /* WHITE password */
+        /* Custom column widths */
+        .user-cell { width: 180px; }   /* Reduce password column */
+        .email-cell { width: 280px; }  /* Increase email column */
 
         .email-cell { max-width: 200px; word-break: break-word; white-space: normal; }
 
@@ -2317,48 +2320,53 @@ function renderDashboard(data) {
 
         function formatNaira(amount) { const num = Number(amount) || 0; return '₦' + num.toLocaleString('en-NG'); }
 
-        async function loadMonthData(monthRaw) {
-            const container = document.getElementById('dailyProgressContainer');
-            const monthLabelSpan = document.getElementById('currentMonthLabel');
-            currentMonthRaw = monthRaw;
-            container.innerHTML = '<div style="text-align: center; padding: 20px;"><i class="fa-solid fa-spinner fa-spin"></i> Loading...</div>';
-            try {
-                const response = await fetch('/admin/api/daily?sessionId=${sessionId}&month=' + monthRaw);
-                const result = await response.json();
-                if (!result.success) throw new Error(result.error || 'Failed to load data');
-                const dailyData = result.data;
-                const monthDisplay = new Date(monthRaw + '-01').toLocaleString('default', { month: 'long', year: 'numeric' });
-                monthLabelSpan.textContent = monthDisplay;
-                if (dailyData.length === 0) { container.innerHTML = '<p style="color: var(--text-muted); text-align: center;">No revenue recorded for this month.</p>'; return; }
-                const maxRevenue = Math.max(...dailyData.map(d => Number(d.daily_total)), 1);
-                let barsHtml = '';
-                for (let i = 0; i < dailyData.length; i++) {
-                    const day = dailyData[i];
-                    const percent = (Number(day.daily_total) / maxRevenue) * 100;
-                    const revenueFormatted = formatNaira(day.daily_total);
-                    const signups = day.signups_count || 0;
-                    barsHtml += `
-                        <div class="progress-row">
-                            <div class="progress-info">
-                                <span>Day ${day.day}</span>
-                                <div style="display: flex; gap: 16px;">
-                                    <span style="font-weight:700; color: var(--text-primary);">${revenueFormatted}</span>
-                                    <span style="font-weight:700; color: var(--success);"><i class="fa-solid fa-user-plus"></i> +${signups} signups</span>
-                                </div>
-                            </div>
-                            <div class="progress-track">
-                                <div class="progress-fill" style="width: 0%;" data-w="${percent}"></div>
-                            </div>
-                        </div>
-                    `;
-                }
-                container.innerHTML = barsHtml;
-                setTimeout(() => { document.querySelectorAll('.progress-fill').forEach(bar => { bar.style.width = bar.dataset.w + '%'; }); }, 50);
-            } catch (err) {
-                container.innerHTML = '<p style="color: var(--danger); text-align: center;">Error loading data: ' + err.message + '</p>';
+        function loadMonthData(monthRaw) {
+    const container = document.getElementById('dailyProgressContainer');
+    const monthLabelSpan = document.getElementById('currentMonthLabel');
+    currentMonthRaw = monthRaw;
+    container.innerHTML = '<div style="text-align: center; padding: 20px;"><i class=\"fa-solid fa-spinner fa-spin\"></i> Loading...</div>';
+    fetch('/admin/api/daily?sessionId=${sessionId}&month=' + monthRaw)
+        .then(response => response.json())
+        .then(result => {
+            if (!result.success) throw new Error(result.error || 'Failed to load data');
+            const dailyData = result.data;
+            const monthDisplay = new Date(monthRaw + '-01').toLocaleString('default', { month: 'long', year: 'numeric' });
+            monthLabelSpan.textContent = monthDisplay;
+            if (dailyData.length === 0) {
+                container.innerHTML = '<p style="color: var(--text-muted); text-align: center;">No revenue recorded for this month.</p>';
+                return;
             }
-        }
-
+            const maxRevenue = Math.max(...dailyData.map(d => Number(d.daily_total)), 1);
+            let barsHtml = '';
+            for (let i = 0; i < dailyData.length; i++) {
+                const day = dailyData[i];
+                const percent = (Number(day.daily_total) / maxRevenue) * 100;
+                const revenueFormatted = formatNaira(day.daily_total);
+                const signups = day.signups_count || 0;
+                barsHtml += '<div class="progress-row">' +
+                    '<div class="progress-info">' +
+                        '<span>Day ' + day.day + '</span>' +
+                        '<div style="display: flex; gap: 16px;">' +
+                            '<span style="font-weight:700; color: var(--text-primary);">' + revenueFormatted + '</span>' +
+                            '<span style="font-weight:700; color: var(--success);"><i class="fa-solid fa-user-plus"></i> +' + signups + ' signups</span>' +
+                        '</div>' +
+                    '</div>' +
+                    '<div class="progress-track">' +
+                        '<div class="progress-fill" style="width: 0%;" data-w="' + percent + '"></div>' +
+                    '</div>' +
+                '</div>';
+            }
+            container.innerHTML = barsHtml;
+            setTimeout(() => {
+                document.querySelectorAll('.progress-fill').forEach(bar => {
+                    bar.style.width = bar.dataset.w + '%';
+                });
+            }, 50);
+        })
+        .catch(err => {
+            container.innerHTML = '<p style="color: var(--danger); text-align: center;">Error loading data: ' + err.message + '</p>';
+        });
+} 
         function returnToCurrentMonth() {
             const now = new Date();
             const currentMonth = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
