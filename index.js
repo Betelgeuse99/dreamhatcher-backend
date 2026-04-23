@@ -1648,73 +1648,134 @@ app.get('/api/check-mac', async (req, res) => {
   }
 });
 
-// ========== ADMIN DASHBOARD ROUTE ==========
+// ========== MONTHLY DETAILS API (UPGRADED) ==========
+app.get('/admin/monthly-details', async (req, res) => {
+    try {
+        let { month } = req.query;
+
+        if (!month) {
+            return res.status(400).json({ error: 'Month parameter required' });
+        }
+
+        if (!/^\d{4}-\d{2}(-\d{2})?$/.test(month)) {
+            return res.status(400).json({ error: 'Invalid format (YYYY-MM or YYYY-MM-DD)' });
+        }
+
+        if (month.length === 7) month += '-01';
+
+        const [yearStr, monthStr] = month.split('-');
+        const year = parseInt(yearStr, 10);
+        const monthIndex = parseInt(monthStr, 10) - 1;
+
+        const startDate = new Date(year, monthIndex, 1);
+        const endDate = new Date(year, monthIndex + 1, 1);
+
+        const now = new Date();
+        const isCurrentMonth =
+            year === now.getFullYear() && monthIndex === now.getMonth();
+
+        const lastDay = new Date(year, monthIndex + 1, 0).getDate();
+        const maxDay = isCurrentMonth ? now.getDate() : lastDay;
+
+        const result = await pool.query(`
+            SELECT 
+                EXTRACT(DAY FROM created_at)::int as day,
+                COUNT(*) as signups,
+                COALESCE(SUM(
+                    CASE plan
+                        WHEN '24hr' THEN 350
+                        WHEN '3d'  THEN 1050
+                        WHEN '5d'  THEN 1750
+                        WHEN '7d'  THEN 2400
+                        WHEN '14d' THEN 4100
+                        WHEN '30d' THEN 7500
+                        ELSE 0
+                    END
+                ), 0) as revenue
+            FROM payment_queue
+            WHERE 
+                status = 'processed'
+                AND created_at >= $1
+                AND created_at < $2
+            GROUP BY day
+            ORDER BY day ASC
+        `, [startDate, endDate]);
+
+        const days = [];
+        for (let d = 1; d <= maxDay; d++) {
+            days.push({ day: d, revenue: 0, signups: 0 });
+        }
+
+        for (const row of result.rows) {
+            const d = parseInt(row.day, 10);
+            if (d >= 1 && d <= maxDay) {
+                days[d - 1].revenue = Number(row.revenue) || 0;
+                days[d - 1].signups = Number(row.signups) || 0;
+            }
+        }
+
+        const monthLabel = new Date(year, monthIndex, 1)
+            .toLocaleString('default', { month: 'long', year: 'numeric' });
+
+        res.json({ success: true, data: days, monthLabel });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// ========== ADMIN DASHBOARD ROUTE (UPGRADED) ==========
 app.get('/admin', async (req, res) => {
-    const { user, pwd, action, userId, newPlan, sessionId, exportData, forceLogout } = req.query;
-    
-    // ========== FORCE LOGOUT OTHER SESSIONS ==========
+    const { user, pwd, sessionId, action, userId, newPlan, exportData, forceLogout } = req.query;
+
+    // Handle force logout (superadmin only)
     if (forceLogout === 'all' && sessionId && adminSessions[sessionId]) {
         const currentSession = adminSessions[sessionId];
         if (currentSession.role !== 'super_admin') {
             return res.redirect(`/admin?sessionId=${sessionId}&action=permission_denied`);
         }
-        
         try {
-            // Logout all other sessions except current one
             Object.keys(adminSessions).forEach(key => {
                 if (key !== sessionId) {
                     logAdminLogout(key);
                     delete adminSessions[key];
                 }
             });
-            
-            // Mark all other sessions as inactive
             await pool.query(
                 `UPDATE admin_logs SET logout_time = NOW(), is_active = false 
                  WHERE session_id != $1 AND is_active = true`,
                 [sessionId]
             );
-            
             return res.redirect(`/admin?sessionId=${sessionId}&action=force_logout_success`);
         } catch (error) {
-            console.log('Force logout error:', error.message);
             return res.redirect(`/admin?sessionId=${sessionId}&action=force_logout_error`);
         }
     }
-    
-    // ========== SESSION-BASED AUTH ==========
+
+    // Session-based auth
     if (sessionId && adminSessions[sessionId]) {
         const session = adminSessions[sessionId];
-        
-        // Check session expiry
         if (Date.now() - session.lastActivity > SESSION_TIMEOUT) {
             await logAdminLogout(sessionId);
             delete adminSessions[sessionId];
             return res.redirect('/admin?sessionExpired=true');
         }
-        
-        // Update last activity
         session.lastActivity = Date.now();
         adminSessions[sessionId] = session;
         await updateAdminActivity(sessionId);
-        
         return await handleAdminDashboard(req, res, sessionId);
     }
-    
-    // ========== USER/PASSWORD LOGIN ==========
+
+    // Login attempt
     if (user && pwd) {
         const userConfig = ADMIN_USERS[user];
         if (userConfig && userConfig.password === pwd) {
-            // Check if user already has active session
             const existingSessionId = adminUserSessions[user];
             if (existingSessionId && adminSessions[existingSessionId]) {
-                // Use existing session
-                const session = adminSessions[existingSessionId];
-                session.lastActivity = Date.now();
+                adminSessions[existingSessionId].lastActivity = Date.now();
                 return res.redirect(`/admin?sessionId=${existingSessionId}`);
             }
-            
-            // Create new session
             const newSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
             adminSessions[newSessionId] = {
                 id: newSessionId,
@@ -1726,24 +1787,23 @@ app.get('/admin', async (req, res) => {
                 ip: req.ip,
                 userAgent: req.headers['user-agent']
             };
-            
             await logAdminLogin(user, userConfig.role, newSessionId, req.ip, req.headers['user-agent']);
             return res.redirect(`/admin?sessionId=${newSessionId}`);
         }
     }
-    
-    // ========== SHOW LOGIN FORM ==========
+
+    // Show login form
     return res.send(getLoginForm(req.query.sessionExpired));
 });
 
-// ========== ADMIN DASHBOARD HANDLER ==========
+// ========== ADMIN DASHBOARD HANDLER (UPGRADED) ==========
 async function handleAdminDashboard(req, res, sessionId) {
     try {
         const session = adminSessions[sessionId];
         if (!session) {
             return res.redirect('/admin');
         }
-        
+
         const { action, userId, newPlan, exportData } = req.query;
         let actionMessage = '';
         let messageType = '';
@@ -1765,7 +1825,6 @@ async function handleAdminDashboard(req, res, sessionId) {
                 actionMessage = 'Permission denied: Cannot extend plans';
                 messageType = 'error';
             } else {
-                // Calculate proper expiry based on plan
                 let interval = '';
                 if (newPlan === '24hr') interval = '24 hours';
                 else if (newPlan === '3d') interval = '3 days';
@@ -1816,13 +1875,11 @@ async function handleAdminDashboard(req, res, sessionId) {
             }
         }
 
-        // ========== BULK CLEANUP (Super Admin Only) ==========
         if (action === 'cleanup') {
             if (!hasPermission(session, 'delete')) {
                 actionMessage = 'Permission denied: Cannot perform cleanup';
                 messageType = 'error';
             } else {
-                // Proper cleanup of expired users
                 const result = await pool.query(`
                     DELETE FROM payment_queue 
                     WHERE (
@@ -1836,7 +1893,6 @@ async function handleAdminDashboard(req, res, sessionId) {
             }
         }
 
-        // ========== SYNC EXPIRED WITH MIKROTIK ==========
         if (action === 'sync_expired') {
             if (!hasPermission(session, 'update')) {
                 actionMessage = 'Permission denied: Cannot sync expired users';
@@ -1848,7 +1904,6 @@ async function handleAdminDashboard(req, res, sessionId) {
             }
         }
 
-        // ========== FORCE LOGOUT MESSAGES ==========
         if (action === 'force_logout_success') {
             actionMessage = 'All other admin sessions have been terminated';
             messageType = 'success';
@@ -1905,164 +1960,23 @@ async function handleAdminDashboard(req, res, sessionId) {
             return res.send(csvData);
         }
 
-        // ========== GET DASHBOARD STATISTICS ==========
-        
-        // 1. CORE METRICS
+        // ========== METRICS (UPGRADED - uses FILTER syntax) ==========
         const metrics = await pool.query(`
-            WITH user_stats AS (
-                SELECT 
-                    COUNT(*) as total_users,
-                    COUNT(CASE WHEN status = 'processed' AND (expires_at IS NULL OR expires_at > NOW()) THEN 1 END) as active_users,
-                    COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_users,
-                    COUNT(CASE WHEN status = 'expired' OR (status = 'processed' AND expires_at <= NOW()) THEN 1 END) as expired_users,
-                    COUNT(CASE WHEN status = 'suspended' THEN 1 END) as suspended_users,
-                    COUNT(CASE WHEN created_at::date = CURRENT_DATE THEN 1 END) as signups_today,
-                    COUNT(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' THEN 1 END) as signups_week
-                FROM payment_queue
-            ),
-            revenue_stats AS (
-                SELECT
-                    COALESCE(SUM(
-                        CASE 
-                            WHEN plan = '24hr' THEN 350
-                            WHEN plan = '3d' THEN 1050
-                            WHEN plan = '5d' THEN 1750
-                            WHEN plan = '7d' THEN 2400
-                            WHEN plan = '14d' THEN 4100
-                            WHEN plan = '30d' THEN 7500
-                            ELSE 0
-                        END
-                    ), 0) as total_revenue_lifetime,
-                    
-                    COALESCE(SUM(
-                        CASE WHEN created_at::date = CURRENT_DATE
-                        THEN CASE 
-                            WHEN plan = '24hr' THEN 350
-                            WHEN plan = '3d' THEN 1050
-                            WHEN plan = '5d' THEN 1750
-                            WHEN plan = '7d' THEN 2400
-                            WHEN plan = '14d' THEN 4100
-                            WHEN plan = '30d' THEN 7500
-                            ELSE 0
-                        END ELSE 0 END
-                    ), 0) as revenue_today,
-                    
-                    COALESCE(SUM(
-                        CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days'
-                        THEN CASE 
-                            WHEN plan = '24hr' THEN 350
-                            WHEN plan = '3d' THEN 1050
-                            WHEN plan = '5d' THEN 1750
-                            WHEN plan = '7d' THEN 2400
-                            WHEN plan = '14d' THEN 4100
-                            WHEN plan = '30d' THEN 7500
-                        END ELSE 0 END
-                    ), 0) as revenue_week,
-                    
-                    COALESCE(SUM(
-                        CASE WHEN created_at >= CURRENT_DATE - INTERVAL '30 days'
-                        THEN CASE 
-                            WHEN plan = '24hr' THEN 350
-                            WHEN plan = '3d' THEN 1050
-                            WHEN plan = '5d' THEN 1750
-                            WHEN plan = '7d' THEN 2400
-                            WHEN plan = '14d' THEN 4100
-                            WHEN plan = '30d' THEN 7500
-                        END ELSE 0 END
-                    ), 0) as revenue_month
-                FROM payment_queue
-            ),
-            plan_distribution AS (
-                SELECT 
-                    plan,
-                    COUNT(*) as count,
-                    SUM(
-                        CASE 
-                            WHEN plan = '24hr' THEN 350
-                            WHEN plan = '3d' THEN 1050
-                            WHEN plan = '5d' THEN 1750
-                            WHEN plan = '7d' THEN 2400
-                            WHEN plan = '14d' THEN 4100
-                            WHEN plan = '30d' THEN 7500
-                            ELSE 0
-                        END
-                    ) as revenue
-                FROM payment_queue 
-                GROUP BY plan
-            )
             SELECT 
-                u.*, 
-                r.*,
-                json_agg(json_build_object('plan', p.plan, 'count', p.count, 'revenue', p.revenue)) as plans_data
-            FROM user_stats u, revenue_stats r, plan_distribution p
-            GROUP BY 
-                u.total_users, u.active_users, u.pending_users, u.expired_users, u.suspended_users, 
-                u.signups_today, u.signups_week, r.total_revenue_lifetime, r.revenue_today, 
-                r.revenue_week, r.revenue_month
+                COUNT(*) as total_users,
+                COUNT(*) FILTER (WHERE status='processed' AND (expires_at IS NULL OR expires_at > NOW())) as active_users,
+                COUNT(*) FILTER (WHERE status='pending') as pending_users,
+                COUNT(*) FILTER (WHERE status='expired' OR (status='processed' AND expires_at <= NOW())) as expired_users,
+                COUNT(*) FILTER (WHERE status='suspended') as suspended_users,
+                COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE) as signups_today,
+                COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE - INTERVAL '7 days') as signups_week
+            FROM payment_queue
         `);
 
-        // 2. USERS WITH FIXED EXPIRY CALCULATION (REAL-TIME CHECK)
-        const recentActivity = await pool.query(`
-          SELECT 
-            id,
-            mikrotik_username,
-            mikrotik_password,
-            plan,
-            status,
-            mac_address,
-            customer_email,
-            created_at,
-            expires_at,
-            -- Use COALESCE to handle missing last_sync column gracefully
-            COALESCE(last_sync, created_at) as last_sync,
-            -- FIXED: REAL-TIME STATUS CHECK (IMMEDIATE EXPIRY)
-            CASE 
-              WHEN status = 'expired' THEN 'expired'
-              WHEN status = 'pending' THEN 'pending'
-              WHEN status = 'suspended' THEN 'suspended'
-              WHEN status = 'processed' AND (expires_at IS NULL) THEN 'active'
-              WHEN status = 'processed' AND (expires_at > NOW()) THEN 'active'
-              WHEN status = 'processed' AND (expires_at <= NOW()) THEN 'expired'
-              ELSE 'unknown'
-            END as realtime_status
-          FROM payment_queue
-          ORDER BY created_at DESC
-          LIMIT 100
-        `);
-
-        // 3. MONTHLY & DAILY REVENUE FOR MODAL (last 12 months & current month daily)
-        const monthlyRevenue = await pool.query(`
-            WITH months AS (
-                SELECT 
-                    DATE_TRUNC('month', created_at) as month_start,
-                    SUM(
-                        CASE plan
-                            WHEN '24hr' THEN 350
-                            WHEN '3d'  THEN 1050
-                            WHEN '5d'  THEN 1750
-                            WHEN '7d'  THEN 2400
-                            WHEN '14d' THEN 4100
-                            WHEN '30d' THEN 7500
-                            ELSE 0
-                        END
-                    ) as total
-                FROM payment_queue
-                WHERE created_at >= NOW() - INTERVAL '12 months'
-                GROUP BY DATE_TRUNC('month', created_at)
-                ORDER BY month_start ASC
-            )
-            SELECT 
-                to_char(month_start, 'Mon YYYY') as month_label,
-                month_start,
-                COALESCE(total, 0) as revenue
-            FROM months
-            LIMIT 12
-        `);
-
-        const dailyRevenue = await pool.query(`
-            SELECT 
-                EXTRACT(DAY FROM created_at) as day,
-                SUM(
+        // ========== REVENUE STATS (UPGRADED) ==========
+        const revenueStats = await pool.query(`
+            SELECT
+                COALESCE(SUM(
                     CASE plan
                         WHEN '24hr' THEN 350
                         WHEN '3d'  THEN 1050
@@ -2072,37 +1986,172 @@ async function handleAdminDashboard(req, res, sessionId) {
                         WHEN '30d' THEN 7500
                         ELSE 0
                     END
-                ) as daily_total
+                ), 0) as total_revenue_lifetime,
+                
+                COALESCE(SUM(
+                    CASE WHEN created_at::date = CURRENT_DATE
+                    THEN CASE plan
+                        WHEN '24hr' THEN 350
+                        WHEN '3d'  THEN 1050
+                        WHEN '5d'  THEN 1750
+                        WHEN '7d'  THEN 2400
+                        WHEN '14d' THEN 4100
+                        WHEN '30d' THEN 7500
+                        ELSE 0
+                    END ELSE 0 END
+                ), 0) as revenue_today,
+                
+                COALESCE(SUM(
+                    CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days'
+                    THEN CASE plan
+                        WHEN '24hr' THEN 350
+                        WHEN '3d'  THEN 1050
+                        WHEN '5d'  THEN 1750
+                        WHEN '7d'  THEN 2400
+                        WHEN '14d' THEN 4100
+                        WHEN '30d' THEN 7500
+                        ELSE 0
+                    END ELSE 0 END
+                ), 0) as revenue_week,
+                
+                COALESCE(SUM(
+                    CASE WHEN created_at >= CURRENT_DATE - INTERVAL '30 days'
+                    THEN CASE plan
+                        WHEN '24hr' THEN 350
+                        WHEN '3d'  THEN 1050
+                        WHEN '5d'  THEN 1750
+                        WHEN '7d'  THEN 2400
+                        WHEN '14d' THEN 4100
+                        WHEN '30d' THEN 7500
+                        ELSE 0
+                    END ELSE 0 END
+                ), 0) as revenue_month
             FROM payment_queue
-            WHERE created_at >= DATE_TRUNC('month', CURRENT_DATE)
-              AND created_at < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month'
-            GROUP BY EXTRACT(DAY FROM created_at)
-            ORDER BY day ASC
+            WHERE status = 'processed'
         `);
-        const currentMonthName = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
 
-        // 4. GET ACTIVE ADMINS (UNIQUE BY USER) WITH ROLE FILTERING
+        // ========== USERS WITH REAL-TIME STATUS ==========
+        const users = await pool.query(`
+            SELECT 
+                id,
+                mikrotik_username,
+                mikrotik_password,
+                plan,
+                status,
+                mac_address,
+                customer_email,
+                created_at,
+                expires_at,
+                COALESCE(last_sync, created_at) as last_sync,
+                CASE 
+                    WHEN status = 'expired' THEN 'expired'
+                    WHEN status = 'pending' THEN 'pending'
+                    WHEN status = 'suspended' THEN 'suspended'
+                    WHEN status = 'processed' AND (expires_at IS NULL OR expires_at > NOW()) THEN 'active'
+                    WHEN status = 'processed' AND (expires_at <= NOW()) THEN 'expired'
+                    ELSE 'unknown'
+                END as realtime_status
+            FROM payment_queue
+            ORDER BY created_at DESC
+            LIMIT 100
+        `);
+
+        // ========== MONTHLY REVENUE (NO LIMIT BUG) ==========
+        const monthlyRevenue = await pool.query(`
+            SELECT 
+                DATE_TRUNC('month', created_at) as month_start,
+                TO_CHAR(DATE_TRUNC('month', created_at), 'Mon YYYY') as month_label,
+                COALESCE(SUM(
+                    CASE plan
+                        WHEN '24hr' THEN 350
+                        WHEN '3d'  THEN 1050
+                        WHEN '5d'  THEN 1750
+                        WHEN '7d'  THEN 2400
+                        WHEN '14d' THEN 4100
+                        WHEN '30d' THEN 7500
+                        ELSE 0
+                    END
+                ), 0) as revenue
+            FROM payment_queue
+            WHERE status = 'processed'
+            GROUP BY month_start
+            ORDER BY month_start ASC
+        `);
+
+        // ========== CURRENT MONTH DAILY (ONLY DAYS UP TO TODAY) ==========
+        const now = new Date();
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+        const today = now.getDate();
+
+        const dailyCurrent = await pool.query(`
+            SELECT 
+                EXTRACT(DAY FROM created_at)::int as day,
+                COUNT(*) as signups,
+                COALESCE(SUM(
+                    CASE plan
+                        WHEN '24hr' THEN 350
+                        WHEN '3d'  THEN 1050
+                        WHEN '5d'  THEN 1750
+                        WHEN '7d'  THEN 2400
+                        WHEN '14d' THEN 4100
+                        WHEN '30d' THEN 7500
+                        ELSE 0
+                    END
+                ), 0) as revenue
+            FROM payment_queue
+            WHERE 
+                status = 'processed'
+                AND created_at >= $1
+                AND created_at < $2
+            GROUP BY day
+            ORDER BY day ASC
+        `, [startOfMonth, endOfMonth]);
+
+        const dailyRevenue = [];
+        for (let d = 1; d <= today; d++) {
+            dailyRevenue.push({ day: d, revenue: 0, signups: 0 });
+        }
+        for (const row of dailyCurrent.rows) {
+            const d = row.day;
+            if (d <= today) {
+                dailyRevenue[d - 1].revenue = Number(row.revenue);
+                dailyRevenue[d - 1].signups = Number(row.signups);
+            }
+        }
+        const currentMonthName = now.toLocaleString('default', { month: 'long', year: 'numeric' });
+
+        // ========== GET ACTIVE ADMINS (UNIQUE BY USER) WITH ROLE FILTERING ==========
         let activeAdmins = await getActiveAdmins();
         let adminHistory = await getAdminLoginHistory(10);
         let visibleSessionCount = activeAdmins.length;
 
-        // Regular admins must NOT see superadmin sessions or history
         if (session.role !== 'super_admin') {
             activeAdmins = activeAdmins.filter(admin => admin.role !== 'super_admin');
             adminHistory = adminHistory.filter(record => record.role !== 'super_admin');
             visibleSessionCount = activeAdmins.length;
         }
 
-        const stats = metrics.rows[0];
-        const users = recentActivity.rows;
-        
-        // Count realtime statuses
-        const activeCount = users.filter(u => u.realtime_status === 'active').length;
-        const expiredCount = users.filter(u => u.realtime_status === 'expired').length;
-        const pendingCount = users.filter(u => u.realtime_status === 'pending').length;
-        const suspendedCount = users.filter(u => u.realtime_status === 'suspended').length;
-        
-        // Plan distribution
+        // ========== PLAN DISTRIBUTION ==========
+        const planDistribution = await pool.query(`
+            SELECT 
+                plan,
+                COUNT(*) as count,
+                COALESCE(SUM(
+                    CASE plan
+                        WHEN '24hr' THEN 350
+                        WHEN '3d'  THEN 1050
+                        WHEN '5d'  THEN 1750
+                        WHEN '7d'  THEN 2400
+                        WHEN '14d' THEN 4100
+                        WHEN '30d' THEN 7500
+                        ELSE 0
+                    END
+                ), 0) as revenue
+            FROM payment_queue
+            GROUP BY plan
+        `);
+
         const planData = {
             daily: { count: 0, revenue: 0 },
             '3day': { count: 0, revenue: 0 },
@@ -2111,43 +2160,56 @@ async function handleAdminDashboard(req, res, sessionId) {
             '2week': { count: 0, revenue: 0 },
             monthly: { count: 0, revenue: 0 }
         };
-        
-        if (stats.plans_data) {
-            stats.plans_data.forEach(p => {
-                if (p.plan === '24hr') {
-                    planData.daily.count = p.count;
-                    planData.daily.revenue = p.revenue;
-                } else if (p.plan === '3d') {
-                    planData['3day'].count = p.count;
-                    planData['3day'].revenue = p.revenue;
-                } else if (p.plan === '5d') {
-                    planData['5day'].count = p.count;
-                    planData['5day'].revenue = p.revenue;
-                } else if (p.plan === '7d') {
-                    planData.weekly.count = p.count;
-                    planData.weekly.revenue = p.revenue;
-                } else if (p.plan === '14d') {
-                    planData['2week'].count = p.count;
-                    planData['2week'].revenue = p.revenue;
-                } else if (p.plan === '30d') {
-                    planData.monthly.count = p.count;
-                    planData.monthly.revenue = p.revenue;
-                }
-            });
-        }
+        planDistribution.rows.forEach(p => {
+            if (p.plan === '24hr') {
+                planData.daily.count = p.count;
+                planData.daily.revenue = p.revenue;
+            } else if (p.plan === '3d') {
+                planData['3day'].count = p.count;
+                planData['3day'].revenue = p.revenue;
+            } else if (p.plan === '5d') {
+                planData['5day'].count = p.count;
+                planData['5day'].revenue = p.revenue;
+            } else if (p.plan === '7d') {
+                planData.weekly.count = p.count;
+                planData.weekly.revenue = p.revenue;
+            } else if (p.plan === '14d') {
+                planData['2week'].count = p.count;
+                planData['2week'].revenue = p.revenue;
+            } else if (p.plan === '30d') {
+                planData.monthly.count = p.count;
+                planData.monthly.revenue = p.revenue;
+            }
+        });
 
-        // Current session info
-        const currentSession = session;
-        const currentAdminIdleSeconds = currentSession ? 
-            Math.floor((Date.now() - currentSession.lastActivity) / 1000) : 0;
-        const activeSessions = visibleSessionCount;
+        // Combine stats for rendering
+        const stats = {
+            total_users: metrics.rows[0].total_users,
+            active_users: metrics.rows[0].active_users,
+            pending_users: metrics.rows[0].pending_users,
+            expired_users: metrics.rows[0].expired_users,
+            suspended_users: metrics.rows[0].suspended_users,
+            signups_today: metrics.rows[0].signups_today,
+            signups_week: metrics.rows[0].signups_week,
+            total_revenue_lifetime: revenueStats.rows[0].total_revenue_lifetime,
+            revenue_today: revenueStats.rows[0].revenue_today,
+            revenue_week: revenueStats.rows[0].revenue_week,
+            revenue_month: revenueStats.rows[0].revenue_month,
+            plans_data: planDistribution.rows
+        };
+
+        const currentAdminIdleSeconds = Math.floor((Date.now() - session.lastActivity) / 1000);
+        const activeCount = users.rows.filter(u => u.realtime_status === 'active').length;
+        const expiredCount = users.rows.filter(u => u.realtime_status === 'expired').length;
+        const pendingCount = users.rows.filter(u => u.realtime_status === 'pending').length;
+        const suspendedCount = users.rows.filter(u => u.realtime_status === 'suspended').length;
 
         // ========== RENDER DASHBOARD ==========
         res.send(renderDashboard({
             session: session,
             sessionId: sessionId,
             stats: stats,
-            users: users,
+            users: users.rows,
             activeCount: activeCount,
             expiredCount: expiredCount,
             pendingCount: pendingCount,
@@ -2155,13 +2217,13 @@ async function handleAdminDashboard(req, res, sessionId) {
             planData: planData,
             activeAdmins: activeAdmins,
             adminHistory: adminHistory,
-            activeSessions: activeSessions,
+            activeSessions: visibleSessionCount,
             currentAdminIdleSeconds: currentAdminIdleSeconds,
-            currentAdminIP: currentSession ? currentSession.ip : 'Unknown',
+            currentAdminIP: session.ip,
             actionMessage: actionMessage,
             messageType: messageType,
             monthlyRevenue: monthlyRevenue.rows,
-            dailyRevenue: dailyRevenue.rows,
+            dailyRevenue: dailyRevenue,
             currentMonthName: currentMonthName
         }));
 
@@ -2452,6 +2514,7 @@ function getErrorPage(error) {
 </html>`;
 }
 
+// ========== DASHBOARD RENDERER ==========
 function renderDashboard(data) {
     const { 
         session,
@@ -2512,12 +2575,12 @@ function renderDashboard(data) {
                             <i class="fa-solid ${user.plan === '24hr' ? 'fa-bolt' : user.plan === '3d' ? 'fa-clock' : user.plan === '5d' ? 'fa-calendar' : user.plan === '7d' ? 'fa-rocket' : user.plan === '14d' ? 'fa-star' : 'fa-crown'}"></i> 
                             ${planLabel(user.plan)}
                         </span>
-                     </td>
+                    </td>
                     <td>
                         <span class="badge ${statusBadge}">
                             <i class="fa-solid ${statusIcon}"></i> ${statusLabel}
                         </span>
-                     </td>
+                    </td>
                     <td class="time-cell">
                         ${created.toLocaleDateString('en-NG')}<br>
                         <small>${created.toLocaleTimeString('en-NG', {hour:'2-digit',minute:'2-digit'})}</small>
@@ -3028,17 +3091,29 @@ function renderDashboard(data) {
                 <h4 style="margin-bottom: 16px; color: var(--text-primary);"><i class="fa-solid fa-calendar-alt"></i> Last 12 Months</h4>
                 <div style="overflow-x: auto; margin-bottom: 32px;">
                     <table style="width: 100%; border-collapse: collapse; min-width: 300px;">
-                        <thead><tr><th style="text-align:left; padding: 12px;">Month</th><th style="text-align:right; padding: 12px;">Revenue</th></tr></thead>
+                        <thead>
+                            <tr><th style="text-align:left; padding: 12px;">Month</th><th style="text-align:right; padding: 12px;">Revenue</th></tr>
+                        </thead>
                         <tbody>
-                            ${monthlyRevenue.map(m => `<tr><td style="padding: 10px; border-bottom: 1px solid var(--border);">${m.month_label}</td><td style="padding: 10px; text-align: right; border-bottom: 1px solid var(--border); font-weight: 600;">${naira(m.revenue)}</td></tr>`).join('')}
+                            ${monthlyRevenue.map(m => `
+                                <tr class="month-row" data-month-start="${new Date(m.month_start).toISOString().split('T')[0]}" data-month-label="${m.month_label}" onclick="loadMonthDetails(this)" style="cursor: pointer;">
+                                    <td style="padding: 10px; border-bottom: 1px solid var(--border);">${m.month_label}</td>
+                                    <td style="padding: 10px; text-align: right; border-bottom: 1px solid var(--border); font-weight: 600;">${naira(m.revenue)}</td>
+                                </tr>
+                            `).join('')}
                         </tbody>
                     </table>
                 </div>
-                <h4 style="margin-bottom: 16px; color: var(--text-primary);"><i class="fa-solid fa-chart-simple"></i> Daily Progress – ${currentMonthName}</h4>
+                <h4 style="margin-bottom: 16px; color: var(--text-primary); display: flex; justify-content: space-between; align-items: center;">
+                    <span><i class="fa-solid fa-chart-simple"></i> Daily Progress – <span id="selectedMonthLabel">${currentMonthName}</span></span>
+                    <button id="resetMonthBtn" class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="resetToCurrentMonth()">
+                        <i class="fa-solid fa-arrow-left"></i> Current Month
+                    </button>
+                </h4>
                 <div style="background: var(--bg-secondary); border-radius: var(--radius-sm); padding: 20px;">
                     <div id="dailyProgressContainer" style="display: flex; flex-direction: column; gap: 16px;"></div>
                     <div style="margin-top: 20px; font-size: 13px; color: var(--text-secondary); text-align: center;">
-                        <i class="fa-solid fa-info-circle"></i> Hover over a bar to see exact amount
+                        <i class="fa-solid fa-info-circle"></i> Bars show revenue; signup counts are inside each bar
                     </div>
                 </div>
             </div>
@@ -3123,8 +3198,21 @@ function renderDashboard(data) {
             </div>
             <div class="tbl-wrap">
                 <table>
-                    <thead><tr><th>Username</th><th>Password</th><th>Plan</th><th>Status</th><th>Created</th><th>Expires</th><th>MAC Address</th><th>Actions</th></tr></thead>
-                    <tbody id="usersTbody">${userRows}</tbody>
+                    <thead>
+                        <tr>
+                            <th>Username</th>
+                            <th>Password</th>
+                            <th>Plan</th>
+                            <th>Status</th>
+                            <th>Created</th>
+                            <th>Expires</th>
+                            <th>MAC Address</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="usersTbody">
+                        ${userRows}
+                    </tbody>
                 </table>
             </div>
         </div>
@@ -3144,6 +3232,7 @@ function renderDashboard(data) {
         let sessionEndTime = ${sessionEnd};
         let extendTargetId = null;
         let currentFilter = 'all';
+        let activeMonthRow = null;
 
         function formatNaira(amount) {
             const num = Number(amount) || 0;
@@ -3194,34 +3283,83 @@ function renderDashboard(data) {
         function showAdminSessions() { document.getElementById('adminSessionsModal').classList.add('open'); }
         function closeModal(modalId) { document.getElementById(modalId).classList.remove('open'); }
 
+        function highlightMonthRow(row) {
+            if (activeMonthRow) activeMonthRow.classList.remove('active-month-row');
+            activeMonthRow = row;
+            activeMonthRow.classList.add('active-month-row');
+        }
+
+        async function loadMonthDetails(rowElement) {
+            const monthStart = rowElement.getAttribute('data-month-start');
+            const monthLabel = rowElement.getAttribute('data-month-label');
+            if (!monthStart) return;
+            highlightMonthRow(rowElement);
+            const container = document.getElementById('dailyProgressContainer');
+            container.innerHTML = '<p style="color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Loading...</p>';
+            try {
+                const response = await fetch('/admin/monthly-details?month=' + monthStart);
+                const result = await response.json();
+                if (result.success) {
+                    populateDailyProgress(result.data, monthLabel);
+                } else {
+                    container.innerHTML = '<p style="color: var(--danger);">Failed to load data.</p>';
+                }
+            } catch (error) {
+                console.error(error);
+                container.innerHTML = '<p style="color: var(--danger);">Network error. Please try again.</p>';
+            }
+        }
+
+        function populateDailyProgress(dailyData, monthLabel) {
+            const container = document.getElementById('dailyProgressContainer');
+            const labelSpan = document.getElementById('selectedMonthLabel');
+            if (labelSpan) labelSpan.innerText = monthLabel;
+            if (!dailyData || dailyData.length === 0) {
+                container.innerHTML = '<p style="color: var(--text-muted);">No revenue recorded yet this month.</p>';
+                return;
+            }
+            const maxRevenue = Math.max(...dailyData.map(d => Number(d.revenue || 0)), 1);
+            let barsHtml = '';
+            for (let i = 0; i < dailyData.length; i++) {
+                const day = dailyData[i];
+                const revenue = Number(day.revenue) || 0;
+                const signups = Number(day.signups) || 0;
+                const percent = (revenue / maxRevenue) * 100;
+                const amountFormatted = formatNaira(revenue);
+                barsHtml += '<div style="display: flex; align-items: center; gap: 16px;">' +
+                    '<div style="width: 60px; font-weight: 600; color: var(--text-secondary);">Day ' + day.day + '</div>' +
+                    '<div style="flex: 1; background: var(--bg-primary); border-radius: 20px; height: 36px; overflow: hidden; position: relative;">' +
+                        '<div class="progress-bar" style="width: 0%; background: linear-gradient(90deg, var(--accent), var(--purple)); height: 100%; display: flex; align-items: center; justify-content: flex-end; padding-right: 12px; color: white; font-size: 13px; font-weight: bold; border-radius: 20px;">' + amountFormatted + ' | ' + signups + ' signup' + (signups !== 1 ? 's' : '') + '</div>' +
+                    '</div>' +
+                '</div>';
+            }
+            container.innerHTML = barsHtml;
+            setTimeout(() => {
+                const bars = document.querySelectorAll('#dailyProgressContainer .progress-bar');
+                for (let i = 0; i < bars.length; i++) {
+                    const revenue = Number(dailyData[i].revenue) || 0;
+                    bars[i].style.width = (revenue / maxRevenue) * 100 + '%';
+                }
+            }, 50);
+        }
+
+        function resetToCurrentMonth() {
+            const currentDailyData = ${dailyRevenueJson};
+            populateDailyProgress(currentDailyData, "${currentMonthName}");
+            if (activeMonthRow) {
+                activeMonthRow.classList.remove('active-month-row');
+                activeMonthRow = null;
+            }
+        }
+
         function showRevenueModal() {
             const container = document.getElementById('dailyProgressContainer');
             if (container && container.innerHTML === '') {
                 const dailyData = ${dailyRevenueJson};
-                if (dailyData.length === 0) {
-                    container.innerHTML = '<p style="color: var(--text-muted);">No revenue recorded yet this month.</p>';
-                } else {
-                    const maxRevenue = Math.max(...dailyData.map(d => Number(d.daily_total)), 1);
-                    let barsHtml = '';
-                    for (let i = 0; i < dailyData.length; i++) {
-                        const day = dailyData[i];
-                        const percent = (day.daily_total / maxRevenue) * 100;
-                        const amountFormatted = formatNaira(day.daily_total);
-                        barsHtml += '<div style="display: flex; align-items: center; gap: 16px;">' +
-                            '<div style="width: 60px; font-weight: 600; color: var(--text-secondary);">Day ' + day.day + '</div>' +
-                            '<div style="flex: 1; background: var(--bg-primary); border-radius: 20px; height: 36px; overflow: hidden; position: relative;">' +
-                                '<div class="progress-bar" style="width: 0%; background: linear-gradient(90deg, var(--accent), var(--purple)); height: 100%; display: flex; align-items: center; justify-content: flex-end; padding-right: 12px; color: white; font-size: 13px; font-weight: bold; border-radius: 20px;" data-amount="' + amountFormatted + '">' + amountFormatted + '</div>' +
-                            '</div>' +
-                        '</div>';
-                    }
-                    container.innerHTML = barsHtml;
-                    setTimeout(() => {
-                        const bars = document.querySelectorAll('#dailyProgressContainer .progress-bar');
-                        for (let i = 0; i < bars.length; i++) {
-                            const targetWidth = (dailyData[i].daily_total / maxRevenue) * 100;
-                            bars[i].style.width = targetWidth + '%';
-                        }
-                    }, 50);
+                populateDailyProgress(dailyData, "${currentMonthName}");
+                if (activeMonthRow) {
+                    activeMonthRow.classList.remove('active-month-row');
+                    activeMonthRow = null;
                 }
             }
             document.getElementById('revenueModal').classList.add('open');
