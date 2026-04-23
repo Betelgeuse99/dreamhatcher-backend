@@ -1669,9 +1669,8 @@ function getErrorPage(error) { /* unchanged – keep as before */ }
 function renderDashboard(data) {
     const { session, sessionId, stats, users, activeCount, expiredCount, pendingCount, suspendedCount, activeAdmins, activeSessions, currentAdminIdleSeconds, actionMessage, messageType, monthlyRevenue } = data;
     const now = new Date();
-    const sessionEnd = now.getTime() + (5 * 60 * 1000);
 
-    // Build user table rows: first column = username + email (stacked), second column = password
+    // Build user rows: first column = username + email (stacked), second column = password
     let userRows = '';
     if (users.length === 0) {
         userRows = '<tr><td colspan="7" style="text-align:center;padding:48px;color:var(--text-muted);">No users found</td></tr>';
@@ -1707,7 +1706,7 @@ function renderDashboard(data) {
         });
     }
 
-    // Build admin sessions rows (unchanged)
+    // Build admin sessions rows
     let adminSessionsRows = '';
     activeAdmins.forEach(admin => {
         const loginTime = new Date(admin.login_time);
@@ -1718,10 +1717,10 @@ function renderDashboard(data) {
         adminSessionsRows += `
             <tr style="${isCurrentUser ? 'background: rgba(139, 92, 246, 0.1);' : ''}">
                 <td style="padding: 12px;">
-                    <strong>${admin.username}</strong> ${isCurrentUser ? '<span style="color: #10b981;">(You)</span>' : ''}
+                    <strong>${escapeHtml(admin.username)}</strong> ${isCurrentUser ? '<span style="color: #10b981;">(You)</span>' : ''}
                     <div style="font-size: 11px; color: var(--text-muted);">${admin.role.replace('_', ' ')}</div>
                 </td>
-                <td style="padding: 12px; font-family: monospace;">${admin.admin_ip}</td>
+                <td style="padding: 12px; font-family: monospace;">${escapeHtml(admin.admin_ip)}</td>
                 <td style="padding: 12px;">${loginTime.toLocaleString()}</td>
                 <td style="padding: 12px; ${idleTooLong ? 'color: var(--danger); font-weight: 600;' : ''}">${idleMins}m ${idleSeconds}s idle</td>
             </tr>
@@ -1820,7 +1819,6 @@ function renderDashboard(data) {
         td { padding: 16px 24px; border-bottom: 1px solid var(--border); font-size: 14px; vertical-align: middle; }
         tr:hover td { background: rgba(51, 65, 85, 0.3); }
 
-        /* New column styles */
         .user-email-cell {
             min-width: 260px;
             max-width: 320px;
@@ -1834,7 +1832,7 @@ function renderDashboard(data) {
         }
         .user-email {
             font-size: 12px;
-            color: var(--text-muted);
+            color: var(--text-primary);  /* WHITE email */
             word-break: break-word;
         }
         .password-cell {
@@ -1973,7 +1971,7 @@ function renderDashboard(data) {
                             <tr><th>Admin User</th><th>IP Address</th><th>Login Time</th><th>Idle Time</th></tr>
                         </thead>
                         <tbody>
-                            ${activeAdmins.length > 0 ? adminSessionsRows : '<tr><td colspan="4" style="text-align:center; padding:32px;">No active admin sessions</td></tr>'}
+                            ${activeAdmins.length > 0 ? adminSessionsRows : '<tr><td colspan="4" style="text-align:center; padding:32px;">No active admin sessions</td></td>'}
                         </tbody>
                     </table>
                 </div>
@@ -2014,7 +2012,7 @@ function renderDashboard(data) {
 
                 <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
                     <h4 style="color: var(--text-primary); margin: 0;"><i class="fa-solid fa-chart-simple"></i> Daily Progress – <span id="currentMonthLabel">Current Month</span></h4>
-                    <button id="returnToCurrentMonthBtn" class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="returnToCurrentMonth()"><i class="fa-solid fa-arrow-left"></i> Return to Current Month</button>
+                    <button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="returnToCurrentMonth()"><i class="fa-solid fa-arrow-left"></i> Return to Current Month</button>
                 </div>
                 <div style="background: var(--bg-secondary); border-radius: var(--radius-sm); padding: 20px;">
                     <div id="dailyProgressContainer" style="display: flex; flex-direction: column; gap: 16px;">
