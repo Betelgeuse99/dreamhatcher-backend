@@ -1566,13 +1566,13 @@ async function handleAdminDashboard(req, res, sessionId) {
                 actionMessage = 'User status changed to ' + newStatus; messageType = 'info';
             }
         }
-        if (action === 'cleanup') {
-            if (!hasPermission(session, 'delete')) { actionMessage = 'Permission denied: Cannot perform cleanup'; messageType = 'error'; }
-            else {
-                const result = await pool.query(`DELETE FROM payment_queue WHERE (status = 'expired') OR (status = 'processed' AND expires_at < NOW() - INTERVAL '7 days') OR (status = 'pending' AND created_at < NOW() - INTERVAL '7 days')`);
-                actionMessage = 'Cleaned up ' + result.rowCount + ' expired/pending users'; messageType = 'success';
-            }
-        }
+      //  if (action === 'cleanup') {
+        //    if (!hasPermission(session, 'delete')) { actionMessage = 'Permission denied: Cannot perform cleanup'; messageType = 'error'; }
+          //  else {
+            //    const result = await pool.query(`DELETE FROM payment_queue WHERE (status = 'expired') OR (status = 'processed' AND expires_at < NOW() - INTERVAL '7 days') OR (status = 'pending' AND created_at < NOW() - INTERVAL '7 days')`);
+              //  actionMessage = 'Cleaned up ' + result.rowCount + ' expired/pending users'; messageType = 'success';
+            //}
+       // }
         if (action === 'sync_expired') {
             if (!hasPermission(session, 'update')) { actionMessage = 'Permission denied: Cannot sync expired users'; messageType = 'error'; }
             else { const expiredUsers = await syncExpiredWithMikroTik(); actionMessage = 'Synced ' + expiredUsers.length + ' expired users with MikroTik'; messageType = 'success'; }
@@ -2075,7 +2075,7 @@ function renderDashboard(data) {
                 <button class="modal-close" onclick="closeRevenueModal()">&times;</button>
             </div>
             <div class="modal-body">
-                <h4 style="margin-bottom: 16px; color: var(--text-primary);"><i class="fa-solid fa-calendar-alt"></i> Last 12 Months (Descending)</h4>
+                <h4 style="margin-bottom: 16px; color: var(--text-primary);"><i class="fa-solid fa-calendar-alt"></i> Monthly Overview</h4>
                 <div style="overflow-x: auto; margin-bottom: 32px;">
                     <table style="width: 100%; border-collapse: collapse; min-width: 300px;">
                         <thead><tr><th style="text-align:left; padding: 12px;">Month</th><th style="text-align:right; padding: 12px;">Revenue</th></tr></thead>
@@ -2102,7 +2102,7 @@ function renderDashboard(data) {
                         <div style="text-align: center; color: var(--text-muted);">Click a month to view daily revenue & signups</div>
                     </div>
                     <div style="margin-top: 20px; font-size: 13px; color: var(--text-secondary); text-align: center;">
-                        <i class="fa-solid fa-info-circle"></i> Each day shows revenue (white) and signups (green)
+                        <i class="fa-solid fa-info-circle"></i> Each day shows revenue and Sign-ups
                     </div>
                 </div>
             </div>
@@ -2148,7 +2148,7 @@ function renderDashboard(data) {
         <div style="margin-bottom: 40px; display: flex; justify-content: space-between; align-items: flex-end;">
             <div>
                 <h1 style="font-size: 28px; font-weight: 800; margin-bottom: 8px;">Network Dashboard</h1>
-                <p style="color: var(--text-secondary);">Real-time monitoring and management of WiFi clients</p>
+                <p style="color: var(--text-secondary);">Live WiFi client tracking $ control</p>
             </div>
             <div style="text-align: right; color: var(--text-muted); font-size: 13px;">
                 <i class="fa-solid fa-server"></i> Server Time: ${now.toLocaleTimeString()}
@@ -2204,7 +2204,7 @@ function renderDashboard(data) {
             <div class="card-header">
                 <div>
                     <div class="card-title"><i class="fa-solid fa-users-gear" style="color:var(--accent); margin-right:10px;"></i>WiFi Client Management</div>
-                    <div class="card-subtitle">Latest 100 users – Username + Email, separate Password column</div>
+                    <div class="card-subtitle">Latest 100 users</div>
                 </div>
                 <div class="card-tools">
                     <div class="search-wrap"><i class="fa-solid fa-magnifying-glass"></i><input type="text" class="search-input" id="searchInput" placeholder="Search username, MAC, email..." autocomplete="off"></div>
