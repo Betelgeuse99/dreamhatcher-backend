@@ -222,7 +222,7 @@ app.post('/api/monnify-webhook', async (req, res) => {
       }
     }
 
-    const username = `user_${Date.now().toString().slice(-6)}`;
+    const username = `dht${Date.now().toString().slice(-5)}`;
     const password = generatePassword();
     const oneTimeToken = crypto.randomBytes(32).toString('hex');
 
