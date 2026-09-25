@@ -1260,9 +1260,8 @@ app.get('/', (req, res) => {
   res.send(html);
 });
 
-// DREAM HATCHER ENTERPRISE ADMIN DASHBOARD v4.6
+// DREAM HATCHER ENTERPRISE ADMIN DASHBOARD v5.0
 // Professional WiFi Management System with Role-Based Access Control
-// COLUMN LAYOUT: Username + Email (stacked) | Password | Plan | Status | Created | Expires | MAC Address
 // ============================================
 
 // ========== SECURITY CONFIGURATION ==========
@@ -1279,11 +1278,12 @@ const ADMIN_USERS = {
     }
 };
 
-const SESSION_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+const SESSION_TIMEOUT = 5 * 60 * 1000;
+const USERS_PER_PAGE = 100;
 const adminSessions = {};
 const adminUserSessions = {};
 
-// ========== HELPER FUNCTIONS ==========
+// ========== HELPERS ==========
 function naira(amount) {
     const num = Number(amount) || 0;
     return '₦' + num.toLocaleString('en-NG');
@@ -1300,7 +1300,7 @@ function escapeHtml(text) {
     return text.toString().replace(/[&<>"']/g, m => map[m]);
 }
 
-// ========== ADMIN SESSION MANAGEMENT ==========
+// ========== ADMIN LOGS TABLE ==========
 async function createAdminLogsTable() {
     try {
         const tableCheck = await pool.query(`SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'admin_logs');`);
@@ -1318,7 +1318,7 @@ async function createAdminLogsTable() {
             }
             await pool.query(`UPDATE admin_logs SET username = 'unknown' WHERE username IS NULL`);
             await pool.query(`UPDATE admin_logs SET role = 'unknown' WHERE role IS NULL`);
-            if (changed) console.log('✅ Admin logs table updated');
+            if (changed) console.log('Admin logs table updated');
         } else {
             await pool.query(`
                 CREATE TABLE IF NOT EXISTS admin_logs (
@@ -1334,7 +1334,7 @@ async function createAdminLogsTable() {
                     is_active BOOLEAN DEFAULT true
                 );
             `);
-            console.log('✅ Created admin_logs table');
+            console.log('Created admin_logs table');
         }
         try {
             await pool.query(`CREATE INDEX IF NOT EXISTS idx_admin_logs_session ON admin_logs(session_id)`);
@@ -1481,7 +1481,7 @@ app.get('/admin/api/daily', async (req, res) => {
 });
 
 app.get('/admin', async (req, res) => {
-    const { user, pwd, action, userId, newPlan, sessionId, exportData, forceLogout } = req.query;
+    const { user, pwd, action, userId, newPlan, sessionId, exportData, forceLogout, page } = req.query;
     
     if (forceLogout === 'all' && sessionId && adminSessions[sessionId]) {
         const currentSession = adminSessions[sessionId];
@@ -1566,13 +1566,6 @@ async function handleAdminDashboard(req, res, sessionId) {
                 actionMessage = 'User status changed to ' + newStatus; messageType = 'info';
             }
         }
-      //  if (action === 'cleanup') {
-        //    if (!hasPermission(session, 'delete')) { actionMessage = 'Permission denied: Cannot perform cleanup'; messageType = 'error'; }
-          //  else {
-            //    const result = await pool.query(`DELETE FROM payment_queue WHERE (status = 'expired') OR (status = 'processed' AND expires_at < NOW() - INTERVAL '7 days') OR (status = 'pending' AND created_at < NOW() - INTERVAL '7 days')`);
-              //  actionMessage = 'Cleaned up ' + result.rowCount + ' expired/pending users'; messageType = 'success';
-            //}
-       // }
         if (action === 'sync_expired') {
             if (!hasPermission(session, 'update')) { actionMessage = 'Permission denied: Cannot sync expired users'; messageType = 'error'; }
             else { const expiredUsers = await syncExpiredWithMikroTik(); actionMessage = 'Synced ' + expiredUsers.length + ' expired users with MikroTik'; messageType = 'success'; }
@@ -1614,23 +1607,38 @@ async function handleAdminDashboard(req, res, sessionId) {
             SELECT u.*, r.* FROM user_stats u, revenue_stats r
         `);
 
+        // ===== PAGINATION =====
+        const requestedPage = parseInt(req.query.page) || 1;
+        const currentPage = Math.max(1, requestedPage);
+        const offset = (currentPage - 1) * USERS_PER_PAGE;
+
+        const countResult = await pool.query(`SELECT COUNT(*)::int as total FROM payment_queue`);
+        const totalUsers = countResult.rows[0].total;
+        const totalPages = Math.max(1, Math.ceil(totalUsers / USERS_PER_PAGE));
+        const safePage = Math.min(currentPage, totalPages);
+        const safeOffset = (safePage - 1) * USERS_PER_PAGE;
+
         const recentActivity = await pool.query(`
             SELECT id, mikrotik_username, mikrotik_password, plan, status, mac_address, customer_email, created_at, expires_at,
                    COALESCE(last_sync, created_at) as last_sync,
                    CASE WHEN status = 'expired' THEN 'expired' WHEN status = 'pending' THEN 'pending' WHEN status = 'suspended' THEN 'suspended'
                         WHEN status = 'processed' AND (expires_at IS NULL OR expires_at > NOW()) THEN 'active'
                         WHEN status = 'processed' AND expires_at <= NOW() THEN 'expired' ELSE 'unknown' END as realtime_status
-            FROM payment_queue ORDER BY created_at DESC LIMIT 100
-        `);
+            FROM payment_queue ORDER BY created_at DESC LIMIT $1 OFFSET $2
+        `, [USERS_PER_PAGE, safeOffset]);
 
+        // ===== MONTHLY REVENUE (ALL TIME — for year dropdown) =====
         const monthlyRevenue = await pool.query(`
             WITH months AS (
                 SELECT DATE_TRUNC('month', created_at) as month_start,
                        SUM(CASE plan WHEN '24hr' THEN 350 WHEN '3d' THEN 1050 WHEN '5d' THEN 1750 WHEN '7d' THEN 2400 WHEN '14d' THEN 4100 WHEN '30d' THEN 7500 ELSE 0 END) as total
-                FROM payment_queue WHERE created_at >= NOW() - INTERVAL '12 months' GROUP BY DATE_TRUNC('month', created_at)
-                ORDER BY month_start DESC
+                FROM payment_queue GROUP BY DATE_TRUNC('month', created_at)
             )
-            SELECT to_char(month_start, 'Mon YYYY') as month_label, to_char(month_start, 'YYYY-MM') as month_raw, month_start, COALESCE(total, 0) as revenue FROM months LIMIT 12
+            SELECT to_char(month_start, 'Mon YYYY') as month_label,
+                   to_char(month_start, 'YYYY-MM') as month_raw,
+                   to_char(month_start, 'YYYY') as year_raw,
+                   month_start, COALESCE(total, 0) as revenue
+            FROM months ORDER BY month_start DESC
         `);
 
         let activeAdmins = await getActiveAdmins();
@@ -1653,7 +1661,8 @@ async function handleAdminDashboard(req, res, sessionId) {
         res.send(renderDashboard({
             session, sessionId, stats, users, activeCount, expiredCount, pendingCount, suspendedCount,
             activeAdmins, activeSessions, currentAdminIdleSeconds, currentAdminIP: currentSession ? currentSession.ip : 'Unknown',
-            actionMessage, messageType, monthlyRevenue: monthlyRevenue.rows
+            actionMessage, messageType, monthlyRevenue: monthlyRevenue.rows,
+            currentPage: safePage, totalPages, totalUsers, usersPerPage: USERS_PER_PAGE
         }));
     } catch (error) {
         console.log('Dashboard handler error:', error.message);
@@ -1671,18 +1680,19 @@ function getLoginForm(sessionExpired) {
     <title>Admin Portal • Dream Hatcher</title>
     <style>
         :root {
-            --bg-primary: #0f172a;
-            --bg-secondary: #1e293b;
-            --bg-card: #334155;
-            --border: #475569;
-            --text-primary: #f1f5f9;
-            --text-secondary: #cbd5e1;
-            --text-muted: #94a3b8;
-            --accent: #3b82f6;
-            --accent-hover: #2563eb;
-            --success: #10b981;
-            --danger: #ef4444;
-            --radius: 12px;
+            --bg-primary: #070b14;
+            --bg-secondary: #0d1424;
+            --bg-card: #131c31;
+            --border: #1e2a44;
+            --border-light: #2d3b5c;
+            --text-primary: #eef2f8;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent: #10b981;
+            --accent-hover: #059669;
+            --accent-soft: rgba(16, 185, 129, 0.12);
+            --danger: #fb7185;
+            --radius: 14px;
         }
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', system-ui, sans-serif; }
         body {
@@ -1692,7 +1702,9 @@ function getLoginForm(sessionExpired) {
             display: flex;
             align-items: center;
             justify-content: center;
-            background-image: radial-gradient(circle at 50% 50%, #1e293b 0%, #0f172a 100%);
+            background-image:
+                radial-gradient(circle at 20% 20%, rgba(16, 185, 129, 0.08) 0%, transparent 50%),
+                radial-gradient(circle at 80% 80%, rgba(251, 191, 36, 0.05) 0%, transparent 50%);
         }
         .login-container { width: 100%; max-width: 420px; padding: 24px; }
         .login-card {
@@ -1700,24 +1712,24 @@ function getLoginForm(sessionExpired) {
             border: 1px solid var(--border);
             border-radius: 20px;
             padding: 40px;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
             text-align: center;
         }
         .logo { margin-bottom: 32px; }
-        h1 { font-size: 24px; font-weight: 800; margin-bottom: 8px; }
+        h1 { font-size: 24px; font-weight: 800; margin-bottom: 8px; letter-spacing: -0.02em; }
         p { color: var(--text-secondary); margin-bottom: 32px; font-size: 15px; }
         .alert {
-            background: rgba(239, 68, 68, 0.1);
-            border: 1px solid rgba(239, 68, 68, 0.2);
-            color: #fca5a5;
+            background: rgba(251, 113, 133, 0.1);
+            border: 1px solid rgba(251, 113, 133, 0.25);
+            color: #fecdd3;
             padding: 12px;
-            border-radius: 8px;
+            border-radius: 10px;
             margin-bottom: 24px;
             font-size: 14px;
             display: ${sessionExpired ? 'block' : 'none'};
         }
         .input-group { text-align: left; margin-bottom: 20px; }
-        label { display: block; font-size: 13px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em; }
+        label { display: block; font-size: 12px; font-weight: 700; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.08em; }
         input {
             width: 100%;
             background: var(--bg-primary);
@@ -1728,21 +1740,22 @@ function getLoginForm(sessionExpired) {
             font-size: 15px;
             transition: all 0.2s;
         }
-        input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15); }
+        input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
         button {
             width: 100%;
             background: var(--accent);
-            color: white;
+            color: #051018;
             border: none;
             padding: 14px;
             border-radius: 10px;
             font-size: 15px;
-            font-weight: 600;
+            font-weight: 700;
             cursor: pointer;
             transition: all 0.2s;
             margin-top: 8px;
+            letter-spacing: 0.02em;
         }
-        button:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4); }
+        button:hover { background: var(--accent-hover); transform: translateY(-1px); box-shadow: 0 8px 20px -6px rgba(16, 185, 129, 0.5); }
         .security-note { margin-top: 28px; font-size: 12px; color: var(--text-muted); padding-top: 20px; border-top: 1px solid var(--border); }
     </style>
 </head>
@@ -1777,30 +1790,61 @@ function getLoginForm(sessionExpired) {
 
 // ========== ERROR PAGE ==========
 function getErrorPage(error) {
-    return `<!DOCTYPE html><html><body style="background:#0f172a;color:#f1f5f9;display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;">
-        <div style="text-align:center;padding:40px;background:#1e293b;border-radius:12px;border:1px solid #334155;">
-            <h1 style="color:#ef4444;">Dashboard Error</h1>
+    return `<!DOCTYPE html><html><body style="background:#070b14;color:#eef2f8;display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;">
+        <div style="text-align:center;padding:40px;background:#0d1424;border-radius:12px;border:1px solid #1e2a44;">
+            <h1 style="color:#fb7185;">Dashboard Error</h1>
             <p>${escapeHtml(error)}</p>
-            <a href="/admin" style="display:inline-block;margin-top:20px;color:#3b82f6;text-decoration:none;">Back to Login</a>
+            <a href="/admin" style="display:inline-block;margin-top:20px;color:#10b981;text-decoration:none;">Back to Login</a>
         </div>
     </body></html>`;
 }
 
-// ========== RENDER DASHBOARD WITH NEW COLUMN LAYOUT ==========
+// ========== DASHBOARD RENDER ==========
 function renderDashboard(data) {
     if (!data || !data.session || !data.stats || !data.users) {
-        return `<!DOCTYPE html><html><body style="background:#0f172a;color:white;padding:20px;"><h2>Dashboard Error</h2><p>Missing data: ${JSON.stringify(Object.keys(data || {}))}</p></body></html>`;
+        return `<!DOCTYPE html><html><body style="background:#070b14;color:white;padding:20px;"><h2>Dashboard Error</h2><p>Missing data: ${JSON.stringify(Object.keys(data || {}))}</p></body></html>`;
     }
     
-    const { session, sessionId, stats, users, activeCount, expiredCount, pendingCount, suspendedCount, activeAdmins, activeSessions, currentAdminIdleSeconds, actionMessage, messageType, monthlyRevenue } = data;
+    const { session, sessionId, stats, users, activeCount, expiredCount, pendingCount, suspendedCount, activeAdmins, activeSessions, currentAdminIdleSeconds, actionMessage, messageType, monthlyRevenue, currentPage, totalPages, totalUsers, usersPerPage } = data;
     const now = new Date();
     const safeUsers = users || [];
     const safeActiveAdmins = activeAdmins || [];
     const safeMonthlyRevenue = monthlyRevenue || [];
     
+    // ===== PAGINATION: derive visible page numbers =====
+    const pageWindow = [];
+    const maxButtons = 7;
+    let startPage = Math.max(1, currentPage - Math.floor(maxButtons / 2));
+    let endPage = Math.min(totalPages, startPage + maxButtons - 1);
+    if (endPage - startPage < maxButtons - 1) startPage = Math.max(1, endPage - maxButtons + 1);
+    for (let p = startPage; p <= endPage; p++) pageWindow.push(p);
+
+    const pageLink = (p) => `/admin?sessionId=${sessionId}&page=${p}`;
+    const recordStart = totalUsers === 0 ? 0 : (currentPage - 1) * usersPerPage + 1;
+    const recordEnd = Math.min(currentPage * usersPerPage, totalUsers);
+
+    // ===== YEAR DROPDOWN: derive years from monthly revenue =====
+    const yearSet = new Set();
+    safeMonthlyRevenue.forEach(m => { if (m.year_raw) yearSet.add(m.year_raw); });
+    const years = Array.from(yearSet).sort((a, b) => b.localeCompare(a));
+    const currentYear = String(now.getFullYear());
+    const defaultYear = years.includes(currentYear) ? currentYear : (years[0] || currentYear);
+
+    // ===== MONTHLY REVENUE ROWS (all years, JS filters by selected year) =====
+    const monthlyRows = safeMonthlyRevenue.map(m => `
+        <tr data-year="${escapeHtml(m.year_raw)}">
+            <td style="padding: 10px; border-bottom: 1px solid var(--border);">
+                <button class="revenue-link" onclick="loadMonthData('${m.month_raw}')">${m.month_label}</button>
+            </td>
+            <td style="padding: 10px; text-align: right; border-bottom: 1px solid var(--border); font-weight: 600; color: var(--gold);">
+                ${naira(m.revenue)}
+            </td>
+        </tr>
+    `).join('');
+
     let userRows = '';
     if (safeUsers.length === 0) {
-        userRows = '<tr><td colspan="7" style="text-align:center;padding:48px;color:var(--text-muted);">No users found</td></tr>';
+        userRows = '<tr><td colspan="7" style="text-align:center;padding:48px;color:var(--text-muted);">No users found on this page</td></tr>';
     } else {
         safeUsers.forEach(user => {
             const created = new Date(user.created_at);
@@ -1841,7 +1885,7 @@ function renderDashboard(data) {
         const isCurrentUser = admin.username === session.username;
         const idleTooLong = admin.idle_seconds > 300;
         adminSessionsRows += `
-            <tr style="${isCurrentUser ? 'background: rgba(139, 92, 246, 0.1);' : ''}">
+            <tr style="${isCurrentUser ? 'background: rgba(16, 185, 129, 0.08);' : ''}">
                 <td style="padding: 12px;">
                     <strong>${escapeHtml(admin.username)}</strong> ${isCurrentUser ? '<span style="color: #10b981;">(You)</span>' : ''}
                     <div style="font-size: 11px; color: var(--text-muted);">${admin.role.replace('_', ' ')}</div>
@@ -1852,6 +1896,26 @@ function renderDashboard(data) {
             </tr>
         `;
     });
+
+    // ===== PAGINATION HTML =====
+    let paginationHtml = '';
+    if (totalPages > 1) {
+        paginationHtml += `<button class="page-btn ${currentPage === 1 ? 'disabled' : ''}" ${currentPage === 1 ? 'disabled' : ''} onclick="location.href='${pageLink(1)}'"><i class="fa-solid fa-angles-left"></i></button>`;
+        paginationHtml += `<button class="page-btn ${currentPage === 1 ? 'disabled' : ''}" ${currentPage === 1 ? 'disabled' : ''} onclick="location.href='${pageLink(currentPage - 1)}'"><i class="fa-solid fa-angle-left"></i></button>`;
+        if (startPage > 1) {
+            paginationHtml += `<button class="page-btn" onclick="location.href='${pageLink(1)}'">1</button>`;
+            if (startPage > 2) paginationHtml += `<span class="page-ellipsis">…</span>`;
+        }
+        pageWindow.forEach(p => {
+            paginationHtml += `<button class="page-btn ${p === currentPage ? 'active' : ''}" onclick="location.href='${pageLink(p)}'">${p}</button>`;
+        });
+        if (endPage < totalPages) {
+            if (endPage < totalPages - 1) paginationHtml += `<span class="page-ellipsis">…</span>`;
+            paginationHtml += `<button class="page-btn" onclick="location.href='${pageLink(totalPages)}'">${totalPages}</button>`;
+        }
+        paginationHtml += `<button class="page-btn ${currentPage === totalPages ? 'disabled' : ''}" ${currentPage === totalPages ? 'disabled' : ''} onclick="location.href='${pageLink(currentPage + 1)}'"><i class="fa-solid fa-angle-right"></i></button>`;
+        paginationHtml += `<button class="page-btn ${currentPage === totalPages ? 'disabled' : ''}" ${currentPage === totalPages ? 'disabled' : ''} onclick="location.href='${pageLink(totalPages)}'"><i class="fa-solid fa-angles-right"></i></button>`;
+    }
     
     return `<!DOCTYPE html>
 <html lang="en">
@@ -1863,35 +1927,52 @@ function renderDashboard(data) {
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-primary: #020617;
-            --bg-secondary: #0f172a;
-            --bg-card: #1e293b;
-            --bg-hover: #334155;
-            --border: #334155;
-            --border-light: #475569;
-            --text-primary: #f8fafc;
-            --text-secondary: #cbd5e1;
+            --bg-primary: #070b14;
+            --bg-secondary: #0d1424;
+            --bg-card: #131c31;
+            --bg-hover: #1c2740;
+            --border: #1e2a44;
+            --border-light: #2d3b5c;
+            --text-primary: #eef2f8;
+            --text-secondary: #94a3b8;
             --text-muted: #64748b;
-            --accent: #3b82f6;
-            --accent-glow: rgba(59, 130, 246, 0.5);
+            --accent: #10b981;
+            --accent-hover: #059669;
+            --accent-glow: rgba(16, 185, 129, 0.35);
+            --accent-soft: rgba(16, 185, 129, 0.12);
+            --gold: #fbbf24;
+            --gold-soft: rgba(251, 191, 36, 0.12);
             --success: #10b981;
-            --success-bg: rgba(16, 185, 129, 0.1);
+            --success-bg: rgba(16, 185, 129, 0.12);
             --warning: #f59e0b;
-            --warning-bg: rgba(245, 158, 11, 0.1);
-            --danger: #ef4444;
-            --danger-bg: rgba(239, 68, 68, 0.1);
-            --purple: #8b5cf6;
-            --purple-bg: rgba(139, 92, 246, 0.1);
+            --warning-bg: rgba(245, 158, 11, 0.12);
+            --danger: #fb7185;
+            --danger-bg: rgba(251, 113, 133, 0.12);
+            --purple: #a78bfa;
+            --purple-bg: rgba(167, 139, 250, 0.12);
+            --cyan: #22d3ee;
+            --cyan-bg: rgba(34, 211, 238, 0.12);
             --radius: 16px;
             --radius-sm: 10px;
-            --shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            --shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.6);
+            --shadow-lg: 0 25px 50px -12px rgba(0, 0, 0, 0.8);
         }
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Plus Jakarta Sans', sans-serif; }
-        body { background: var(--bg-primary); color: var(--text-primary); min-height: 100vh; overflow-x: hidden; }
+        body {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+            background-image:
+                radial-gradient(ellipse at top left, rgba(16, 185, 129, 0.06) 0%, transparent 40%),
+                radial-gradient(ellipse at bottom right, rgba(251, 191, 36, 0.04) 0%, transparent 40%);
+            background-attachment: fixed;
+        }
         .topbar {
             height: 72px;
-            background: rgba(15, 23, 42, 0.8);
-            backdrop-filter: blur(12px);
+            background: rgba(13, 20, 36, 0.85);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
             border-bottom: 1px solid var(--border);
             display: flex;
             align-items: center;
@@ -1903,77 +1984,84 @@ function renderDashboard(data) {
         }
         .brand { display: flex; align-items: center; gap: 14px; }
         .brand-logo { width: 48px; height: 48px; border-radius: 12px; background: transparent; display: flex; align-items: center; justify-content: center; }
-        .brand-name { font-size: 20px; font-weight: 800; letter-spacing: -0.5px; }
+        .brand-name { font-size: 20px; font-weight: 800; letter-spacing: -0.02em; }
         .brand-user { font-size: 13px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; }
         .user-role { 
-            background: ${session.role === 'super_admin' ? 'var(--purple-bg)' : 'var(--success-bg)'}; 
-            color: ${session.role === 'super_admin' ? 'var(--purple)' : 'var(--success)'}; 
-            padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; text-transform: uppercase; 
+            background: ${session.role === 'super_admin' ? 'var(--gold-soft)' : 'var(--accent-soft)'}; 
+            color: ${session.role === 'super_admin' ? 'var(--gold)' : 'var(--accent)'}; 
+            padding: 3px 10px; border-radius: 10px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
         }
         .nav-actions { display: flex; align-items: center; gap: 12px; }
-        .chip { display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 20px; font-size: 13px; font-weight: 600; background: var(--success-bg); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.3); }
+        .chip { display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 20px; font-size: 13px; font-weight: 600; background: var(--accent-soft); color: var(--accent); border: 1px solid rgba(16, 185, 129, 0.3); }
+        .chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: pulse 2s infinite; }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
         .btn { display: inline-flex; align-items: center; gap: 8px; padding: 9px 18px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary); font-size: 14px; font-weight: 600; cursor: pointer; text-decoration: none; transition: all 0.2s; white-space: nowrap; }
         .btn:hover { background: var(--bg-hover); border-color: var(--border-light); }
-        .btn-primary { background: var(--accent); border-color: var(--accent); color: white; }
-        .btn-danger { color: var(--danger); }
+        .btn-primary { background: var(--accent); border-color: var(--accent); color: #051018; }
+        .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); box-shadow: 0 8px 20px -6px var(--accent-glow); }
+        .btn-danger { color: var(--danger); border-color: rgba(251, 113, 133, 0.3); }
         .btn-danger:hover { background: var(--danger-bg); border-color: var(--danger); }
         .main-container { max-width: 1400px; margin: 0 auto; padding: 32px; }
         .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-bottom: 40px; }
-        .metric { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; box-shadow: var(--shadow); transition: transform 0.2s; cursor: pointer; }
+        .metric { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; box-shadow: var(--shadow); transition: all 0.25s; cursor: pointer; position: relative; overflow: hidden; }
+        .metric::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, transparent, var(--accent), transparent); opacity: 0; transition: opacity 0.3s; }
         .metric:hover { transform: translateY(-4px); border-color: var(--border-light); }
+        .metric:hover::before { opacity: 1; }
         .metric-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
         .metric-icon { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 20px; }
-        .metric-tag { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 12px; border-radius: 20px; }
-        .metric-value { font-size: 32px; font-weight: 800; margin-bottom: 8px; color: var(--text-primary); }
-        .metric-value.currency { color: var(--success); }
+        .metric-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; padding: 5px 12px; border-radius: 20px; }
+        .metric-value { font-size: 32px; font-weight: 800; margin-bottom: 8px; color: var(--text-primary); letter-spacing: -0.02em; }
+        .metric-value.currency { color: var(--gold); }
         .metric-label { font-size: 14px; color: var(--text-secondary); margin-bottom: 16px; }
         .metric-footer { padding-top: 16px; border-top: 1px solid var(--border); font-size: 13px; color: var(--text-muted); display: flex; align-items: center; gap: 8px; }
         .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 32px; overflow: hidden; box-shadow: var(--shadow); }
         .card-header { padding: 24px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; background: var(--bg-secondary); }
-        .card-title { font-size: 18px; font-weight: 700; color: var(--text-primary); }
-        .card-subtitle { font-size: 14px; color: var(--text-secondary); margin-top: 4px; }
-        .card-tools { display: flex; gap: 12px; align-items: center; }
+        .card-title { font-size: 18px; font-weight: 700; color: var(--text-primary); letter-spacing: -0.01em; }
+        .card-subtitle { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
+        .card-tools { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
         .table-wrap { overflow-x: auto; }
         table { width: 100%; border-collapse: collapse; text-align: left; }
-        th { padding: 16px 24px; background: rgba(15, 23, 42, 0.4); color: var(--text-muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--border); }
+        th { padding: 16px 24px; background: rgba(7, 11, 20, 0.5); color: var(--text-muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; border-bottom: 1px solid var(--border); }
         td { padding: 16px 24px; border-bottom: 1px solid var(--border); font-size: 14px; vertical-align: middle; }
-        tr:hover td { background: rgba(51, 65, 85, 0.3); }
+        tbody tr { transition: background 0.15s; }
+        tbody tr:hover { background: rgba(16, 185, 129, 0.04); }
         .user-email-cell { min-width: 260px; max-width: 320px; word-break: break-word; white-space: normal; }
         .username { font-weight: 700; color: var(--text-primary); margin-bottom: 6px; }
-        .user-email { font-size: 12px; color: var(--text-primary); word-break: break-word; }
+        .user-email { font-size: 12px; color: var(--text-secondary); word-break: break-word; }
         .password-cell { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--text-primary); white-space: nowrap; overflow-x: auto; max-width: 150px; }
-        .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; }
+        .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 700; letter-spacing: 0.05em; }
         .badge-active { background: var(--success-bg); color: var(--success); }
         .badge-expired { background: var(--danger-bg); color: var(--danger); }
         .badge-pending { background: var(--warning-bg); color: var(--warning); }
-        .badge-suspended { background: #334155; color: #94a3b8; }
-        .plan-tag { padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; display: inline-block; }
-        .tag-24hr { background: rgba(59, 130, 246, 0.1); color: var(--accent); }
-        .tag-3d { background: rgba(6, 182, 212, 0.1); color: #06b6d4; }
-        .tag-5d { background: rgba(139, 92, 246, 0.1); color: var(--purple); }
-        .tag-7d { background: rgba(16, 185, 129, 0.1); color: var(--success); }
-        .tag-14d { background: rgba(245, 158, 11, 0.1); color: var(--warning); }
-        .tag-30d { background: rgba(236, 72, 153, 0.1); color: #ec4899; }
+        .badge-suspended { background: rgba(100, 116, 139, 0.2); color: #94a3b8; }
+        .plan-tag { padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; display: inline-block; letter-spacing: 0.02em; }
+        .tag-24hr { background: var(--cyan-bg); color: var(--cyan); }
+        .tag-3d { background: var(--accent-soft); color: var(--accent); }
+        .tag-5d { background: var(--purple-bg); color: var(--purple); }
+        .tag-7d { background: var(--gold-soft); color: var(--gold); }
+        .tag-14d { background: var(--warning-bg); color: var(--warning); }
+        .tag-30d { background: rgba(236, 72, 153, 0.12); color: #ec4899; }
         .search-wrap { position: relative; min-width: 240px; }
         .search-wrap i { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 14px; }
-        .search-input { width: 100%; padding: 11px 16px 11px 40px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-primary); font-size: 14px; transition: all 0.2s; }
-        .search-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2); }
+        .search-input { width: 100%; padding: 11px 16px 11px 40px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 14px; transition: all 0.2s; }
+        .search-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
         .filter-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
-        .filter-tab { padding: 8px 16px; border-radius: 20px; font-size: 13px; font-weight: 600; border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-secondary); cursor: pointer; transition: all 0.2s; }
+        .filter-tab { padding: 8px 16px; border-radius: 20px; font-size: 13px; font-weight: 600; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-secondary); cursor: pointer; transition: all 0.2s; }
         .filter-tab:hover { background: var(--bg-hover); }
-        .filter-tab.active { background: var(--accent); border-color: var(--accent); color: white; }
-        .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(4px); z-index: 1000; align-items: center; justify-content: center; padding: 20px; }
+        .filter-tab.active { background: var(--accent); border-color: var(--accent); color: #051018; }
+        .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(2, 4, 10, 0.85); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); z-index: 1000; align-items: center; justify-content: center; padding: 20px; }
         .modal-overlay.open { display: flex; }
-        .modal-box { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); width: 100%; max-width: 800px; max-height: 90vh; overflow-y: auto; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
-        .modal-header { padding: 24px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+        .modal-box { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); width: 100%; max-width: 800px; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow-lg); }
+        .modal-header { padding: 24px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; background: var(--bg-secondary); z-index: 2; }
         .modal-title { font-size: 18px; font-weight: 700; }
-        .modal-close { background: none; border: none; color: var(--text-muted); font-size: 24px; cursor: pointer; }
+        .modal-close { background: none; border: none; color: var(--text-muted); font-size: 24px; cursor: pointer; transition: color 0.2s; }
+        .modal-close:hover { color: var(--text-primary); }
         .modal-body { padding: 24px; }
-        .modal-footer { padding: 20px 24px; border-top: 1px solid var(--border); background: rgba(15, 23, 42, 0.4); display: flex; justify-content: flex-end; gap: 12px; }
+        .modal-footer { padding: 20px 24px; border-top: 1px solid var(--border); background: rgba(7, 11, 20, 0.4); display: flex; justify-content: flex-end; gap: 12px; position: sticky; bottom: 0; }
         .progress-row { margin-bottom: 12px; }
         .progress-info { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; color: var(--text-secondary); }
         .progress-track { height: 10px; background: var(--bg-primary); border-radius: 5px; overflow: hidden; position: relative; }
-        .progress-fill { height: 100%; background: var(--accent); border-radius: 5px; transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1); }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--gold)); border-radius: 5px; transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1); }
         .revenue-link { background: none; border: none; color: var(--accent); font-weight: 600; cursor: pointer; transition: color 0.2s; display: block; text-align: left; width: 100%; font-size: inherit; }
         .revenue-link:hover { color: var(--text-primary); text-decoration: underline; }
         .page-footer { text-align: center; padding: 32px; border-top: 1px solid var(--border); margin-top: 32px; color: var(--text-muted); font-size: 14px; background: var(--bg-card); border-radius: var(--radius); box-shadow: var(--shadow); }
@@ -1983,6 +2071,25 @@ function renderDashboard(data) {
         .text-danger { color: var(--danger); }
         .text-secondary { color: var(--text-secondary); }
         .font-600 { font-weight: 600; }
+        .pagination-bar { display: flex; justify-content: space-between; align-items: center; padding: 18px 24px; background: var(--bg-secondary); border-top: 1px solid var(--border); flex-wrap: wrap; gap: 16px; }
+        .pagination-info { font-size: 13px; color: var(--text-secondary); }
+        .pagination-info strong { color: var(--text-primary); }
+        .pagination-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .page-btn {
+            min-width: 38px; height: 38px; padding: 0 12px;
+            border-radius: 8px; border: 1px solid var(--border);
+            background: var(--bg-primary); color: var(--text-secondary);
+            font-size: 13px; font-weight: 600; cursor: pointer;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: all 0.15s;
+        }
+        .page-btn:hover:not(.disabled):not(.active) { background: var(--bg-hover); border-color: var(--border-light); color: var(--text-primary); }
+        .page-btn.active { background: var(--accent); border-color: var(--accent); color: #051018; box-shadow: 0 6px 16px -6px var(--accent-glow); }
+        .page-btn.disabled { opacity: 0.35; cursor: not-allowed; }
+        .page-ellipsis { padding: 0 6px; color: var(--text-muted); font-weight: 600; }
+        .year-select { background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+        .year-select:hover { border-color: var(--accent); }
+        .year-select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
         @media (max-width: 768px) {
             .topbar { padding: 0 16px; }
             .main-container { padding: 20px; }
@@ -1992,6 +2099,8 @@ function renderDashboard(data) {
             .search-wrap { min-width: 100%; }
             .user-email-cell { min-width: 180px; max-width: 220px; }
             .password-cell { white-space: normal; word-break: break-word; }
+            .pagination-bar { flex-direction: column; align-items: stretch; }
+            .pagination-controls { justify-content: center; }
         }
     </style>
 </head>
@@ -2008,12 +2117,12 @@ function renderDashboard(data) {
                 <div class="plan-options">
                     <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer;" onclick="selectPlan(this)">
                         <input type="radio" name="extPlan" value="24hr" checked style="margin-right:12px;">
-                        <span style="font-weight:600; color:var(--accent);">Daily Plan</span>
+                        <span style="font-weight:600; color:var(--cyan);">Daily Plan</span>
                         <div style="margin-left:28px; font-size:14px; color:var(--text-secondary);">24 hours • ₦350</div>
                     </label>
                     <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer;" onclick="selectPlan(this)">
                         <input type="radio" name="extPlan" value="3d" style="margin-right:12px;">
-                        <span style="font-weight:600; color:#06b6d4;">3-Day Plan</span>
+                        <span style="font-weight:600; color:var(--accent);">3-Day Plan</span>
                         <div style="margin-left:28px; font-size:14px; color:var(--text-secondary);">3 days • ₦1,050</div>
                     </label>
                     <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer;" onclick="selectPlan(this)">
@@ -2023,7 +2132,7 @@ function renderDashboard(data) {
                     </label>
                     <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer;" onclick="selectPlan(this)">
                         <input type="radio" name="extPlan" value="7d" style="margin-right:12px;">
-                        <span style="font-weight:600; color:var(--success);">Weekly Plan</span>
+                        <span style="font-weight:600; color:var(--gold);">Weekly Plan</span>
                         <div style="margin-left:28px; font-size:14px; color:var(--text-secondary);">7 days • ₦2,400</div>
                     </label>
                     <label class="plan-option" style="display:block; padding:16px; border:2px solid var(--border); border-radius:var(--radius-sm); margin-bottom:12px; cursor:pointer;" onclick="selectPlan(this)">
@@ -2075,21 +2184,23 @@ function renderDashboard(data) {
                 <button class="modal-close" onclick="closeRevenueModal()">&times;</button>
             </div>
             <div class="modal-body">
-                <h4 style="margin-bottom: 16px; color: var(--text-primary);"><i class="fa-solid fa-calendar-alt"></i> Monthly Overview</h4>
-                <div style="overflow-x: auto; margin-bottom: 32px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
+                    <h4 style="margin: 0; color: var(--text-primary);"><i class="fa-solid fa-calendar-alt"></i> Monthly Overview</h4>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <label for="yearFilter" style="font-size: 13px; color: var(--text-secondary); font-weight: 600;">Year:</label>
+                        <select id="yearFilter" class="year-select" onchange="filterYear(this.value)">
+                            <option value="ALL">All Years</option>
+                            ${years.map(y => `<option value="${escapeHtml(y)}" ${y === defaultYear ? 'selected' : ''}>${escapeHtml(y)}</option>`).join('')}
+                        </select>
+                    </div>
+                </div>
+                <div style="overflow-x: auto; margin-bottom: 32px; max-height: 320px; overflow-y: auto;">
                     <table style="width: 100%; border-collapse: collapse; min-width: 300px;">
-                        <thead><tr><th style="text-align:left; padding: 12px;">Month</th><th style="text-align:right; padding: 12px;">Revenue</th></tr></thead>
-                        <tbody>
-                            ${safeMonthlyRevenue.map(m => `
-                                <tr>
-                                    <td style="padding: 10px; border-bottom: 1px solid var(--border);">
-                                        <button class="revenue-link" onclick="loadMonthData('${m.month_raw}')">${m.month_label}</button>
-                                    </td>
-                                    <td style="padding: 10px; text-align: right; border-bottom: 1px solid var(--border); font-weight: 600; color: var(--success);">
-                                        ${naira(m.revenue)}
-                                    </td>
-                                </tr>
-                            `).join('')}
+                        <thead style="position: sticky; top: 0; background: var(--bg-secondary); z-index: 1;">
+                            <tr><th style="text-align:left; padding: 12px;">Month</th><th style="text-align:right; padding: 12px;">Revenue</th></tr>
+                        </thead>
+                        <tbody id="monthlyRowsTbody">
+                            ${monthlyRows || '<tr><td colspan="2" style="padding: 20px; text-align:center; color: var(--text-muted);">No revenue data yet</td></tr>'}
                         </tbody>
                     </table>
                 </div>
@@ -2124,8 +2235,8 @@ function renderDashboard(data) {
             </div>
         </div>
         <div class="nav-actions">
-            <div class="chip"><i class="fa-solid fa-satellite-dish"></i><span>Network Live</span></div>
-            ${hasPermission(session, 'export') ? `<a href="/admin?sessionId=${sessionId}&exportData=csv" class="btn"><i class="fa-solid fa-file-export"></i> <span>Export Users</span></a>` : ''}
+            <div class="chip"><span class="dot"></span><span>Network Live</span></div>
+            ${hasPermission(session, 'export') ? `<a href="/admin?sessionId=${sessionId}&exportData=csv" class="btn"><i class="fa-solid fa-file-export"></i> <span>Export</span></a>` : ''}
             <button class="btn" onclick="location.reload()"><i class="fa-solid fa-rotate"></i> Refresh</button>
             <a href="/admin" class="btn btn-danger"><i class="fa-solid fa-right-from-bracket"></i> <span>Logout</span></a>
         </div>
@@ -2135,7 +2246,7 @@ function renderDashboard(data) {
         ${actionMessage ? `
             <div style="background: ${messageType === 'success' ? 'var(--success-bg)' : messageType === 'error' ? 'var(--danger-bg)' : 'var(--warning-bg)'}; 
                         border: 1px solid ${messageType === 'success' ? 'var(--success)' : messageType === 'error' ? 'var(--danger)' : 'var(--warning)'}; 
-                        color: ${messageType === 'success' ? 'var(--success)' : messageType === 'error' ? '#f87171' : 'var(--warning)'}; 
+                        color: ${messageType === 'success' ? 'var(--success)' : messageType === 'error' ? 'var(--danger)' : 'var(--warning)'}; 
                         padding: 16px 24px; border-radius: 12px; margin-bottom: 32px; display: flex; align-items: center; justify-content: space-between; font-weight: 600;">
                 <div style="display:flex; align-items:center; gap:12px;">
                     <i class="fa-solid ${messageType === 'success' ? 'fa-circle-check' : 'fa-circle-exclamation'}"></i>
@@ -2145,10 +2256,10 @@ function renderDashboard(data) {
             </div>
         ` : ''}
 
-        <div style="margin-bottom: 40px; display: flex; justify-content: space-between; align-items: flex-end;">
+        <div style="margin-bottom: 40px; display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 12px;">
             <div>
-                <h1 style="font-size: 28px; font-weight: 800; margin-bottom: 8px;">Network Dashboard</h1>
-                <p style="color: var(--text-secondary);">Live WiFi client tracking $ control</p>
+                <h1 style="font-size: 28px; font-weight: 800; margin-bottom: 8px; letter-spacing: -0.02em;">Network Dashboard</h1>
+                <p style="color: var(--text-secondary);">Live WiFi client tracking & control</p>
             </div>
             <div style="text-align: right; color: var(--text-muted); font-size: 13px;">
                 <i class="fa-solid fa-server"></i> Server Time: ${now.toLocaleTimeString()}
@@ -2156,10 +2267,10 @@ function renderDashboard(data) {
         </div>
 
         <div class="metrics">
-            <div class="metric" onclick="showRevenueModal()" style="cursor:pointer; border-color: rgba(16, 185, 129, 0.3);">
+            <div class="metric" onclick="showRevenueModal()" style="border-color: rgba(251, 191, 36, 0.25);">
                 <div class="metric-header">
-                    <div class="metric-icon" style="background:var(--success-bg); color:var(--success);"><i class="fa-solid fa-money-bill-trend-up"></i></div>
-                    <span class="metric-tag" style="background:var(--success-bg); color:var(--success);">Lifetime</span>
+                    <div class="metric-icon" style="background:var(--gold-soft); color:var(--gold);"><i class="fa-solid fa-money-bill-trend-up"></i></div>
+                    <span class="metric-tag" style="background:var(--gold-soft); color:var(--gold);">Lifetime</span>
                 </div>
                 <div class="metric-value currency">${naira(stats.total_revenue_lifetime)}</div>
                 <div class="metric-label">Total Revenue Generated</div>
@@ -2167,10 +2278,10 @@ function renderDashboard(data) {
             </div>
             <div class="metric">
                 <div class="metric-header">
-                    <div class="metric-icon" style="background:rgba(59, 130, 246, 0.2); color:var(--accent);"><i class="fa-solid fa-calendar-day"></i></div>
-                    <span class="metric-tag" style="background:rgba(59, 130, 246, 0.2); color:var(--accent);">TODAY</span>
+                    <div class="metric-icon" style="background:var(--cyan-bg); color:var(--cyan);"><i class="fa-solid fa-calendar-day"></i></div>
+                    <span class="metric-tag" style="background:var(--cyan-bg); color:var(--cyan);">TODAY</span>
                 </div>
-                <div class="metric-value currency" style="color:var(--accent);">${naira(stats.revenue_today)}</div>
+                <div class="metric-value" style="color:var(--cyan);">${naira(stats.revenue_today)}</div>
                 <div class="metric-label">Today's Revenue</div>
                 <div class="metric-footer"><i class="fa-solid fa-user-plus"></i> ${stats.signups_today} signups today</div>
             </div>
@@ -2186,7 +2297,7 @@ function renderDashboard(data) {
                     <span style="color:var(--warning); margin-left:12px;"><i class="fa-solid fa-clock"></i> ${pendingCount} pending</span>
                 </div>
             </div>
-            <div class="metric" onclick="showAdminSessions()" style="cursor:pointer;">
+            <div class="metric" onclick="showAdminSessions()">
                 <div class="metric-header">
                     <div class="metric-icon" style="background:var(--purple-bg); color:var(--purple);"><i class="fa-solid fa-user-shield"></i></div>
                     <span class="metric-tag" style="background:var(--purple-bg); color:var(--purple);">SESSIONS</span>
@@ -2204,17 +2315,16 @@ function renderDashboard(data) {
             <div class="card-header">
                 <div>
                     <div class="card-title"><i class="fa-solid fa-users-gear" style="color:var(--accent); margin-right:10px;"></i>WiFi Client Management</div>
-                    <div class="card-subtitle">Latest 100 users</div>
+                    <div class="card-subtitle">Page ${currentPage} of ${totalPages} • ${totalUsers.toLocaleString()} total users</div>
                 </div>
                 <div class="card-tools">
-                    <div class="search-wrap"><i class="fa-solid fa-magnifying-glass"></i><input type="text" class="search-input" id="searchInput" placeholder="Search username, MAC, email..." autocomplete="off"></div>
+                    <div class="search-wrap"><i class="fa-solid fa-magnifying-glass"></i><input type="text" class="search-input" id="searchInput" placeholder="Search on this page..." autocomplete="off"></div>
                     <div class="filter-tabs">
                         <button class="filter-tab active" onclick="setFilter('all')" data-filter="all">All</button>
                         <button class="filter-tab" onclick="setFilter('active')" data-filter="active">Active</button>
                         <button class="filter-tab" onclick="setFilter('pending')" data-filter="pending">Pending</button>
                         <button class="filter-tab" onclick="setFilter('expired')" data-filter="expired">Expired</button>
                     </div>
-                    ${hasPermission(session, 'delete') ? `<button class="btn btn-danger" onclick="confirmCleanup()" title="Remove inactive/old data"><i class="fa-solid fa-broom"></i> <span>Cleanup</span></button>` : ''}
                     <button class="btn" onclick="confirmSync()" title="Sync expired users with MikroTik"><i class="fa-solid fa-sync"></i> <span>Sync</span></button>
                 </div>
             </div>
@@ -2224,10 +2334,18 @@ function renderDashboard(data) {
                     <tbody id="usersTbody">${userRows}</tbody>
                 </table>
             </div>
+            <div class="pagination-bar">
+                <div class="pagination-info">
+                    Showing <strong>${recordStart.toLocaleString()}–${recordEnd.toLocaleString()}</strong> of <strong>${totalUsers.toLocaleString()}</strong> users
+                </div>
+                <div class="pagination-controls">
+                    ${paginationHtml || '<span style="color: var(--text-muted); font-size: 13px;">All records on one page</span>'}
+                </div>
+            </div>
         </div>
 
         <div class="page-footer">
-            <p>Dream Hatcher Tech Dashboard v4.6 — Professional WiFi Management System</p>
+            <p>Dream Hatcher Tech Dashboard v5.0 — Professional WiFi Management System</p>
             <div class="footer-stats">
                 <span><i class="fa-solid fa-database"></i> ${stats.total_users} Total Users</span>
                 <span><i class="fa-solid fa-money-bill-wave"></i> ${naira(stats.total_revenue_lifetime)} Lifetime Revenue</span>
@@ -2243,6 +2361,21 @@ function renderDashboard(data) {
         let currentMonthRaw = null;
 
         function formatNaira(amount) { const num = Number(amount) || 0; return '₦' + num.toLocaleString('en-NG'); }
+
+        // ===== YEAR FILTER for revenue table =====
+        function filterYear(year) {
+            const rows = document.querySelectorAll('#monthlyRowsTbody tr');
+            rows.forEach(row => {
+                const rowYear = row.getAttribute('data-year');
+                if (!rowYear) return;
+                row.style.display = (year === 'ALL' || rowYear === year) ? '' : 'none';
+            });
+        }
+        // Apply default filter on load
+        document.addEventListener('DOMContentLoaded', () => {
+            const sel = document.getElementById('yearFilter');
+            if (sel) filterYear(sel.value);
+        });
 
         function loadMonthData(monthRaw) {
             const container = document.getElementById('dailyProgressContainer');
@@ -2269,7 +2402,7 @@ function renderDashboard(data) {
                                 '<span>Day ' + day.day + '</span>' +
                                 '<div style="display: flex; gap: 16px;">' +
                                     '<span style="font-weight:700; color: var(--text-primary);">' + revenueFormatted + '</span>' +
-                                    '<span style="font-weight:700; color: var(--success);"><i class="fa-solid fa-user-plus"></i> +' + signups + ' signups</span>' +
+                                    '<span style="font-weight:700; color: var(--accent);"><i class="fa-solid fa-user-plus"></i> +' + signups + ' signups</span>' +
                                 '</div>' +
                             '</div>' +
                             '<div class="progress-track">' +
@@ -2311,7 +2444,7 @@ function renderDashboard(data) {
         function selectPlan(element) {
             document.querySelectorAll('.plan-option').forEach(opt => { opt.style.borderColor = 'var(--border)'; opt.style.background = 'var(--bg-secondary)'; });
             element.style.borderColor = 'var(--accent)';
-            element.style.background = 'rgba(59, 130, 246, 0.1)';
+            element.style.background = 'var(--accent-soft)';
             element.querySelector('input').checked = true;
         }
         document.getElementById('extendConfirmBtn').addEventListener('click', function() {
@@ -2323,7 +2456,6 @@ function renderDashboard(data) {
 
         function confirmReset(id) { if (confirm('Reset this user?')) window.location.href = '/admin?sessionId=${sessionId}&action=reset&userId=' + id; }
         function confirmDelete(id) { if (confirm('PERMANENTLY DELETE this user?')) window.location.href = '/admin?sessionId=${sessionId}&action=delete&userId=' + id; }
-        function confirmCleanup() { if (confirm('Clean up expired/pending records?')) window.location.href = '/admin?sessionId=${sessionId}&action=cleanup'; }
         function confirmSync() { window.location.href = '/admin?sessionId=${sessionId}&action=sync_expired'; }
         function showAdminSessions() { document.getElementById('adminSessionsModal').classList.add('open'); }
         function closeModal(modalId) { document.getElementById(modalId).classList.remove('open'); }
