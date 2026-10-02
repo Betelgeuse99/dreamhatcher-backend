@@ -119,6 +119,45 @@ const initializeMonnifyPayment = async ({ email, amount, plan, mac_address, desc
   };
 };
 
+// ========== PAYMENT PROVIDER SWITCH ==========
+// Set PAYMENT_PROVIDER=squad in Render to use Squad.
+// Default (or PAYMENT_PROVIDER=monnify) keeps Monnify. To bring Monnify back,
+// just set PAYMENT_PROVIDER=monnify (or delete the variable) and redeploy.
+const getPaymentProvider = () => (process.env.PAYMENT_PROVIDER || 'monnify').toLowerCase();
+
+const initializeSquadPayment = async ({ email, amount, plan, mac_address }) => {
+  const base = process.env.SQUAD_BASE_URL || 'https://api-d.squadco.com';
+  const secret = process.env.SQUAD_SECRET_KEY;
+  const paymentReference = 'SQ' + generatePaymentReference(10);
+
+  const response = await axios.post(
+    `${base}/transaction/initiate`,
+    {
+      amount: Math.round(Number(amount) * 100), // Squad expects kobo
+      email: email || 'customer@dreamhatcher.com',
+      currency: 'NGN',
+      initiate_type: 'inline',
+      transaction_ref: paymentReference,
+      customer_name: 'WiFi Customer',
+      callback_url: 'https://dreamhatcher-backend.onrender.com/squad-callback',
+      payment_channels: ['card', 'bank', 'ussd', 'transfer'],
+      metadata: { mac_address: mac_address || 'unknown', plan: plan },
+      pass_charge: false
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+
+  return {
+    checkoutUrl: response.data?.data?.checkout_url,
+    paymentReference: paymentReference
+  };
+};
+
 const planConfig = {
   daily:   { amount: 350, code: '24hr', duration: '24 Hours' },
   '3day':  { amount: 1050, code: '3d', duration: '3 Days' },
@@ -142,15 +181,31 @@ app.get('/pay/:plan', async (req, res) => {
   }
 
   try {
-    const { checkoutUrl, paymentReference } = await initializeMonnifyPayment({
-      email: email,
-      amount: selectedPlan.amount,
-      plan: selectedPlan.code,
-      mac_address: mac,
-      description: `Dream Hatcher WiFi - ${selectedPlan.duration}`
-    });
+    let checkoutUrl;
+    let paymentReference;
 
-    console.log(`💵 Payment: ${plan} | MAC: ${mac} | Email: ${email} | Ref: ${paymentReference}`);
+    if (getPaymentProvider() === 'squad') {
+      const squad = await initializeSquadPayment({
+        email: email,
+        amount: selectedPlan.amount,
+        plan: selectedPlan.code,
+        mac_address: mac
+      });
+      checkoutUrl = squad.checkoutUrl;
+      paymentReference = squad.paymentReference;
+    } else {
+      const monnify = await initializeMonnifyPayment({
+        email: email,
+        amount: selectedPlan.amount,
+        plan: selectedPlan.code,
+        mac_address: mac,
+        description: `Dream Hatcher WiFi - ${selectedPlan.duration}`
+      });
+      checkoutUrl = monnify.checkoutUrl;
+      paymentReference = monnify.paymentReference;
+    }
+
+    console.log(`💵 Payment [${getPaymentProvider()}]: ${plan} | MAC: ${mac} | Email: ${email} | Ref: ${paymentReference}`);
     res.redirect(checkoutUrl);
   } catch (error) {
     console.error('Payment redirect error:', error.response?.data || error.message);
@@ -172,13 +227,107 @@ app.post('/api/initialize-payment', async (req, res) => {
   try {
     const { email, amount, plan, mac_address } = req.body;
     if (!amount || !plan) return res.status(400).json({ error: 'Missing amount or plan' });
-    const { checkoutUrl, paymentReference } = await initializeMonnifyPayment({ email, amount, plan, mac_address });
-    console.log(`💳 API Payment: ${plan} | Amount: ₦${amount} | Ref: ${paymentReference}`);
+    const init = getPaymentProvider() === 'squad' ? initializeSquadPayment : initializeMonnifyPayment;
+    const { checkoutUrl, paymentReference } = await init({ email, amount, plan, mac_address });
+    console.log(`💳 API Payment [${getPaymentProvider()}]: ${plan} | Amount: ₦${amount} | Ref: ${paymentReference}`);
     res.json({ success: true, checkout_url: checkoutUrl, payment_reference: paymentReference });
   } catch (error) {
-    console.error('❌ Monnify initialize error:', error.response?.data || error.message);
+    console.error('❌ Initialize error:', error.response?.data || error.message);
     res.status(500).json({ error: 'Failed to initialize payment' });
   }
+});
+
+// ========== SQUAD WEBHOOK ==========
+app.post('/api/squad-webhook', async (req, res) => {
+  const secret = process.env.SQUAD_SECRET_KEY;
+  const raw = req.rawBody ? req.rawBody.toString('utf8') : JSON.stringify(req.body);
+  const computed = crypto.createHmac('sha512', secret).update(raw).digest('hex').toUpperCase();
+  const received = (req.headers['x-squad-encrypted-body'] || '').toUpperCase();
+
+  if (!received || computed !== received) {
+    console.log('❌ Invalid Squad webhook signature');
+    return res.status(400).send('Invalid signature');
+  }
+
+  try {
+    const { Event, Body } = req.body;
+    if (Event !== 'charge_successful' || !Body || Body.transaction_status !== 'Success') {
+      console.log(`📝 Squad event: ${Event} / ${Body && Body.transaction_status} - ignoring`);
+      return res.status(200).json({ received: true });
+    }
+
+    const paymentReference = Body.transaction_ref;
+    const meta = Body.meta || {};
+    const macAddress = meta.mac_address || 'unknown';
+    const amountNaira = Number(Body.amount) / 100;
+
+    let plan = meta.plan;
+    if (!plan) {
+      if (amountNaira === 350) plan = '24hr';
+      else if (amountNaira === 1050) plan = '3d';
+      else if (amountNaira === 1750) plan = '5d';
+      else if (amountNaira === 2400) plan = '7d';
+      else if (amountNaira === 4100) plan = '14d';
+      else if (amountNaira === 7500) plan = '30d';
+      else {
+        console.error('❌ Squad invalid amount:', amountNaira);
+        return res.status(400).json({ error: 'Invalid amount' });
+      }
+    }
+
+    const existing = await pool.query('SELECT id FROM payment_queue WHERE transaction_id = $1 LIMIT 1', [paymentReference]);
+    if (existing.rows.length > 0) {
+      console.log(`↩️ Squad duplicate webhook ignored: ${paymentReference}`);
+      return res.status(200).json({ received: true });
+    }
+
+    const username = `dht${Date.now().toString().slice(-5)}`;
+    const password = generatePassword();
+    const oneTimeToken = crypto.randomBytes(32).toString('hex');
+
+    let expiresAt;
+    const now = new Date();
+    if (plan === '24hr') expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    else if (plan === '3d') expiresAt = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+    else if (plan === '5d') expiresAt = new Date(now.getTime() + 5 * 24 * 60 * 60 * 1000);
+    else if (plan === '7d') expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    else if (plan === '14d') expiresAt = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+    else if (plan === '30d') expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    await pool.query(
+      `INSERT INTO payment_queue
+       (transaction_id, customer_email, customer_phone, plan,
+        mikrotik_username, mikrotik_password, mac_address, status, expires_at, one_time_token)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9)`,
+      [
+        paymentReference,
+        Body.email || 'unknown@example.com',
+        '',
+        plan,
+        username,
+        password,
+        macAddress,
+        expiresAt,
+        oneTimeToken
+      ]
+    );
+
+    console.log(`🙋 [Squad] Queued ${username} | Plan: ${plan} | MAC: ${macAddress} | Ref: ${paymentReference}`);
+    return res.status(200).json({ received: true });
+  } catch (error) {
+    console.error('❌ Squad webhook error:', error.message);
+    return res.status(500).json({ error: 'Webhook processing failed' });
+  }
+});
+
+// ========== SQUAD CALLBACK ==========
+app.get('/squad-callback', (req, res) => {
+  const ref = req.query.transaction_ref || req.query.TransactionRef || req.query.trxref || req.query.reference;
+  console.log('🔗 Squad callback:', ref);
+  if (!ref) {
+    return res.send('Payment reference missing. Please contact support: 07037412314');
+  }
+  res.redirect('/success?reference=' + encodeURIComponent(ref));
 });
 
 // ========== MONNIFY WEBHOOK (MODIFIED: adds one_time_token) ==========
