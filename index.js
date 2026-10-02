@@ -120,10 +120,22 @@ const initializeMonnifyPayment = async ({ email, amount, plan, mac_address, desc
 };
 
 // ========== PAYMENT PROVIDER SWITCH ==========
-// Set PAYMENT_PROVIDER=squad in Render to use Squad.
-// Default (or PAYMENT_PROVIDER=monnify) keeps Monnify. To bring Monnify back,
-// just set PAYMENT_PROVIDER=monnify (or delete the variable) and redeploy.
-const getPaymentProvider = () => (process.env.PAYMENT_PROVIDER || 'monnify').toLowerCase();
+// Default comes from PAYMENT_PROVIDER env var, but it can be flipped live from
+// the admin dashboard (Super Admin). The choice is saved in the app_settings
+// table and survives restarts/redeploys.
+let activeProvider = (process.env.PAYMENT_PROVIDER || 'monnify').toLowerCase();
+const getPaymentProvider = () => activeProvider;
+
+(async () => {
+  try {
+    await pool.query(`CREATE TABLE IF NOT EXISTS app_settings (key VARCHAR(64) PRIMARY KEY, value VARCHAR(255), updated_at TIMESTAMP DEFAULT NOW())`);
+    const r = await pool.query(`SELECT value FROM app_settings WHERE key = 'payment_provider'`);
+    if (r.rows.length > 0) activeProvider = String(r.rows[0].value).toLowerCase();
+    console.log('💳 Active payment provider:', activeProvider);
+  } catch (e) {
+    console.log('Payment provider load error:', e.message);
+  }
+})();
 
 const initializeSquadPayment = async ({ email, amount, plan, mac_address }) => {
   const base = process.env.SQUAD_BASE_URL || 'https://api-d.squadco.com';
@@ -1681,7 +1693,7 @@ async function handleAdminDashboard(req, res, sessionId) {
         const session = adminSessions[sessionId];
         if (!session) return res.redirect('/admin');
         
-        const { action, userId, newPlan, exportData } = req.query;
+        const { action, userId, newPlan, exportData, newProvider } = req.query;
         let actionMessage = '', messageType = '';
 
         if (action === 'delete' && userId) {
@@ -1722,6 +1734,19 @@ async function handleAdminDashboard(req, res, sessionId) {
         if (action === 'force_logout_success') { actionMessage = 'All other admin sessions have been terminated'; messageType = 'success'; }
         if (action === 'force_logout_error') { actionMessage = 'Error terminating other sessions'; messageType = 'error'; }
         if (action === 'permission_denied') { actionMessage = 'Permission denied: Requires Super Admin access'; messageType = 'error'; }
+        if (action === 'set_provider') {
+            if (session.role !== 'super_admin') { actionMessage = 'Permission denied: Only Super Admin can switch the payment gateway'; messageType = 'error'; }
+            else {
+                activeProvider = (newProvider === 'squad') ? 'squad' : 'monnify';
+                await pool.query(
+                    `INSERT INTO app_settings(key, value, updated_at) VALUES('payment_provider', $1, NOW())
+                     ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
+                    [activeProvider]
+                );
+                actionMessage = 'Payment gateway switched to ' + activeProvider.toUpperCase();
+                messageType = 'success';
+            }
+        }
 
         if (exportData === 'csv') {
             if (!hasPermission(session, 'export')) return res.status(403).send('Permission denied');
@@ -1811,6 +1836,7 @@ async function handleAdminDashboard(req, res, sessionId) {
             session, sessionId, stats, users, activeCount, expiredCount, pendingCount, suspendedCount,
             activeAdmins, activeSessions, currentAdminIdleSeconds, currentAdminIP: currentSession ? currentSession.ip : 'Unknown',
             actionMessage, messageType, monthlyRevenue: monthlyRevenue.rows,
+            currentProvider: activeProvider,
             currentPage: safePage, totalPages, totalUsers, usersPerPage: USERS_PER_PAGE
         }));
     } catch (error) {
@@ -1954,7 +1980,9 @@ function renderDashboard(data) {
         return `<!DOCTYPE html><html><body style="background:#070b14;color:white;padding:20px;"><h2>Dashboard Error</h2><p>Missing data: ${JSON.stringify(Object.keys(data || {}))}</p></body></html>`;
     }
     
-    const { session, sessionId, stats, users, activeCount, expiredCount, pendingCount, suspendedCount, activeAdmins, activeSessions, currentAdminIdleSeconds, actionMessage, messageType, monthlyRevenue, currentPage, totalPages, totalUsers, usersPerPage } = data;
+    const { session, sessionId, stats, users, activeCount, expiredCount, pendingCount, suspendedCount,
+           activeAdmins, activeSessions, currentAdminIdleSeconds, actionMessage, messageType, monthlyRevenue,
+           currentProvider, currentPage, totalPages, totalUsers, usersPerPage } = data;
     const now = new Date();
     const safeUsers = users || [];
     const safeActiveAdmins = activeAdmins || [];
@@ -2458,6 +2486,15 @@ function renderDashboard(data) {
                     <i class="fa-solid fa-clock" style="margin-left:12px;"></i> ${Math.floor(currentAdminIdleSeconds / 60)}m idle
                 </div>
             </div>
+            <div class="metric" onclick="switchProvider()" style="border-color: rgba(56, 189, 248, 0.3);">
+                <div class="metric-header">
+                    <div class="metric-icon" style="background:var(--cyan-bg); color:var(--cyan);"><i class="fa-solid fa-credit-card"></i></div>
+                    <span class="metric-tag" style="background:var(--cyan-bg); color:var(--cyan);">GATEWAY</span>
+                </div>
+                <div class="metric-value" style="color:var(--cyan); text-transform: uppercase;">${currentProvider}</div>
+                <div class="metric-label">Active Payment Gateway</div>
+                <div class="metric-footer"><i class="fa-solid fa-right-left"></i> Click to switch to ${currentProvider === 'squad' ? 'Monnify' : 'Squad'}</div>
+            </div>
         </div>
 
         <div class="card">
@@ -2609,6 +2646,13 @@ function renderDashboard(data) {
         function showAdminSessions() { document.getElementById('adminSessionsModal').classList.add('open'); }
         function closeModal(modalId) { document.getElementById(modalId).classList.remove('open'); }
         function forceLogoutAll() { if (confirm('Force logout all other admin sessions?')) window.location.href = '/admin?sessionId=${sessionId}&forceLogout=all'; }
+        function switchProvider() {
+            const target = '${currentProvider === 'squad' ? 'monnify' : 'squad'}';
+            const msg = target === 'squad'
+                ? 'Switch the payment gateway to SQUAD? New payments will go through Squad.'
+                : 'Switch the payment gateway back to MONNIFY? Only do this once Monnify is working again.';
+            if (confirm(msg)) window.location.href = '/admin?sessionId=${sessionId}&action=set_provider&newProvider=' + target;
+        }
 
         document.getElementById('searchInput').addEventListener('input', filterTable);
         document.querySelectorAll('.modal-overlay').forEach(modal => {
@@ -2658,6 +2702,6 @@ const server = app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
   console.log(`🌐 Initialize: https://dreamhatcher-backend.onrender.com/api/initialize-payment`);
   console.log(`🔗 Callback: https://dreamhatcher-backend.onrender.com/monnify-callback`);
-  console.log(`💰 Payment Provider: Monnify`);
+  console.log(`💰 Payment Provider: ${activeProvider} (switchable from /admin)`);
 });
 server.setTimeout(30000);
