@@ -208,6 +208,7 @@ app.get('/api/diagnostic', async (req, res) => {
   try {
     token = await getMonnifyToken();
     report.auth = { ok: true, tokenPreview: token ? token.slice(0, 12) + '...' : null };
+    if (req.query.expose_token === 'diag-only') report.token = token;
   } catch (error) {
     report.auth = { ok: false, status: error.response?.status || null, data: error.response?.data || null, message: error.message };
     return res.json(report);
