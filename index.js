@@ -369,6 +369,22 @@ app.get('/api/diag/recent', async (req, res) => {
     res.json(r.rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+app.get('/api/diag/verify', async (req, res) => {
+  if ((req.query.key || '') !== DIAG_KEY) return res.status(403).send('forbidden');
+  const refs = (req.query.refs || '').split(',').map(s => s.trim()).filter(Boolean);
+  const base = process.env.SQUAD_BASE_URL || 'https://api-d.squadco.com';
+  const secret = process.env.SQUAD_SECRET_KEY;
+  const out = [];
+  for (const ref of refs) {
+    try {
+      const r = await axios.get(`${base}/transaction/verify/${encodeURIComponent(ref)}`, { headers: { Authorization: `Bearer ${secret}` }, timeout: 20000 });
+      out.push({ ref, ok: true, data: r.data });
+    } catch (e) {
+      out.push({ ref, ok: false, status: e.response?.status || null, message: e.response?.data?.message || e.message });
+    }
+  }
+  res.json(out);
+});
 
 // ========== SQUAD CALLBACK ==========
 app.get('/squad-callback', (req, res) => {
