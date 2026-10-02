@@ -2488,6 +2488,7 @@ function renderDashboard(data) {
                     <i class="fa-solid fa-clock" style="margin-left:12px;"></i> ${Math.floor(currentAdminIdleSeconds / 60)}m idle
                 </div>
             </div>
+            ${session.role === 'super_admin' ? `
             <div class="metric" onclick="switchProvider()" style="border-color: rgba(56, 189, 248, 0.3);">
                 <div class="metric-header">
                     <div class="metric-icon" style="background:var(--cyan-bg); color:var(--cyan);"><i class="fa-solid fa-credit-card"></i></div>
@@ -2497,6 +2498,7 @@ function renderDashboard(data) {
                 <div class="metric-label">Active Payment Gateway</div>
                 <div class="metric-footer"><i class="fa-solid fa-right-left"></i> Click to switch to ${currentProvider === 'squad' ? 'Monnify' : 'Squad'}</div>
             </div>
+            ` : ''}
         </div>
 
         <div class="card">
