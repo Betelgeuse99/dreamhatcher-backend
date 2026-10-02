@@ -222,12 +222,20 @@ app.get('/api/diagnostic', async (req, res) => {
     metaData: { mac_address: '00:00:00:00:00:00', plan: '24hr' }
   });
 
+  try {
+    const ipResp = await axios.get('https://api.ipify.org?format=json', { timeout: 8000 });
+    report.outboundIp = ipResp.data?.ip || null;
+  } catch (e) {
+    report.outboundIp = 'unknown (' + e.message + ')';
+  }
+
+  const p = '/api/v1/merchant/transactions/init-transaction';
   const variants = [
-    { label: 'v1-full', path: '/api/v1/merchant/transactions/init-transaction', body: (r) => ({ ...baseBody(r), paymentMethods: ['CARD', 'ACCOUNT_TRANSFER', 'USSD', 'PHONE_NUMBER'] }) },
-    { label: 'v1-no-methods', path: '/api/v1/merchant/transactions/init-transaction', body: baseBody },
-    { label: 'v1-card-only', path: '/api/v1/merchant/transactions/init-transaction', body: (r) => ({ ...baseBody(r), paymentMethods: ['CARD'] }) },
-    { label: 'v2-full', path: '/api/v2/merchant/transactions/init-transaction', body: (r) => ({ ...baseBody(r), paymentMethods: ['CARD', 'ACCOUNT_TRANSFER', 'USSD', 'PHONE_NUMBER'] }) },
-    { label: 'v2-no-methods', path: '/api/v2/merchant/transactions/init-transaction', body: baseBody }
+    { label: 'v1-full', path: p, body: (r) => ({ ...baseBody(r), paymentMethods: ['CARD', 'ACCOUNT_TRANSFER', 'USSD', 'PHONE_NUMBER'] }) },
+    { label: 'v1-no-methods', path: p, body: baseBody },
+    { label: 'v1-no-redirect', path: p, body: (r) => { const b = baseBody(r); delete b.redirectUrl; return b; } },
+    { label: 'v1-no-meta', path: p, body: (r) => { const b = baseBody(r); delete b.metaData; return b; } },
+    { label: 'v1-minimal', path: p, body: (r) => ({ amount: 350, customerName: 'WiFi Customer', customerEmail: 'diagnostic@dreamhatcher.com', paymentReference: r, paymentDescription: 'Diagnostic Test', currencyCode: 'NGN', contractCode: contractCode }) }
   ];
 
   for (const v of variants) {
