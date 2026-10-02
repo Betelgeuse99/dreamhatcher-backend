@@ -2650,6 +2650,7 @@ function renderDashboard(data) {
         function showAdminSessions() { document.getElementById('adminSessionsModal').classList.add('open'); }
         function closeModal(modalId) { document.getElementById(modalId).classList.remove('open'); }
         function forceLogoutAll() { if (confirm('Force logout all other admin sessions?')) window.location.href = '/admin?sessionId=${sessionId}&forceLogout=all'; }
+        ${session.role === 'super_admin' ? `
         function switchProvider() {
             const target = '${currentProvider === 'squad' ? 'monnify' : 'squad'}';
             const msg = target === 'squad'
@@ -2657,6 +2658,7 @@ function renderDashboard(data) {
                 : 'Switch the payment gateway back to MONNIFY? Only do this once Monnify is working again.';
             if (confirm(msg)) window.location.href = '/admin?sessionId=${sessionId}&action=set_provider&newProvider=' + target;
         }
+        ` : ''}
 
         document.getElementById('searchInput').addEventListener('input', filterTable);
         document.querySelectorAll('.modal-overlay').forEach(modal => {
