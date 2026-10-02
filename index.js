@@ -250,13 +250,33 @@ app.post('/api/initialize-payment', async (req, res) => {
 });
 
 // ========== SQUAD WEBHOOK ==========
+const DIAG_KEY = process.env.DIAG_KEY || 'dht-diag-2026';
+const squadWebhookLog = [];
 app.post('/api/squad-webhook', async (req, res) => {
   const secret = process.env.SQUAD_SECRET_KEY;
   const raw = req.rawBody ? req.rawBody.toString('utf8') : JSON.stringify(req.body);
-  const computed = crypto.createHmac('sha512', secret).update(raw).digest('hex').toUpperCase();
+  const stringified = JSON.stringify(req.body);
+  const computedRaw = secret ? crypto.createHmac('sha512', secret).update(raw).digest('hex').toUpperCase() : null;
+  const computedStr = secret ? crypto.createHmac('sha512', secret).update(stringified).digest('hex').toUpperCase() : null;
   const received = (req.headers['x-squad-encrypted-body'] || '').toUpperCase();
+  const sigValid = !!received && (computedRaw === received || computedStr === received);
 
-  if (!received || computed !== received) {
+  const diag = {
+    at: new Date().toISOString(),
+    secretSet: !!secret,
+    hasRawBody: !!req.rawBody,
+    header: received ? received.slice(0, 10) + '...' : null,
+    sigValid,
+    matchRaw: computedRaw === received,
+    matchStringified: computedStr === received,
+    contentType: req.headers['content-type'] || null,
+    body: req.body
+  };
+  squadWebhookLog.unshift(diag);
+  if (squadWebhookLog.length > 30) squadWebhookLog.pop();
+
+  if (!sigValid) {
+    diag.rejected = true;
     console.log('❌ Invalid Squad webhook signature');
     return res.status(400).send('Invalid signature');
   }
@@ -264,6 +284,7 @@ app.post('/api/squad-webhook', async (req, res) => {
   try {
     const { Event, Body } = req.body;
     if (Event !== 'charge_successful' || !Body || Body.transaction_status !== 'Success') {
+      diag.ignored = true;
       console.log(`📝 Squad event: ${Event} / ${Body && Body.transaction_status} - ignoring`);
       return res.status(200).json({ received: true });
     }
@@ -289,6 +310,7 @@ app.post('/api/squad-webhook', async (req, res) => {
 
     const existing = await pool.query('SELECT id FROM payment_queue WHERE transaction_id = $1 LIMIT 1', [paymentReference]);
     if (existing.rows.length > 0) {
+      diag.duplicate = true;
       console.log(`↩️ Squad duplicate webhook ignored: ${paymentReference}`);
       return res.status(200).json({ received: true });
     }
@@ -324,12 +346,28 @@ app.post('/api/squad-webhook', async (req, res) => {
       ]
     );
 
+    diag.inserted = true;
+    diag.queuedPlan = plan;
+    diag.queuedUser = username;
     console.log(`🙋 [Squad] Queued ${username} | Plan: ${plan} | MAC: ${macAddress} | Ref: ${paymentReference}`);
     return res.status(200).json({ received: true });
   } catch (error) {
     console.error('❌ Squad webhook error:', error.message);
     return res.status(500).json({ error: 'Webhook processing failed' });
   }
+});
+
+// ========== DIAGNOSTIC (temporary) ==========
+app.get('/api/diag/webhooks', (req, res) => {
+  if ((req.query.key || '') !== DIAG_KEY) return res.status(403).send('forbidden');
+  res.json(squadWebhookLog);
+});
+app.get('/api/diag/recent', async (req, res) => {
+  if ((req.query.key || '') !== DIAG_KEY) return res.status(403).send('forbidden');
+  try {
+    const r = await pool.query(`SELECT id, transaction_id, customer_email, plan, status, mac_address, created_at FROM payment_queue ORDER BY id DESC LIMIT 25`);
+    res.json(r.rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ========== SQUAD CALLBACK ==========
