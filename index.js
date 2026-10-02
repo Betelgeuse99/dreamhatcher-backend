@@ -181,6 +181,53 @@ app.post('/api/initialize-payment', async (req, res) => {
   }
 });
 
+// ========== DIAGNOSTIC (temporary) ==========
+app.get('/api/diagnostic', async (req, res) => {
+  const mask = (v) => v ? `${v.slice(0, 4)}...${v.slice(-4)} (len ${v.length})` : null;
+  const report = {
+    baseUrl: process.env.MONNIFY_BASE_URL || null,
+    apiKey: mask(process.env.MONNIFY_API_KEY),
+    secretKey: mask(process.env.MONNIFY_SECRET_KEY),
+    contractCode: process.env.MONNIFY_CONTRACT_CODE || null,
+    databaseUrl: process.env.DATABASE_URL ? 'set' : 'MISSING',
+    auth: null,
+    init: null
+  };
+
+  try {
+    const token = await getMonnifyToken();
+    report.auth = { ok: true, tokenPreview: token ? token.slice(0, 12) + '...' : null };
+  } catch (error) {
+    report.auth = {
+      ok: false,
+      status: error.response?.status || null,
+      data: error.response?.data || null,
+      message: error.message
+    };
+    return res.json(report);
+  }
+
+  try {
+    const { checkoutUrl, paymentReference } = await initializeMonnifyPayment({
+      email: 'diagnostic@dreamhatcher.com',
+      amount: 350,
+      plan: '24hr',
+      mac_address: '00:00:00:00:00:00',
+      description: 'Diagnostic Test'
+    });
+    report.init = { ok: true, checkoutUrl, paymentReference };
+  } catch (error) {
+    report.init = {
+      ok: false,
+      status: error.response?.status || null,
+      data: error.response?.data || null,
+      message: error.message
+    };
+  }
+
+  res.json(report);
+});
+
 // ========== MONNIFY WEBHOOK (MODIFIED: adds one_time_token) ==========
 app.post('/api/monnify-webhook', async (req, res) => {
   console.log('📥 Monnify webhook received');
