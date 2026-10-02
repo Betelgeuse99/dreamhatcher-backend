@@ -184,18 +184,21 @@ app.post('/api/initialize-payment', async (req, res) => {
 // ========== DIAGNOSTIC (temporary) ==========
 app.get('/api/diagnostic', async (req, res) => {
   const mask = (v) => v ? `${v.slice(0, 4)}...${v.slice(-4)} (len ${v.length})` : null;
+  const base = process.env.MONNIFY_BASE_URL;
+  const contractCode = process.env.MONNIFY_CONTRACT_CODE;
   const report = {
-    baseUrl: process.env.MONNIFY_BASE_URL || null,
+    baseUrl: base || null,
     apiKey: mask(process.env.MONNIFY_API_KEY),
     secretKey: mask(process.env.MONNIFY_SECRET_KEY),
-    contractCode: process.env.MONNIFY_CONTRACT_CODE || null,
+    contractCode: contractCode || null,
     databaseUrl: process.env.DATABASE_URL ? 'set' : 'MISSING',
     auth: null,
-    init: null
+    attempts: []
   };
 
+  let token;
   try {
-    const token = await getMonnifyToken();
+    token = await getMonnifyToken();
     report.auth = { ok: true, tokenPreview: token ? token.slice(0, 12) + '...' : null };
   } catch (error) {
     report.auth = {
@@ -207,22 +210,36 @@ app.get('/api/diagnostic', async (req, res) => {
     return res.json(report);
   }
 
-  try {
-    const { checkoutUrl, paymentReference } = await initializeMonnifyPayment({
-      email: 'diagnostic@dreamhatcher.com',
-      amount: 350,
-      plan: '24hr',
-      mac_address: '00:00:00:00:00:00',
-      description: 'Diagnostic Test'
-    });
-    report.init = { ok: true, checkoutUrl, paymentReference };
-  } catch (error) {
-    report.init = {
-      ok: false,
-      status: error.response?.status || null,
-      data: error.response?.data || null,
-      message: error.message
-    };
+  const baseBody = (ref) => ({
+    amount: 350,
+    customerName: 'WiFi Customer',
+    customerEmail: 'diagnostic@dreamhatcher.com',
+    paymentReference: ref,
+    paymentDescription: 'Diagnostic Test',
+    currencyCode: 'NGN',
+    contractCode: contractCode,
+    redirectUrl: 'https://dreamhatcher-backend.onrender.com/monnify-callback',
+    metaData: { mac_address: '00:00:00:00:00:00', plan: '24hr' }
+  });
+
+  const variants = [
+    { label: 'v1-full', path: '/api/v1/merchant/transactions/init-transaction', body: (r) => ({ ...baseBody(r), paymentMethods: ['CARD', 'ACCOUNT_TRANSFER', 'USSD', 'PHONE_NUMBER'] }) },
+    { label: 'v1-no-methods', path: '/api/v1/merchant/transactions/init-transaction', body: baseBody },
+    { label: 'v1-card-only', path: '/api/v1/merchant/transactions/init-transaction', body: (r) => ({ ...baseBody(r), paymentMethods: ['CARD'] }) },
+    { label: 'v2-full', path: '/api/v2/merchant/transactions/init-transaction', body: (r) => ({ ...baseBody(r), paymentMethods: ['CARD', 'ACCOUNT_TRANSFER', 'USSD', 'PHONE_NUMBER'] }) },
+    { label: 'v2-no-methods', path: '/api/v2/merchant/transactions/init-transaction', body: baseBody }
+  ];
+
+  for (const v of variants) {
+    try {
+      const ref = generatePaymentReference(12);
+      const resp = await axios.post(`${base}${v.path}`, v.body(ref), {
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+      });
+      report.attempts.push({ label: v.label, ok: true, checkoutUrl: resp.data?.responseBody?.checkoutUrl || null, data: resp.data });
+    } catch (error) {
+      report.attempts.push({ label: v.label, ok: false, status: error.response?.status || null, data: error.response?.data || null, message: error.message });
+    }
   }
 
   res.json(report);
